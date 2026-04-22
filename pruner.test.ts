@@ -41,7 +41,9 @@ function makeState(compressionBlocks: DcpState["compressionBlocks"] = []): DcpSt
   return {
     toolCalls: new Map(),
     prunedToolIds: new Set(),
+    schemaVersion: 1,
     compressionBlocks,
+    compressionBlocksV2: [],
     nextBlockId: 1,
     messageIdSnapshot: new Map(),
     currentTurn: 0,

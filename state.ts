@@ -31,9 +31,9 @@ export interface ToolRecord {
 }
 
 /**
- * A compression block created by the `compress` tool.
- * Tracks the range of messages that were summarised and where to inject the
- * summary back into the context.
+ * Legacy v1 compression block created by the `compress` tool.
+ * Tracks a timestamp-bounded range of messages and where to inject the summary
+ * back into the context.
  */
 export interface CompressionBlock {
   /** Auto-incrementing integer ID */
@@ -60,6 +60,59 @@ export interface CompressionBlock {
   createdAt: number
 }
 
+/** Status for a v2 span-key compression block. */
+export type CompressionBlockStatus = "active" | "superseded" | "decompressed"
+
+/**
+ * Draft v2 compression block.
+ *
+ * v2 uses canonical span keys instead of raw timestamps and explicitly records
+ * superseded prior blocks. Phase 1 only introduces the type and persistence
+ * scaffolding — the active runtime still materializes legacy v1 blocks.
+ */
+export interface CompressionBlockV2 {
+  /** Auto-incrementing integer ID */
+  id: number
+  /** Short human-readable topic label */
+  topic: string
+  /** LLM-generated summary text */
+  summary: string
+  /** Canonical span key for the first covered span */
+  startSpanKey: string
+  /** Canonical span key for the last covered span */
+  endSpanKey: string
+  /** Active prior blocks fully consumed by this block */
+  supersedesBlockIds: number[]
+  /** Lifecycle status of this block */
+  status: CompressionBlockStatus
+  /** Token estimate for the summary text itself */
+  summaryTokenEstimate: number
+  /** Wall-clock time the block was created (Date.now()) */
+  createdAt: number
+}
+
+/** Persisted v1 DCP state stored in session history. */
+export interface PersistedDcpStateV1 {
+  schemaVersion?: 1
+  compressionBlocks: CompressionBlock[]
+  nextBlockId: number
+  prunedToolIds: string[]
+  tokensSaved: number
+  totalPruneCount: number
+  manualMode: boolean
+}
+
+/** Persisted v2 DCP state stored in session history. */
+export interface PersistedDcpStateV2 {
+  schemaVersion: 2
+  blocks: CompressionBlockV2[]
+  nextBlockId: number
+  manualMode: boolean
+}
+
+/** Any persisted DCP state shape supported during migration. */
+export type PersistedDcpState = PersistedDcpStateV1 | PersistedDcpStateV2
+
 /**
  * Full runtime state for the DCP extension.
  */
@@ -71,9 +124,13 @@ export interface DcpState {
   prunedToolIds: Set<string>
 
   // ── Compression ────────────────────────────────────────────────────────────
-  /** All compression blocks (both active and soft-deleted) */
+  /** Highest persisted schema version currently loaded into runtime state */
+  schemaVersion: 1 | 2
+  /** Legacy v1 timestamp-based compression blocks (active runtime path today) */
   compressionBlocks: CompressionBlock[]
-  /** Monotonically increasing counter used to assign CompressionBlock.id */
+  /** Draft v2 span-key blocks loaded or preserved during migration work */
+  compressionBlocksV2: CompressionBlockV2[]
+  /** Monotonically increasing counter used to assign compression block IDs */
   nextBlockId: number
 
   // ── Message ID snapshot ────────────────────────────────────────────────────
@@ -132,7 +189,9 @@ export function createState(): DcpState {
   return {
     toolCalls: new Map(),
     prunedToolIds: new Set(),
+    schemaVersion: 1,
     compressionBlocks: [],
+    compressionBlocksV2: [],
     nextBlockId: 1,
     messageIdSnapshot: new Map(),
     currentTurn: 0,
@@ -152,7 +211,9 @@ export function createState(): DcpState {
 export function resetState(state: DcpState): void {
   state.toolCalls.clear()
   state.prunedToolIds.clear()
+  state.schemaVersion = 1
   state.compressionBlocks = []
+  state.compressionBlocksV2 = []
   state.nextBlockId = 1
   state.messageIdSnapshot.clear()
   state.currentTurn = 0

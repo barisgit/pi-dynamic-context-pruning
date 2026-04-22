@@ -21,6 +21,7 @@ import {
 import { applyPruning, injectNudge, getNudgeType } from "./pruner.js"
 import { registerCompressTool } from "./compress-tool.js"
 import { registerCommands } from "./commands.js"
+import { restorePersistedState, serializePersistedState } from "./migration.js"
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -31,14 +32,7 @@ import { registerCommands } from "./commands.js"
  * survives session restarts and pi process restarts.
  */
 function saveState(pi: ExtensionAPI, state: DcpState): void {
-  pi.appendEntry("dcp-state", {
-    compressionBlocks: state.compressionBlocks,
-    nextBlockId: state.nextBlockId,
-    prunedToolIds: Array.from(state.prunedToolIds),
-    tokensSaved: state.tokensSaved,
-    totalPruneCount: state.totalPruneCount,
-    manualMode: state.manualMode,
-  })
+  pi.appendEntry("dcp-state", serializePersistedState(state))
 }
 
 // ---------------------------------------------------------------------------
@@ -78,46 +72,7 @@ export default function (pi: ExtensionAPI) {
     // Walk the branch looking for the most-recent persisted dcp-state entry.
     for (const entry of ctx.sessionManager.getBranch()) {
       if (entry.type === "custom" && entry.customType === "dcp-state") {
-        const data = entry.data as any
-
-        if (data?.compressionBlocks) {
-          // Filter out blocks with corrupted timestamps, then repair
-          // anchorTimestamp which is legitimately Infinity for blocks that
-          // extend to end-of-conversation (JSON round-trips Infinity as null).
-          const validBlocks = data.compressionBlocks
-            .filter(
-              (b: any) =>
-                Number.isFinite(b.startTimestamp) &&
-                Number.isFinite(b.endTimestamp),
-            )
-            .map((b: any) => ({
-              ...b,
-              // anchorTimestamp is Infinity when the block extends to the end
-              // of the conversation; JSON round-trips Infinity as null, so
-              // repair it here rather than discarding the block.
-              anchorTimestamp: Number.isFinite(b.anchorTimestamp)
-                ? b.anchorTimestamp
-                : Infinity,
-            }))
-          state.compressionBlocks = validBlocks
-          state.nextBlockId =
-            data.nextBlockId ??
-            (state.compressionBlocks.length > 0
-              ? Math.max(0, ...state.compressionBlocks.map((b: any) => b.id)) + 1
-              : 1)
-          state.tokensSaved = data.tokensSaved ?? 0
-          state.totalPruneCount = data.totalPruneCount ?? 0
-        }
-
-        if (data?.prunedToolIds) {
-          state.prunedToolIds = new Set(data.prunedToolIds)
-        }
-
-        // Saved manualMode takes precedence over config baseline so the user's
-        // last /dcp manual on|off choice is honoured across restarts.
-        if (data?.manualMode !== undefined) {
-          state.manualMode = data.manualMode
-        }
+        restorePersistedState(entry.data, state)
       }
     }
 

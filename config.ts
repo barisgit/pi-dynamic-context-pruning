@@ -1,7 +1,7 @@
 import * as fs from "node:fs"
 import * as path from "node:path"
 import * as os from "node:os"
-import { parse as parseJsonc } from "jsonc-parser"
+import { parse as parseJsonc, type ParseError } from "jsonc-parser"
 
 // ---------------------------------------------------------------------------
 // Types
@@ -161,7 +161,7 @@ function readJsoncFile(filePath: string): Record<string, unknown> {
     return {}
   }
 
-  const errors: unknown[] = []
+  const errors: ParseError[] = []
   const parsed = parseJsonc(raw, errors)
   if (errors.length > 0) {
     // Non-fatal: return whatever was parsed (jsonc-parser is lenient)
