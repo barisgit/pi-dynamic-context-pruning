@@ -33,9 +33,14 @@ These are the rules for v2.
    - A block renders in one stable place with one stable format.
    - The same blocks always produce the same prompt materialization.
 
-5. **Old compressions can be consumed by newer compressions.**
+5. **One good compress should do most of the work.**
+   - The primary win is a single closure-based compress that replaces a large raw slice with one small, stable block.
+   - Block size should be bounded so one block can realistically stand in for 100k+ tokens of raw history.
+
+6. **Old compressions may be consumed by newer compressions, but this is secondary.**
    - Compressions must not accumulate forever.
-   - Fully covered prior blocks are superseded by the new block.
+   - Fully covered prior blocks may be superseded by the new block.
+   - Recompressing prior blocks should be supported, but it should be rare rather than the main path.
 
 ---
 
@@ -59,6 +64,7 @@ That means the current system is still carrying or re-creating ballast from:
 - stale DCP reminder text
 - prior compressed summaries that never get folded again
 - tool/result ballast that is pruned heuristically instead of transactionally
+- freeform block bodies that can become longer than they need to be
 - stats that are write-amplified by repeated reapplication
 
 The result is predictable: prompt mass keeps growing even after several compressions.
@@ -224,16 +230,42 @@ v1 persists mutable counters and timestamp ranges. v2 should persist a much smal
 ## Proposed persisted state
 
 ```ts
+interface CompressionLogEntry {
+  kind:
+    | "user_excerpt"
+    | "assistant_excerpt"
+    | "read"
+    | "edit"
+    | "write"
+    | "command"
+    | "test"
+    | "commit"
+    | "tool"
+  text: string
+}
+
+interface CompressionBlockMetadata {
+  coveredSpanKeys: string[]
+  coveredArtifactRefs: string[]
+  coveredToolIds: string[]
+  supersededBlockIds: number[]
+  fileReadStats: Array<{ path: string; count: number; lineSpans: string[] }>
+  fileWriteStats: Array<{ path: string; editCount: number; addedLines: number; removedLines: number }>
+  commandStats: Array<{ command: string; status: "ok" | "error" | "other" }>
+}
+
 interface CompressionBlockV2 {
   id: number
   topic: string
   summary: string
   startSpanKey: string
   endSpanKey: string
-  supersedesBlockIds: number[]
   status: "active" | "superseded" | "decompressed"
   summaryTokenEstimate: number
   createdAt: number
+  activityLogVersion: 1
+  activityLog: CompressionLogEntry[]
+  metadata: CompressionBlockMetadata
 }
 
 interface PersistedDcpStateV2 {
@@ -251,6 +283,8 @@ interface PersistedDcpStateV2 {
 - `tokensSaved` should no longer be a persisted accumulator.
 - `totalPruneCount` should no longer be a persisted accumulator.
 - `prunedToolIds` should not be the main persistence mechanism in v2 if pruning is truly compress-only.
+- exact coverage, tool IDs, file stats, and artifact refs live in hidden block metadata rather than prompt-visible prose.
+- visible `mNNN` / span IDs should not be rendered inside block text by default; they remain internal/runtime metadata unless debugging requires them.
 
 ### Derived runtime state
 
@@ -314,8 +348,9 @@ For each range:
 
 6. **Persist the new block**
    - store one `CompressionBlockV2`
-   - persist exact `startSpanKey`, `endSpanKey`, and `supersedesBlockIds`
+   - persist exact `startSpanKey`, `endSpanKey`, hidden coverage metadata, and any `supersededBlockIds`
    - preserve the agent summary exactly as written
+   - generate the deterministic chronological activity log from raw covered events, not from semantic inference
    - do not perform placeholder expansion in v2
 
 7. **Supersede old blocks atomically**
@@ -346,15 +381,52 @@ Materialization must be byte-stable for a given source snapshot and block set.
 
 ### Synthetic block format
 
-Keep one canonical rendering format, for example:
+Keep one canonical rendering format with three parts:
+
+1. a short agent-authored summary
+2. a deterministic chronological raw-event log
+3. a stable block marker
+
+For example:
 
 ```text
 [Compressed section: <topic>]
 
+<agent-summary>
 <summary>
+</agent-summary>
+
+<dcp-log v="1">
+u: "<raw user excerpt>"
+a: "<raw assistant excerpt>"
+read: /path/file.ts#L10-L80
+edit: /path/file.ts (+18/-4)
+test: bun run pruner.test.ts -> ok
+commit: 8063f7d "Debounce DCP nudges by user turns"
+</dcp-log>
 
 <dcp-block-id>bN</dcp-block-id>
 ```
+
+Rendering rules:
+- the log is chronological, not grouped by bucket
+- `u:` / `a:` lines are raw quoted/truncated excerpts only; no inferred intent or paraphrased semantics
+- visible `mNNN` / span IDs are omitted from normal block text to avoid confusing the model
+- each log line is capped to a fixed length
+- total rendered block size is capped; if more detail is needed it stays in hidden metadata, not prompt text
+- grouped aggregates such as file read counts are optional footer material, not a replacement for ordered history
+
+### Hidden metadata
+
+Each block also stores internal metadata that is **not** rendered by default:
+- exact covered span/source keys
+- exact artifact refs (including reasoning/tool baggage consumed by closure)
+- exact tool IDs
+- exact file read/write stats
+- superseded block IDs
+- hashes/fingerprints needed for dedup or future debugging
+
+This split keeps the prompt simple while preserving deterministic bookkeeping.
 
 ### Placement rule
 
@@ -442,9 +514,10 @@ This is the desired end state for prompt text in `prompts.ts`.
 
 ### What the agent sees
 
-- visible `mNNN` boundaries
+- visible `mNNN` boundaries in the live transcript
 - optionally visible `bN` markers for compatibility
 - one simple instruction: compress closed visible ranges with exhaustive summaries
+- compressed block bodies that contain a short summary plus a chronological factual log, without embedded visible message IDs by default
 
 ### What the agent no longer sees
 
@@ -546,9 +619,20 @@ Change `compress-tool.ts` so new compressions create `CompressionBlockV2` only.
 
 At this point:
 - placeholder expansion should stop for new blocks
-- supersession should replace overlap rejection
+- new blocks should persist hidden coverage metadata and a deterministic chronological activity log
+- the visible renderer should switch to the bounded summary + factual log format
 
-### Phase 4 — remove v1 mutation paths
+### Phase 4 — make closure-based compression real
+
+Extend compression coverage so a committed block consumes deterministic closure, not just visible messages:
+- reasoning/provider artifacts attached to covered spans
+- full tool exchanges attached to covered spans
+- stale reminder fragments attached to covered spans
+- any other hidden baggage deterministically owned by the closure
+
+This is the primary path to major token reduction.
+
+### Phase 5 — remove v1 mutation paths
 
 Delete or retire:
 - timestamp-based anchor insertion
@@ -557,7 +641,13 @@ Delete or retire:
 - `injectNudge(...)`-style in-message render mutation
 - placeholder expansion requirements in prompts
 
-### Phase 5 — simplify prompts and commands
+### Phase 6 — add rare supersession / recompress support
+
+Once closure-based compression and the bounded renderer are working, support rare recompress of fully covered prior blocks.
+
+This is still useful, but it is secondary to making one compress block compact and closure-complete.
+
+### Phase 7 — simplify prompts and commands
 
 Update:
 - `prompts.ts`
@@ -709,13 +799,15 @@ Recommendation:
 ## Recommended implementation order
 
 1. Add v2 state types and canonical snapshot/span builder.
-2. Add deterministic materialization with no timestamp-anchor insertion.
-3. Change `compress` to create v2 blocks and supersede fully covered prior blocks.
-4. Remove placeholder expansion requirements.
-5. Redesign nudge policy around thresholds + user-turn debounce + post-compress suppression, with render-only advisories.
-6. Remove or redesign dedup/error/sweep so they no longer mutate outside `compress`.
-7. Rebuild stats as derived values.
-8. Update prompts, README, and commands.
+2. Define deterministic closure so one compress consumes visible spans plus attached hidden baggage.
+3. Change `compress` to create bounded v2 blocks with a short summary, deterministic chronological raw-event log, and hidden metadata.
+4. Add deterministic materialization with no timestamp-anchor insertion.
+5. Remove placeholder expansion requirements.
+6. Keep nudges render-only and threshold/debounce based.
+7. Remove or redesign dedup/error/sweep so they no longer mutate outside `compress`.
+8. Rebuild stats as derived values.
+9. Add rare supersession / recompress for fully covered prior blocks.
+10. Update prompts, README, and commands.
 
 ---
 
@@ -726,8 +818,9 @@ The v2 design is:
 - **simple for agents**
 - **deterministic for caching**
 - **transactional for pruning**
-- **recursive for recompressing old compressions**
+- **closure-first for removing hidden baggage**
+- **capable of rare recompress when it is actually needed**
 
 Or more bluntly:
 
-> DCP should stop behaving like a collection of pruning heuristics and start behaving like a deterministic transcript rewrite system whose only write is `compress`.
+> DCP should stop behaving like a collection of pruning heuristics and start behaving like a deterministic transcript rewrite system whose only write is `compress`, whose visible blocks stay small and factual, and whose exact bookkeeping stays internal.
