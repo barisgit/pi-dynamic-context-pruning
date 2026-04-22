@@ -207,6 +207,8 @@ export interface DcpState {
   compressionBlocksV2: CompressionBlockV2[]
   /** Monotonically increasing counter used to assign compression block IDs */
   nextBlockId: number
+  /** Latest rendered visible transcript returned from the `context` hook. */
+  lastRenderedMessages: any[]
 
   // ── Message ID snapshot ────────────────────────────────────────────────────
   /**
@@ -269,6 +271,7 @@ export function createState(): DcpState {
     compressionBlocks: [],
     compressionBlocksV2: [],
     nextBlockId: 1,
+    lastRenderedMessages: [],
     messageIdSnapshot: new Map(),
     currentTurn: 0,
     tokensSaved: 0,
@@ -291,6 +294,7 @@ export function resetState(state: DcpState): void {
   state.compressionBlocks = []
   state.compressionBlocksV2 = []
   state.nextBlockId = 1
+  state.lastRenderedMessages = []
   state.messageIdSnapshot.clear()
   state.currentTurn = 0
   state.tokensSaved = 0

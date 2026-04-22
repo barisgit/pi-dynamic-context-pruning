@@ -12,6 +12,7 @@ import {
 } from "./compress-tool.js";
 import { restorePersistedState, mapLegacyBlockToSpanRange } from "./migration.js";
 import { renderCompressedBlockMessage } from "./materialize.js";
+import { filterProviderPayloadInput } from "./payload-filter.js";
 import { applyPruning, getNudgeType, injectNudge } from "./pruner.js";
 import { buildTranscriptSnapshot } from "./transcript.js";
 import type { DcpState } from "./state.js";
@@ -54,6 +55,7 @@ function makeState(compressionBlocks: DcpState["compressionBlocks"] = []): DcpSt
     compressionBlocks,
     compressionBlocksV2: [],
     nextBlockId: 1,
+    lastRenderedMessages: [],
     messageIdSnapshot: new Map(),
     currentTurn: 0,
     tokensSaved: 0,
@@ -1121,6 +1123,52 @@ function findOrphanedToolUse(result: any[]): string | null {
 }
 
 // ---------------------------------------------------------------------------
+// Test 17b — TOOL METADATA FALLS BACK TO COVERED ASSISTANT TOOLCALL BLOCKS
+// ---------------------------------------------------------------------------
+{
+  console.log("TEST 17b: tool metadata recovers from assistant toolCall blocks");
+
+  const messages: any[] = [
+    { role: "user", content: [{ type: "text", text: "run bash" }], timestamp: 1000 },
+    {
+      role: "assistant",
+      content: [
+        { type: "text", text: "running" },
+        { type: "toolCall", id: "toolu_bash", name: "bash", arguments: { command: "bun run test" } },
+      ],
+      timestamp: 2000,
+    },
+    {
+      role: "bashExecution",
+      toolCallId: "toolu_bash",
+      toolName: "bash",
+      content: [{ type: "text", text: "ok" }],
+      isError: false,
+      timestamp: 3000,
+    },
+  ];
+
+  const artifacts = buildCompressionArtifactsForRange(messages, makeState(), 3000, 3000);
+
+  assert.deepStrictEqual(
+    artifacts.activityLog.map((entry) => `${entry.kind}:${entry.text}`),
+    [
+      'assistant_excerpt:"running"',
+      'test:bun run test -> ok',
+    ],
+    "FAIL — tool metadata should be recovered from assistant toolCall blocks even without state.toolCalls",
+  );
+  assert.deepStrictEqual(
+    artifacts.metadata.commandStats,
+    [{ command: "bun run test", status: "ok" }],
+    "FAIL — command stats should be populated from assistant toolCall arguments",
+  );
+
+  console.log("  PASS: covered assistant toolCall blocks recover missing tool metadata");
+  console.log("TEST 17b PASSED\n");
+}
+
+// ---------------------------------------------------------------------------
 // Test 18 — RECENT TURN PROTECTION STARTS AT THE NTH-MOST-RECENT USER/ASSISTANT TURN
 // ---------------------------------------------------------------------------
 {
@@ -1153,6 +1201,53 @@ function findOrphanedToolUse(result: any[]): string | null {
 
   console.log("  PASS: recent-turn protection is deterministic and assistant turns count");
   console.log("TEST 18 PASSED\n");
+}
+
+// ---------------------------------------------------------------------------
+// Test 19 — PROVIDER PAYLOAD FILTER DROPS STALE COMPRESSED-AWAY TURN BUNDLES
+// ---------------------------------------------------------------------------
+{
+  console.log("TEST 19: provider payload filter removes stale hidden bundles");
+
+  const renderedMessages: any[] = [
+    { role: "user", content: [{ type: "text", text: "current head\n<dcp-id>m001</dcp-id>" }] },
+    { role: "user", content: [{ type: "text", text: "[Compressed section: archived]\n\nsummary\n\n<dcp-block-id>b1</dcp-block-id>" }] },
+    { role: "user", content: [{ type: "text", text: "latest ask\n<dcp-id>m003</dcp-id>" }] },
+  ];
+
+  const payloadInput: any[] = [
+    { role: "user", content: [{ type: "input_text", text: "current head\n<dcp-id>m001</dcp-id>" }] },
+    { type: "reasoning", encrypted_content: "abc" },
+    { role: "assistant", content: [{ type: "output_text", text: "current reply" }] },
+    { role: "user", content: [{ type: "input_text", text: "stale raw turn\n<dcp-id>m002</dcp-id>" }] },
+    { type: "reasoning", encrypted_content: "def" },
+    { type: "function_call", name: "bash", call_id: "toolu_old" },
+    { type: "function_call_output", call_id: "toolu_old", output: "ok" },
+    { role: "assistant", content: [{ type: "output_text", text: "stale reply" }] },
+    { role: "user", content: [{ type: "input_text", text: "[Compressed section: archived]\n\nsummary\n\n<dcp-block-id>b1</dcp-block-id>" }] },
+    { role: "user", content: [{ type: "input_text", text: "latest ask\n<dcp-id>m003</dcp-id>" }] },
+    { type: "reasoning", encrypted_content: "ghi" },
+    { role: "assistant", content: [{ type: "output_text", text: "latest reply" }] },
+  ];
+
+  const filtered = filterProviderPayloadInput(payloadInput, renderedMessages);
+
+  assert.strictEqual(filtered.length, 7, "FAIL — stale middle turn bundle should be removed entirely");
+  assert.ok(
+    !filtered.some((item: any) => item?.role === "user" && JSON.stringify(item.content).includes("m002")),
+    "FAIL — stale raw user turn should have been removed",
+  );
+  assert.ok(
+    !filtered.some((item: any) => item?.type === "function_call" && item.call_id === "toolu_old"),
+    "FAIL — stale function_call should have been removed with its turn bundle",
+  );
+  assert.ok(
+    filtered.some((item: any) => item?.role === "user" && JSON.stringify(item.content).includes("b1")),
+    "FAIL — current compressed block should stay in the provider payload",
+  );
+
+  console.log("  PASS: provider payload filtering removes stale compressed-away payload history");
+  console.log("TEST 19 PASSED\n");
 }
 
 console.log("All tests passed.");

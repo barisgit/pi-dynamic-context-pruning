@@ -22,6 +22,7 @@ import { applyPruning, injectNudge, getNudgeType } from "./pruner.js"
 import { registerCompressTool } from "./compress-tool.js"
 import { registerCommands } from "./commands.js"
 import { restorePersistedState, serializePersistedState } from "./migration.js"
+import { filterProviderPayloadInput } from "./payload-filter.js"
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -33,6 +34,18 @@ import { restorePersistedState, serializePersistedState } from "./migration.js"
  */
 function saveState(pi: ExtensionAPI, state: DcpState): void {
   pi.appendEntry("dcp-state", serializePersistedState(state))
+}
+
+function cloneRenderedMessages(messages: any[]): any[] {
+  return messages.map((message) => {
+    const clone = { ...message }
+    if (Array.isArray(clone.content)) {
+      clone.content = clone.content.map((part: any) =>
+        typeof part === "object" && part !== null ? { ...part } : part,
+      )
+    }
+    return clone
+  })
 }
 
 // ---------------------------------------------------------------------------
@@ -195,10 +208,30 @@ export default function (pi: ExtensionAPI) {
       }
     }
 
+    state.lastRenderedMessages = cloneRenderedMessages(prunedMessages)
+
     return { messages: prunedMessages }
   })
 
-  // ── 11. agent_end: persist state after each agent run ────────────────────
+  // ── 11. before_provider_request: filter stale payload history ─────────────
+  pi.on("before_provider_request", async (event, _ctx) => {
+    const payload = event.payload as any
+    if (!payload || !Array.isArray(payload.input) || state.lastRenderedMessages.length === 0) {
+      return
+    }
+
+    const filteredInput = filterProviderPayloadInput(payload.input, state.lastRenderedMessages)
+    if (filteredInput.length === payload.input.length) {
+      return
+    }
+
+    return {
+      ...payload,
+      input: filteredInput,
+    }
+  })
+
+  // ── 12. agent_end: persist state after each agent run ────────────────────
   pi.on("agent_end", async (_event, _ctx) => {
     saveState(pi, state)
   })

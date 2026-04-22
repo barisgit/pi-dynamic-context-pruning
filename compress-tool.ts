@@ -27,6 +27,11 @@ type CompressionArtifacts = {
   metadata: CompressionBlockMetadata
 }
 
+type ToolCallDescriptor = {
+  toolName: string
+  inputArgs: Record<string, unknown>
+}
+
 /**
  * Replace `(bN)` placeholders in a summary with the stored content of the
  * referenced compression block. Unrecognised placeholders are left as-is.
@@ -75,6 +80,13 @@ function resolveAnchorTimestamp(endTimestamp: number, state: DcpState): number {
     }
   }
   return anchor ?? endTimestamp + 1
+}
+
+function resolveVisibleIdForTimestamp(timestamp: number, state: DcpState): string | null {
+  for (const [messageId, candidateTimestamp] of state.messageIdSnapshot.entries()) {
+    if (candidateTimestamp === timestamp) return messageId
+  }
+  return null
 }
 
 function normalizeInlineWhitespace(text: string): string {
@@ -220,9 +232,51 @@ function summarizeGenericToolArgs(args: Record<string, unknown>): string {
   return ""
 }
 
+function parseToolCallArguments(value: unknown): Record<string, unknown> {
+  if (value !== null && typeof value === "object" && !Array.isArray(value)) {
+    return value as Record<string, unknown>
+  }
+
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value)
+      if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>
+      }
+    } catch {
+      return {}
+    }
+  }
+
+  return {}
+}
+
+function buildToolCallLookup(messages: any[]): Map<string, ToolCallDescriptor> {
+  const lookup = new Map<string, ToolCallDescriptor>()
+
+  for (const message of messages) {
+    if (message?.role !== "assistant" || !Array.isArray(message.content)) continue
+
+    for (const block of message.content) {
+      if (!block || typeof block !== "object") continue
+      if (block.type !== "toolCall" || typeof block.id !== "string" || typeof block.name !== "string") {
+        continue
+      }
+
+      lookup.set(block.id, {
+        toolName: block.name,
+        inputArgs: parseToolCallArguments((block as any).arguments),
+      })
+    }
+  }
+
+  return lookup
+}
+
 function buildToolLogEntry(
   message: any,
   state: DcpState,
+  toolCallLookup: Map<string, ToolCallDescriptor>,
   metadata: CompressionBlockMetadata,
 ): CompressionLogEntry | null {
   const toolCallId = typeof message?.toolCallId === "string" ? message.toolCallId : null
@@ -232,8 +286,11 @@ function buildToolLogEntry(
   }
 
   const record = toolCallId ? state.toolCalls.get(toolCallId) : undefined
-  const toolName = typeof message?.toolName === "string" ? message.toolName : record?.toolName
-  const args = record?.inputArgs ?? {}
+  const descriptor = toolCallId ? toolCallLookup.get(toolCallId) : undefined
+  const toolName = typeof message?.toolName === "string"
+    ? message.toolName
+    : descriptor?.toolName ?? record?.toolName
+  const args = descriptor?.inputArgs ?? record?.inputArgs ?? {}
 
   if (!toolName) return null
 
@@ -358,6 +415,7 @@ function buildCompressionArtifactsFromMessages(
 ): CompressionArtifacts {
   const metadata = createEmptyCompressionBlockMetadata()
   const activityLog: CompressionLogEntry[] = []
+  const toolCallLookup = buildToolCallLookup(messages)
 
   for (const message of messages) {
     const timestamp = typeof message?.timestamp === "number" && Number.isFinite(message.timestamp)
@@ -380,7 +438,7 @@ function buildCompressionArtifactsFromMessages(
     }
 
     if (message?.role === "toolResult" || message?.role === "bashExecution") {
-      const entry = buildToolLogEntry(message, state, metadata)
+      const entry = buildToolLogEntry(message, state, toolCallLookup, metadata)
       if (entry) activityLog.push(entry)
     }
   }
@@ -492,9 +550,10 @@ export function registerCompressTool(
           contextPercent !== null && contextPercent > config.compress.maxContextPercent
 
         if (touchesProtectedTail && !emergencyOverride) {
+          const protectedTailStartId = resolveVisibleIdForTimestamp(protectedTailStartTimestamp, state)
           throw new Error(
             `Compression ranges may not end inside the recent protected tail. ` +
-              `This tail starts at timestamp ${protectedTailStartTimestamp} and protects the last ` +
+              `This tail starts at ${protectedTailStartId ?? "the protected hot-tail boundary"} and protects the last ` +
               `${config.compress.protectRecentTurns} user/assistant turns. ` +
               `Choose an older range or wait for a hard context emergency.`,
           )
@@ -511,9 +570,8 @@ export function registerCompressTool(
             throw new Error(
               `Overlapping compression ranges are not supported. ` +
                 `New range (${startId}..${endId}) overlaps existing block ` +
-                `b${existing.id} "${existing.topic}" ` +
-                `(b${existing.id} covers ${existing.startTimestamp}..${existing.endTimestamp}, ` +
-                `new range covers ${startTimestamp}..${endTimestamp})`,
+                `b${existing.id} "${existing.topic}". ` +
+                `Choose a range entirely before or after b${existing.id}, or compress relative to b${existing.id} itself.`,
             )
           }
         }
