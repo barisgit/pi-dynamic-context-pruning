@@ -1204,49 +1204,51 @@ function findOrphanedToolUse(result: any[]): string | null {
 }
 
 // ---------------------------------------------------------------------------
-// Test 19 — PROVIDER PAYLOAD FILTER DROPS STALE COMPRESSED-AWAY TURN BUNDLES
+// Test 19 — PROVIDER PAYLOAD FILTER PRUNES ONLY PROVEN STALE OWNERS
 // ---------------------------------------------------------------------------
 {
-  console.log("TEST 19: provider payload filter removes stale hidden bundles");
+  console.log("TEST 19: provider payload filter uses proven owner keys only");
 
   const renderedMessages: any[] = [
     { role: "user", content: [{ type: "text", text: "current head\n<dcp-id>m001</dcp-id>" }] },
+    { role: "assistant", content: [{ type: "text", text: "current reply\n<dcp-id>m002</dcp-id>" }] },
     { role: "user", content: [{ type: "text", text: "[Compressed section: archived]\n\nsummary\n\n<dcp-block-id>b1</dcp-block-id>" }] },
     { role: "user", content: [{ type: "text", text: "latest ask\n<dcp-id>m003</dcp-id>" }] },
+    { role: "assistant", content: [{ type: "text", text: "latest reply\n<dcp-id>m004</dcp-id>" }] },
   ];
 
   const payloadInput: any[] = [
     { role: "user", content: [{ type: "input_text", text: "current head\n<dcp-id>m001</dcp-id>" }] },
-    { type: "reasoning", encrypted_content: "abc" },
+    { type: "reasoning", encrypted_content: "keep-current" },
     { role: "assistant", content: [{ type: "output_text", text: "current reply" }] },
-    { role: "user", content: [{ type: "input_text", text: "stale raw turn\n<dcp-id>m002</dcp-id>" }] },
-    { type: "reasoning", encrypted_content: "def" },
+    { role: "assistant", content: [{ type: "output_text", text: "\n<dcp-id>m002</dcp-id>" }] },
+    { role: "user", content: [{ type: "input_text", text: "stale raw turn\n<dcp-id>m005</dcp-id>" }] },
+    { type: "reasoning", encrypted_content: "drop-stale" },
+    { role: "assistant", content: [{ type: "output_text", text: "stale reply" }] },
+    { role: "assistant", content: [{ type: "output_text", text: "\n<dcp-id>m006</dcp-id>" }] },
     { type: "function_call", name: "bash", call_id: "toolu_old" },
     { type: "function_call_output", call_id: "toolu_old", output: "ok" },
-    { role: "assistant", content: [{ type: "output_text", text: "stale reply" }] },
+    { role: "user", content: [{ type: "input_text", text: "The conversation history before this point was compacted into the following summary:\n\n<summary>still canonical</summary>" }] },
     { role: "user", content: [{ type: "input_text", text: "[Compressed section: archived]\n\nsummary\n\n<dcp-block-id>b1</dcp-block-id>" }] },
     { role: "user", content: [{ type: "input_text", text: "latest ask\n<dcp-id>m003</dcp-id>" }] },
-    { type: "reasoning", encrypted_content: "ghi" },
+    { type: "reasoning", encrypted_content: "keep-latest" },
     { role: "assistant", content: [{ type: "output_text", text: "latest reply" }] },
+    { role: "assistant", content: [{ type: "output_text", text: "\n<dcp-id>m004</dcp-id>" }] },
   ];
 
   const filtered = filterProviderPayloadInput(payloadInput, renderedMessages);
+  const serialized = JSON.stringify(filtered);
 
-  assert.strictEqual(filtered.length, 7, "FAIL — stale middle turn bundle should be removed entirely");
-  assert.ok(
-    !filtered.some((item: any) => item?.role === "user" && JSON.stringify(item.content).includes("m002")),
-    "FAIL — stale raw user turn should have been removed",
-  );
-  assert.ok(
-    !filtered.some((item: any) => item?.type === "function_call" && item.call_id === "toolu_old"),
-    "FAIL — stale function_call should have been removed with its turn bundle",
-  );
-  assert.ok(
-    filtered.some((item: any) => item?.role === "user" && JSON.stringify(item.content).includes("b1")),
-    "FAIL — current compressed block should stay in the provider payload",
-  );
+  assert.ok(serialized.includes("keep-current"), "FAIL — reasoning owned by a rendered assistant should stay");
+  assert.ok(serialized.includes("keep-latest"), "FAIL — later reasoning owned by a rendered assistant should stay");
+  assert.ok(!serialized.includes("drop-stale"), "FAIL — reasoning owned by a stale assistant should be pruned");
+  assert.ok(!serialized.includes("m005"), "FAIL — stale raw user turn should be pruned");
+  assert.ok(!serialized.includes("m006"), "FAIL — stale assistant owner tag should be pruned");
+  assert.ok(!serialized.includes("toolu_old"), "FAIL — function_call/function_call_output owned by a stale assistant should be pruned");
+  assert.ok(serialized.includes("still canonical"), "FAIL — compaction should stay when no removable owner is proven");
+  assert.ok(serialized.includes("b1"), "FAIL — current compressed block should stay in the provider payload");
 
-  console.log("  PASS: provider payload filtering removes stale compressed-away payload history");
+  console.log("  PASS: provider payload filtering prunes only items with proven stale owners");
   console.log("TEST 19 PASSED\n");
 }
 
