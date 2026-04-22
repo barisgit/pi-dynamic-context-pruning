@@ -2,14 +2,20 @@
 // Dynamic Context Pruning (DCP) — persisted state migration helpers
 // ---------------------------------------------------------------------------
 
-import type {
-  CompressionBlock,
-  CompressionBlockStatus,
-  CompressionBlockV2,
-  DcpState,
-  PersistedDcpState,
-  PersistedDcpStateV1,
-  PersistedDcpStateV2,
+import {
+  createEmptyCompressionBlockMetadata,
+  type CompressionBlock,
+  type CompressionBlockMetadata,
+  type CompressionBlockStatus,
+  type CompressionBlockV2,
+  type CompressionCommandStat,
+  type CompressionFileReadStat,
+  type CompressionFileWriteStat,
+  type CompressionLogEntry,
+  type DcpState,
+  type PersistedDcpState,
+  type PersistedDcpStateV1,
+  type PersistedDcpStateV2,
 } from "./state.js"
 import type { TranscriptSnapshot } from "./transcript.js"
 
@@ -28,6 +34,94 @@ function isFiniteNumber(value: unknown): value is number {
 
 function normalizeBlockStatus(value: unknown): CompressionBlockStatus {
   return value === "superseded" || value === "decompressed" ? value : "active"
+}
+
+function normalizeStringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : []
+}
+
+function normalizeCompressionLogEntry(value: unknown): CompressionLogEntry | null {
+  const entry = asObject(value)
+  if (!entry || typeof entry.text !== "string") return null
+
+  switch (entry.kind) {
+    case "user_excerpt":
+    case "assistant_excerpt":
+    case "read":
+    case "edit":
+    case "write":
+    case "command":
+    case "test":
+    case "commit":
+    case "tool":
+      return {
+        kind: entry.kind,
+        text: entry.text,
+      }
+    default:
+      return null
+  }
+}
+
+function normalizeFileReadStat(value: unknown): CompressionFileReadStat | null {
+  const stat = asObject(value)
+  if (!stat || typeof stat.path !== "string") return null
+
+  return {
+    path: stat.path,
+    count: isFiniteNumber(stat.count) ? stat.count : 0,
+    lineSpans: normalizeStringArray(stat.lineSpans),
+  }
+}
+
+function normalizeFileWriteStat(value: unknown): CompressionFileWriteStat | null {
+  const stat = asObject(value)
+  if (!stat || typeof stat.path !== "string") return null
+
+  return {
+    path: stat.path,
+    editCount: isFiniteNumber(stat.editCount) ? stat.editCount : 0,
+    addedLines: isFiniteNumber(stat.addedLines) ? stat.addedLines : 0,
+    removedLines: isFiniteNumber(stat.removedLines) ? stat.removedLines : 0,
+  }
+}
+
+function normalizeCommandStat(value: unknown): CompressionCommandStat | null {
+  const stat = asObject(value)
+  if (!stat || typeof stat.command !== "string") return null
+
+  return {
+    command: stat.command,
+    status: stat.status === "ok" || stat.status === "error" ? stat.status : "other",
+  }
+}
+
+function normalizeCompressionBlockMetadata(value: unknown, legacySupersededBlockIds: number[]): CompressionBlockMetadata {
+  const metadata = asObject(value)
+  if (!metadata) {
+    return {
+      ...createEmptyCompressionBlockMetadata(),
+      supersededBlockIds: legacySupersededBlockIds,
+    }
+  }
+
+  return {
+    coveredSpanKeys: normalizeStringArray(metadata.coveredSpanKeys),
+    coveredArtifactRefs: normalizeStringArray(metadata.coveredArtifactRefs),
+    coveredToolIds: normalizeStringArray(metadata.coveredToolIds),
+    supersededBlockIds: Array.isArray(metadata.supersededBlockIds)
+      ? metadata.supersededBlockIds.filter(isFiniteNumber)
+      : legacySupersededBlockIds,
+    fileReadStats: Array.isArray(metadata.fileReadStats)
+      ? metadata.fileReadStats.map(normalizeFileReadStat).filter((stat): stat is CompressionFileReadStat => stat !== null)
+      : [],
+    fileWriteStats: Array.isArray(metadata.fileWriteStats)
+      ? metadata.fileWriteStats.map(normalizeFileWriteStat).filter((stat): stat is CompressionFileWriteStat => stat !== null)
+      : [],
+    commandStats: Array.isArray(metadata.commandStats)
+      ? metadata.commandStats.map(normalizeCommandStat).filter((stat): stat is CompressionCommandStat => stat !== null)
+      : [],
+  }
 }
 
 function normalizeLegacyBlock(value: unknown): CompressionBlock | null {
@@ -75,9 +169,15 @@ function normalizeV2Block(value: unknown): CompressionBlockV2 | null {
     return null
   }
 
-  const supersedesBlockIds = Array.isArray(block.supersedesBlockIds)
+  const legacySupersededBlockIds = Array.isArray(block.supersedesBlockIds)
     ? block.supersedesBlockIds.filter(isFiniteNumber)
     : []
+  const activityLog = Array.isArray(block.activityLog)
+    ? block.activityLog
+        .map(normalizeCompressionLogEntry)
+        .filter((entry): entry is CompressionLogEntry => entry !== null)
+    : []
+  const metadata = normalizeCompressionBlockMetadata(block.metadata, legacySupersededBlockIds)
 
   return {
     id: block.id,
@@ -85,12 +185,14 @@ function normalizeV2Block(value: unknown): CompressionBlockV2 | null {
     summary: block.summary,
     startSpanKey: block.startSpanKey,
     endSpanKey: block.endSpanKey,
-    supersedesBlockIds,
     status: normalizeBlockStatus(block.status),
     summaryTokenEstimate: isFiniteNumber(block.summaryTokenEstimate)
       ? block.summaryTokenEstimate
       : 0,
     createdAt: isFiniteNumber(block.createdAt) ? block.createdAt : Date.now(),
+    activityLogVersion: 1,
+    activityLog,
+    metadata,
   }
 }
 

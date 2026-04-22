@@ -1,5 +1,6 @@
 import type { DcpState } from "./state.js";
 import type { DcpConfig } from "./config.js";
+import { renderCompressedBlockMessage } from "./materialize.js";
 
 // Always-protected tool names for deduplication
 const ALWAYS_PROTECTED_DEDUP = new Set(["compress", "write", "edit"]);
@@ -142,20 +143,11 @@ function applyCompressionBlocks(messages: any[], state: DcpState): any[] {
 
     // Build synthetic user message for the compressed block
     const syntheticMsg = {
-      role: "user",
-      content: [
-        {
-          type: "text",
-          text:
-            "[Compressed section: " +
-            block.topic +
-            "]\n\n" +
-            block.summary +
-            "\n\n<dcp-block-id>b" +
-            block.id +
-            "</dcp-block-id>",
-        },
-      ],
+      ...renderCompressedBlockMessage({
+        id: block.id,
+        topic: block.topic,
+        summary: block.summary,
+      }),
       // anchorTimestamp is always finite (resolveAnchorTimestamp returns
       // endTimestamp + 1 instead of Infinity), but guard against corrupted
       // state from older sessions where Infinity/null could leak in.

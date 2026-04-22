@@ -6,8 +6,9 @@
  */
 
 import assert from "assert";
+import { restorePersistedState, mapLegacyBlockToSpanRange } from "./migration.js";
+import { renderCompressedBlockMessage } from "./materialize.js";
 import { applyPruning, getNudgeType, injectNudge } from "./pruner.js";
-import { mapLegacyBlockToSpanRange } from "./migration.js";
 import { buildTranscriptSnapshot } from "./transcript.js";
 import type { DcpState } from "./state.js";
 import type { DcpConfig } from "./config.js";
@@ -977,6 +978,81 @@ function findOrphanedToolUse(result: any[]): string | null {
 
   console.log("  PASS: legacy timestamp blocks remap to enclosing tool-exchange spans");
   console.log("TEST 14 PASSED\n");
+}
+
+// ---------------------------------------------------------------------------
+// Test 15 — V2 BLOCK RENDERER EMITS A FACTUAL CHRONOLOGICAL LOG
+// ---------------------------------------------------------------------------
+{
+  console.log("TEST 15: v2 block renderer emits summary + chronological log");
+
+  const message = renderCompressedBlockMessage({
+    id: 7,
+    topic: "dogfood block format",
+    summary: "Renderer work started for the new deterministic block shape.",
+    activityLogVersion: 1,
+    activityLog: [
+      { kind: "user_excerpt", text: '"You need to remember one thing: SIMPLE..."' },
+      { kind: "assistant_excerpt", text: '"Default answer: keep `compress` simple..."' },
+      { kind: "command", text: "bun run pruner.test.ts -> ok" },
+      { kind: "commit", text: 'ff104f4 "Refine DCP v2 block design"' },
+    ],
+  });
+
+  const text = message.content?.[0]?.text ?? "";
+  assert.ok(text.includes("[Compressed section: dogfood block format]"), "FAIL — missing compressed section header");
+  assert.ok(text.includes("<agent-summary>"), "FAIL — expected structured summary wrapper when activity log exists");
+  assert.ok(text.includes("<dcp-log v=\"1\">"), "FAIL — expected deterministic log wrapper");
+  assert.ok(text.includes('u: "You need to remember one thing: SIMPLE..."'), "FAIL — expected raw user excerpt log line");
+  assert.ok(text.includes('a: "Default answer: keep `compress` simple..."'), "FAIL — expected raw assistant excerpt log line");
+  assert.ok(text.includes("cmd: bun run pruner.test.ts -> ok"), "FAIL — expected command log line");
+  assert.ok(text.includes('commit: ff104f4 "Refine DCP v2 block design"'), "FAIL — expected commit log line");
+  assert.ok(!text.includes("m029"), "FAIL — visible message ids should not appear in normal rendered block text by default");
+
+  console.log("  PASS: v2 block renderer emits a bounded factual activity log");
+  console.log("TEST 15 PASSED\n");
+}
+
+// ---------------------------------------------------------------------------
+// Test 16 — LEGACY V2 STATE RESTORES INTO NEW METADATA SHAPE
+// ---------------------------------------------------------------------------
+{
+  console.log("TEST 16: legacy v2 state restores into new metadata shape");
+
+  const state = makeState();
+  restorePersistedState(
+    {
+      schemaVersion: 2,
+      nextBlockId: 3,
+      manualMode: false,
+      blocks: [
+        {
+          id: 2,
+          topic: "old v2 block",
+          summary: "Older scaffold block without explicit metadata.",
+          startSpanKey: "span:1",
+          endSpanKey: "span:3",
+          supersedesBlockIds: [1],
+          status: "active",
+          summaryTokenEstimate: 42,
+          createdAt: 123,
+        },
+      ],
+    },
+    state,
+  );
+
+  assert.strictEqual(state.schemaVersion, 2, "FAIL — restore should switch runtime state to schema v2");
+  assert.strictEqual(state.compressionBlocksV2.length, 1, "FAIL — expected one restored v2 block");
+
+  const block = state.compressionBlocksV2[0]!;
+  assert.deepStrictEqual(block.metadata.supersededBlockIds, [1], "FAIL — legacy superseded block ids should migrate into hidden metadata");
+  assert.deepStrictEqual(block.activityLog, [], "FAIL — missing activity log should normalize to an empty array");
+  assert.deepStrictEqual(block.metadata.coveredSpanKeys, [], "FAIL — missing coveredSpanKeys should normalize to an empty array");
+  assert.deepStrictEqual(block.metadata.commandStats, [], "FAIL — missing commandStats should normalize to an empty array");
+
+  console.log("  PASS: legacy v2 scaffold state restores into the new metadata-rich shape");
+  console.log("TEST 16 PASSED\n");
 }
 
 console.log("All tests passed.");

@@ -63,12 +63,73 @@ export interface CompressionBlock {
 /** Status for a v2 span-key compression block. */
 export type CompressionBlockStatus = "active" | "superseded" | "decompressed"
 
+/** Deterministic log entry rendered inside a v2 compressed block. */
+export interface CompressionLogEntry {
+  kind:
+    | "user_excerpt"
+    | "assistant_excerpt"
+    | "read"
+    | "edit"
+    | "write"
+    | "command"
+    | "test"
+    | "commit"
+    | "tool"
+  text: string
+}
+
+/** Hidden per-file read stats attached to a v2 compressed block. */
+export interface CompressionFileReadStat {
+  path: string
+  count: number
+  lineSpans: string[]
+}
+
+/** Hidden per-file write stats attached to a v2 compressed block. */
+export interface CompressionFileWriteStat {
+  path: string
+  editCount: number
+  addedLines: number
+  removedLines: number
+}
+
+/** Hidden per-command stats attached to a v2 compressed block. */
+export interface CompressionCommandStat {
+  command: string
+  status: "ok" | "error" | "other"
+}
+
+/** Hidden deterministic metadata attached to a v2 compressed block. */
+export interface CompressionBlockMetadata {
+  coveredSpanKeys: string[]
+  coveredArtifactRefs: string[]
+  coveredToolIds: string[]
+  supersededBlockIds: number[]
+  fileReadStats: CompressionFileReadStat[]
+  fileWriteStats: CompressionFileWriteStat[]
+  commandStats: CompressionCommandStat[]
+}
+
+/** Create empty hidden metadata for a v2 compressed block. */
+export function createEmptyCompressionBlockMetadata(): CompressionBlockMetadata {
+  return {
+    coveredSpanKeys: [],
+    coveredArtifactRefs: [],
+    coveredToolIds: [],
+    supersededBlockIds: [],
+    fileReadStats: [],
+    fileWriteStats: [],
+    commandStats: [],
+  }
+}
+
 /**
  * Draft v2 compression block.
  *
  * v2 uses canonical span keys instead of raw timestamps and explicitly records
- * superseded prior blocks. Phase 1 only introduces the type and persistence
- * scaffolding — the active runtime still materializes legacy v1 blocks.
+ * deterministic rendered activity plus hidden coverage metadata. Phase 1 only
+ * introduces the type and persistence scaffolding — the active runtime still
+ * materializes legacy v1 blocks.
  */
 export interface CompressionBlockV2 {
   /** Auto-incrementing integer ID */
@@ -81,14 +142,18 @@ export interface CompressionBlockV2 {
   startSpanKey: string
   /** Canonical span key for the last covered span */
   endSpanKey: string
-  /** Active prior blocks fully consumed by this block */
-  supersedesBlockIds: number[]
   /** Lifecycle status of this block */
   status: CompressionBlockStatus
   /** Token estimate for the summary text itself */
   summaryTokenEstimate: number
   /** Wall-clock time the block was created (Date.now()) */
   createdAt: number
+  /** Version of the deterministic visible activity log format */
+  activityLogVersion: 1
+  /** Deterministic chronological activity log shown in the rendered block */
+  activityLog: CompressionLogEntry[]
+  /** Hidden exact coverage and artifact metadata */
+  metadata: CompressionBlockMetadata
 }
 
 /** Persisted v1 DCP state stored in session history. */
