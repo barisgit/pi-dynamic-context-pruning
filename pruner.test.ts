@@ -22,6 +22,7 @@ function makeConfig(): DcpConfig {
     compress: {
       maxContextPercent: 0.8,
       minContextPercent: 0.4,
+      nudgeDebounceTurns: 2,
       nudgeFrequency: 5,
       iterationNudgeThreshold: 15,
       nudgeForce: "soft",
@@ -50,8 +51,8 @@ function makeState(compressionBlocks: DcpState["compressionBlocks"] = []): DcpSt
     tokensSaved: 0,
     totalPruneCount: 0,
     manualMode: false,
-    nudgeCounter: 0,
     lastNudgeTurn: -1,
+    lastCompressTurn: -1,
   };
 }
 
@@ -790,20 +791,19 @@ function findOrphanedToolUse(result: any[]): string | null {
 }
 
 // ---------------------------------------------------------------------------
-// Test 12 — TURN NUDGES SHOULD RESPECT CADENCE AND TURN GATING
+// Test 12 — TURN NUDGES SHOULD RESPECT TURN DEBOUNCE AND COMPRESS COOL-DOWN
 // ---------------------------------------------------------------------------
 {
-  console.log("TEST 12: turn nudge cadence + turn gating");
+  console.log("TEST 12: turn nudge debounce + post-compress suppression");
 
   const config = makeConfig();
   config.compress.minContextPercent = 0.75;
   config.compress.maxContextPercent = 0.9;
-  config.compress.nudgeFrequency = 8;
+  config.compress.nudgeDebounceTurns = 2;
 
   const state = makeState();
   state.currentTurn = 5;
   state.lastNudgeTurn = 5;
-  state.nudgeCounter = 8;
 
   assert.strictEqual(
     getNudgeType(0.8, state, config, 0),
@@ -811,21 +811,46 @@ function findOrphanedToolUse(result: any[]): string | null {
     "FAIL — should not emit a turn nudge twice in the same user turn",
   );
 
-  state.lastNudgeTurn = 4;
-  assert.strictEqual(
-    getNudgeType(0.8, state, config, 0),
-    "turn",
-    "FAIL — should emit a turn nudge when cadence is reached on a new turn",
-  );
-
-  state.nudgeCounter = 7;
+  state.currentTurn = 6;
+  state.lastNudgeTurn = 5;
   assert.strictEqual(
     getNudgeType(0.8, state, config, 0),
     null,
-    "FAIL — should not emit before cadence is reached",
+    "FAIL — should debounce for one newer user turn when debounceTurns=2",
   );
 
-  console.log("  PASS: cadence and turn gating work");
+  state.currentTurn = 7;
+  state.lastNudgeTurn = 5;
+  assert.strictEqual(
+    getNudgeType(0.8, state, config, 0),
+    "turn",
+    "FAIL — should emit once enough newer user turns have happened",
+  );
+
+  state.currentTurn = 7;
+  state.lastCompressTurn = 7;
+  state.lastNudgeTurn = 7;
+  assert.strictEqual(
+    getNudgeType(0.95, state, config, 0),
+    null,
+    "FAIL — should not emit in the same user turn that already compressed",
+  );
+
+  state.currentTurn = 8;
+  assert.strictEqual(
+    getNudgeType(0.95, state, config, 0),
+    null,
+    "FAIL — should stay quiet on the first newer user turn after compress when debounceTurns=2",
+  );
+
+  state.currentTurn = 9;
+  assert.strictEqual(
+    getNudgeType(0.95, state, config, 0),
+    "context-soft",
+    "FAIL — should re-emit once compress cool-down and debounce are both satisfied",
+  );
+
+  console.log("  PASS: turn debounce and post-compress suppression work");
   console.log("TEST 12 PASSED\n");
 }
 

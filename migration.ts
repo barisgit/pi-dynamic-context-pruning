@@ -109,6 +109,8 @@ export function serializePersistedState(state: DcpState): PersistedDcpState {
       blocks: state.compressionBlocksV2,
       nextBlockId: state.nextBlockId,
       manualMode: state.manualMode,
+      lastNudgeTurn: state.lastNudgeTurn,
+      lastCompressTurn: state.lastCompressTurn,
     }
     return persisted
   }
@@ -121,6 +123,8 @@ export function serializePersistedState(state: DcpState): PersistedDcpState {
     tokensSaved: state.tokensSaved,
     totalPruneCount: state.totalPruneCount,
     manualMode: state.manualMode,
+    lastNudgeTurn: state.lastNudgeTurn,
+    lastCompressTurn: state.lastCompressTurn,
   }
   return persisted
 }
@@ -151,6 +155,12 @@ export function restorePersistedState(data: unknown, state: DcpState): void {
 
     if (typeof persisted.manualMode === "boolean") {
       state.manualMode = persisted.manualMode
+    }
+    if (isFiniteNumber(persisted.lastNudgeTurn)) {
+      state.lastNudgeTurn = persisted.lastNudgeTurn
+    }
+    if (isFiniteNumber(persisted.lastCompressTurn)) {
+      state.lastCompressTurn = persisted.lastCompressTurn
     }
 
     return
@@ -183,5 +193,11 @@ export function restorePersistedState(data: unknown, state: DcpState): void {
 
   if (typeof persisted.manualMode === "boolean") {
     state.manualMode = persisted.manualMode
+  }
+  if (isFiniteNumber(persisted.lastNudgeTurn)) {
+    state.lastNudgeTurn = persisted.lastNudgeTurn
+  }
+  if (isFiniteNumber(persisted.lastCompressTurn)) {
+    state.lastCompressTurn = persisted.lastCompressTurn
   }
 }

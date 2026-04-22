@@ -52,12 +52,14 @@ DCP uses a layered configuration system (later layers override earlier ones):
   // "manualMode": { "enabled": true, "automaticStrategies": true },
 
   "compress": {
-    // Above 80 % context: fire a nudge (every nudgeFrequency context events)
-    "maxContextPercent": 0.8,
-    // Below 40 % context: no nudges
-    "minContextPercent": 0.4,
-    // How many context events between nudges
-    "nudgeFrequency": 5,
+    // Above 90 % context: fire an emergency nudge
+    "maxContextPercent": 0.9,
+    // Below 75 % context: no nudges
+    "minContextPercent": 0.75,
+    // Minimum newer user turns between nudges
+    "nudgeDebounceTurns": 2,
+    // Legacy context-pass cadence knob (retained for backward compatibility)
+    "nudgeFrequency": 8,
     // Nudge after this many tool calls since the last user message
     "iterationNudgeThreshold": 15,
     // "strong" = emergency tone, "soft" = housekeeping tone
@@ -123,10 +125,10 @@ When a compression range touches any part of an assistant→toolResult group, DC
 
 | Nudge | Condition |
 |---|---|
-| **context-strong** | Above `maxContextPercent`, nudge counter ≥ `nudgeFrequency`, `nudgeForce = "strong"` |
+| **context-strong** | Above `maxContextPercent`, after turn debounce / post-compress cool-down, `nudgeForce = "strong"` |
 | **context-soft** | Same as above with `nudgeForce = "soft"` |
-| **iteration** | Between min/max percent AND ≥ `iterationNudgeThreshold` tool calls since last user message |
-| **turn** | Between min/max percent, standard cadence |
+| **iteration** | Between min/max percent, after turn debounce / post-compress cool-down, AND ≥ `iterationNudgeThreshold` tool calls since last user message |
+| **turn** | Between min/max percent, after turn debounce / post-compress cool-down |
 
 ### Deduplication
 

@@ -100,6 +100,8 @@ export interface PersistedDcpStateV1 {
   tokensSaved: number
   totalPruneCount: number
   manualMode: boolean
+  lastNudgeTurn?: number
+  lastCompressTurn?: number
 }
 
 /** Persisted v2 DCP state stored in session history. */
@@ -108,6 +110,8 @@ export interface PersistedDcpStateV2 {
   blocks: CompressionBlockV2[]
   nextBlockId: number
   manualMode: boolean
+  lastNudgeTurn?: number
+  lastCompressTurn?: number
 }
 
 /** Any persisted DCP state shape supported during migration. */
@@ -168,16 +172,17 @@ export interface DcpState {
 
   // ── Nudge state ────────────────────────────────────────────────────────────
   /**
-   * How many `context` events have fired since the last compress nudge was
-   * emitted.  Reset to 0 after each nudge.
-   */
-  nudgeCounter: number
-  /**
    * The value of `currentTurn` at the time the last nudge was emitted.
-   * Used to avoid nudging more than once per user turn when nudgeFrequency is
-   * satisfied within the same turn.
+   * Used to debounce nudges by user turns rather than raw context passes.
    */
   lastNudgeTurn: number
+  /**
+   * The value of `currentTurn` at the time the last successful `compress`
+   * transaction completed.
+   *
+   * Used to suppress further nudges until at least one newer user turn exists.
+   */
+  lastCompressTurn: number
 }
 
 // ---------------------------------------------------------------------------
@@ -198,8 +203,8 @@ export function createState(): DcpState {
     tokensSaved: 0,
     totalPruneCount: 0,
     manualMode: false,
-    nudgeCounter: 0,
     lastNudgeTurn: -1,
+    lastCompressTurn: -1,
   }
 }
 
@@ -220,8 +225,8 @@ export function resetState(state: DcpState): void {
   state.tokensSaved = 0
   state.totalPruneCount = 0
   state.manualMode = false
-  state.nudgeCounter = 0
   state.lastNudgeTurn = -1
+  state.lastCompressTurn = -1
 }
 
 // ---------------------------------------------------------------------------

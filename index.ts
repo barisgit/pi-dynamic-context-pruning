@@ -191,10 +191,7 @@ export default function (pi: ExtensionAPI) {
         }
 
         injectNudge(prunedMessages, nudgeText)
-        state.nudgeCounter = 0
         state.lastNudgeTurn = state.currentTurn
-      } else {
-        state.nudgeCounter++
       }
     }
 

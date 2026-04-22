@@ -170,7 +170,7 @@ Use visible boundary IDs and batch independent ranges when practical.
 
 /**
  * Injected as a lightweight reminder between minContextPercent and maxContextPercent
- * at the configured nudgeFrequency cadence.
+ * when turn-based nudge debounce allows it.
  */
 export const TURN_NUDGE = `<dcp-system-reminder>
 If there is an older closed range that is unlikely to be needed immediately, compress it now.

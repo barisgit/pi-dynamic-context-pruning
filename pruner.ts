@@ -509,6 +509,12 @@ export function injectNudge(messages: any[], nudgeText: string): void {
 
 /**
  * Determine if a nudge should fire and return the nudge type, or null.
+ *
+ * Policy:
+ * - only when context usage is above the configured minimum threshold
+ * - debounced by user turns, not raw `context` event cadence
+ * - suppressed immediately after a successful compress until enough newer user
+ *   turns have happened
  */
 export function getNudgeType(
   contextPercent: number,
@@ -516,30 +522,39 @@ export function getNudgeType(
   config: DcpConfig,
   toolCallsSinceLastUser: number
 ): "context-strong" | "context-soft" | "turn" | "iteration" | null {
-  const { maxContextPercent, minContextPercent, nudgeFrequency, nudgeForce, iterationNudgeThreshold } =
-    config.compress;
-  const cadence = Math.max(1, nudgeFrequency);
-  const cadenceReached = state.nudgeCounter >= cadence;
-
-  if (contextPercent > maxContextPercent) {
-    if (!cadenceReached) return null;
-    return nudgeForce === "strong" ? "context-strong" : "context-soft";
-  }
+  const {
+    maxContextPercent,
+    minContextPercent,
+    nudgeDebounceTurns,
+    nudgeForce,
+    iterationNudgeThreshold,
+  } = config.compress;
+  const debounceTurns = Math.max(1, nudgeDebounceTurns);
 
   if (contextPercent <= minContextPercent) {
     return null;
   }
 
-  if (!cadenceReached) {
+  // A successful compress should buy immediate quiet. Do not nudge again in
+  // the same user turn that already produced a compress.
+  if (state.currentTurn <= state.lastCompressTurn) {
     return null;
+  }
+
+  // Debounce by user turns rather than by raw context passes.
+  if (
+    state.lastNudgeTurn >= 0 &&
+    state.currentTurn - state.lastNudgeTurn < debounceTurns
+  ) {
+    return null;
+  }
+
+  if (contextPercent > maxContextPercent) {
+    return nudgeForce === "strong" ? "context-strong" : "context-soft";
   }
 
   if (toolCallsSinceLastUser >= iterationNudgeThreshold) {
     return "iteration";
-  }
-
-  if (state.currentTurn <= state.lastNudgeTurn) {
-    return null;
   }
 
   return "turn";

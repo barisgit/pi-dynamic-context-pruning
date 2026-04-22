@@ -193,6 +193,14 @@ export function registerCompressTool(
         newBlockIds.push(block.id)
       }
 
+      if (newBlockIds.length > 0) {
+        // Treat a successful compress as a reset point for autonomous nudges.
+        // This prevents the agent from being reminded again immediately after
+        // it already complied with the instruction to compress.
+        state.lastCompressTurn = state.currentTurn
+        state.lastNudgeTurn = state.currentTurn
+      }
+
       // ── Notification ────────────────────────────────────────────────────
       if (config.pruneNotification !== "off") {
         const count = params.ranges.length

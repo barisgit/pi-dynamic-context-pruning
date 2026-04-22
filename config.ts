@@ -17,7 +17,8 @@ export interface DcpConfig {
   compress: {
     maxContextPercent: number // 0-1, e.g. 0.9 — above this, aggressive nudges
     minContextPercent: number // 0-1, e.g. 0.75 — below this, no nudges
-    nudgeFrequency: number // inject nudge every N context events (default: 8)
+    nudgeDebounceTurns: number // minimum number of newer user turns between nudges
+    nudgeFrequency: number // legacy context-pass cadence knob; retained for backward compatibility
     iterationNudgeThreshold: number // nudge after N tool calls since last user msg (default: 15)
     nudgeForce: "strong" | "soft"
     protectedTools: string[] // these tool outputs always protected from pruning
@@ -52,6 +53,7 @@ const DEFAULT_CONFIG: DcpConfig = {
   compress: {
     maxContextPercent: 0.9,
     minContextPercent: 0.75,
+    nudgeDebounceTurns: 2,
     nudgeFrequency: 8,
     iterationNudgeThreshold: 15,
     nudgeForce: "soft",
@@ -90,6 +92,7 @@ const DEFAULT_CONFIG_FILE_CONTENT = `{
   // "compress": {
   //   "maxContextPercent": 0.9,
   //   "minContextPercent": 0.75,
+  //   "nudgeDebounceTurns": 2,
   //   "nudgeFrequency": 8,
   //   "iterationNudgeThreshold": 15,
   //   "nudgeForce": "soft",
