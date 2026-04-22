@@ -11,6 +11,7 @@ import type {
   PersistedDcpStateV1,
   PersistedDcpStateV2,
 } from "./state.js"
+import type { TranscriptSnapshot } from "./transcript.js"
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -96,6 +97,53 @@ function normalizeV2Block(value: unknown): CompressionBlockV2 | null {
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
+
+/** Span coverage for one remapped legacy block. */
+export interface LegacyBlockSpanRange {
+  startSpanKey: string
+  endSpanKey: string
+}
+
+function findSourceItemKeyByTimestamp(
+  snapshot: TranscriptSnapshot,
+  timestamp: number,
+): string | null {
+  const item = snapshot.sourceItems.find((candidate) => candidate.timestamp === timestamp)
+  return item?.key ?? null
+}
+
+function findContainingSpanKey(
+  snapshot: TranscriptSnapshot,
+  sourceKey: string,
+): string | null {
+  const span = snapshot.spans.find((candidate) => candidate.sourceKeys.includes(sourceKey))
+  return span?.key ?? null
+}
+
+/**
+ * Map a legacy timestamp-based block onto the current v2 span model.
+ *
+ * If the legacy timestamps fall inside a grouped `tool-exchange` span, the
+ * returned start/end keys point at that encompassing span rather than the raw
+ * underlying source item.
+ */
+export function mapLegacyBlockToSpanRange(
+  block: CompressionBlock,
+  snapshot: TranscriptSnapshot,
+): LegacyBlockSpanRange | null {
+  const startSourceKey = findSourceItemKeyByTimestamp(snapshot, block.startTimestamp)
+  const endSourceKey = findSourceItemKeyByTimestamp(snapshot, block.endTimestamp)
+  if (!startSourceKey || !endSourceKey) return null
+
+  const startSpanKey = findContainingSpanKey(snapshot, startSourceKey)
+  const endSpanKey = findContainingSpanKey(snapshot, endSourceKey)
+  if (!startSpanKey || !endSpanKey) return null
+
+  return {
+    startSpanKey,
+    endSpanKey,
+  }
+}
 
 /**
  * Serialize runtime state back into the most-recent persisted schema seen by

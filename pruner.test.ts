@@ -7,6 +7,8 @@
 
 import assert from "assert";
 import { applyPruning, getNudgeType, injectNudge } from "./pruner.js";
+import { mapLegacyBlockToSpanRange } from "./migration.js";
+import { buildTranscriptSnapshot } from "./transcript.js";
 import type { DcpState } from "./state.js";
 import type { DcpConfig } from "./config.js";
 
@@ -852,6 +854,129 @@ function findOrphanedToolUse(result: any[]): string | null {
 
   console.log("  PASS: turn debounce and post-compress suppression work");
   console.log("TEST 12 PASSED\n");
+}
+
+// ---------------------------------------------------------------------------
+// Test 13 — TRANSCRIPT SNAPSHOT GROUPS TOOL EXCHANGES
+// ---------------------------------------------------------------------------
+{
+  console.log("TEST 13: transcript snapshot groups tool exchanges");
+
+  const messages: any[] = [
+    { role: "user", content: [{ type: "text", text: "run two tools" }], timestamp: 1000 },
+    {
+      role: "assistant",
+      content: [
+        { type: "text", text: "working" },
+        { type: "toolCall", id: "toolu_A", name: "read", arguments: {} },
+        { type: "toolCall", id: "toolu_B", name: "bash", arguments: {} },
+      ],
+      timestamp: 2000,
+    },
+    {
+      role: "toolResult",
+      toolCallId: "toolu_A",
+      toolName: "read",
+      content: [{ type: "text", text: "file contents" }],
+      isError: false,
+      timestamp: 3000,
+    },
+    {
+      role: "branch_summary",
+      content: [{ type: "text", text: "internal passthrough" }],
+      timestamp: 3500,
+    },
+    {
+      role: "bashExecution",
+      toolCallId: "toolu_B",
+      toolName: "bash",
+      content: [{ type: "text", text: "exit 0" }],
+      isError: false,
+      timestamp: 4000,
+    },
+    { role: "user", content: [{ type: "text", text: "thanks" }], timestamp: 5000 },
+  ];
+
+  const snapshot = buildTranscriptSnapshot(messages);
+
+  assert.strictEqual(snapshot.sourceItems.length, 6, "FAIL — sourceItems should include every raw message");
+  assert.strictEqual(snapshot.spans.length, 3, "FAIL — expected user / tool-exchange / user spans");
+
+  const exchange = snapshot.spans[1]!;
+  assert.strictEqual(exchange.kind, "tool-exchange", "FAIL — middle span should be a tool-exchange");
+  assert.strictEqual(exchange.role, "assistant", "FAIL — tool-exchange span role should be assistant");
+  assert.strictEqual(exchange.messageCount, 4, "FAIL — tool-exchange should include assistant + results + passthrough");
+  assert.strictEqual(exchange.startSourceKey, snapshot.sourceItems[1]!.key, "FAIL — tool-exchange should start at the assistant");
+  assert.strictEqual(exchange.endSourceKey, snapshot.sourceItems[4]!.key, "FAIL — tool-exchange should end at the final linked result");
+  assert.deepStrictEqual(
+    exchange.sourceKeys,
+    snapshot.sourceItems.slice(1, 5).map((item) => item.key),
+    "FAIL — tool-exchange should cover the assistant, linked results, and passthrough entries",
+  );
+
+  console.log("  PASS: transcript snapshot builds coherent tool-exchange spans");
+  console.log("TEST 13 PASSED\n");
+}
+
+// ---------------------------------------------------------------------------
+// Test 14 — LEGACY BLOCKS MAP TO ENCOMPASSING TOOL-EXCHANGE SPANS
+// ---------------------------------------------------------------------------
+{
+  console.log("TEST 14: legacy block remap targets enclosing tool-exchange span");
+
+  const messages: any[] = [
+    { role: "user", content: [{ type: "text", text: "run two tools" }], timestamp: 1000 },
+    {
+      role: "assistant",
+      content: [
+        { type: "toolCall", id: "toolu_A", name: "read", arguments: {} },
+        { type: "toolCall", id: "toolu_B", name: "bash", arguments: {} },
+      ],
+      timestamp: 2000,
+    },
+    {
+      role: "toolResult",
+      toolCallId: "toolu_A",
+      toolName: "read",
+      content: [{ type: "text", text: "file contents" }],
+      isError: false,
+      timestamp: 3000,
+    },
+    {
+      role: "bashExecution",
+      toolCallId: "toolu_B",
+      toolName: "bash",
+      content: [{ type: "text", text: "exit 0" }],
+      isError: false,
+      timestamp: 4000,
+    },
+    { role: "user", content: [{ type: "text", text: "thanks" }], timestamp: 5000 },
+  ];
+
+  const snapshot = buildTranscriptSnapshot(messages);
+  const toolExchange = snapshot.spans[1]!;
+
+  const mapped = mapLegacyBlockToSpanRange(
+    {
+      id: 1,
+      topic: "single tool result",
+      summary: "Tool result compressed.",
+      startTimestamp: 3000,
+      endTimestamp: 3000,
+      anchorTimestamp: 3001,
+      active: true,
+      summaryTokenEstimate: 10,
+      createdAt: 1,
+    },
+    snapshot,
+  );
+
+  assert.ok(mapped, "FAIL — legacy block should map onto snapshot spans");
+  assert.strictEqual(mapped!.startSpanKey, toolExchange.key, "FAIL — start timestamp inside tool exchange should map to the exchange span");
+  assert.strictEqual(mapped!.endSpanKey, toolExchange.key, "FAIL — end timestamp inside tool exchange should map to the exchange span");
+
+  console.log("  PASS: legacy timestamp blocks remap to enclosing tool-exchange spans");
+  console.log("TEST 14 PASSED\n");
 }
 
 console.log("All tests passed.");

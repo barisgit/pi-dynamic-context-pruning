@@ -58,6 +58,42 @@ function getTimestamp(message: any): number | null {
     : null
 }
 
+const PASSTHROUGH_ROLES = new Set(["compaction", "branch_summary", "custom_message"])
+
+function getAssistantToolCallIds(message: any): Set<string> {
+  const ids = new Set<string>()
+  const content: any[] = Array.isArray(message?.content) ? message.content : []
+
+  for (const block of content) {
+    if (block?.type === "toolCall" && typeof block.id === "string") {
+      ids.add(block.id)
+    }
+  }
+
+  return ids
+}
+
+function isMatchingToolResult(message: any, toolCallIds: Set<string>): boolean {
+  const role = getRole(message)
+  if (role !== "toolResult" && role !== "bashExecution") return false
+  return typeof message?.toolCallId === "string" && toolCallIds.has(message.toolCallId)
+}
+
+function createSpan(kind: TranscriptSpanKind, items: TranscriptSourceItem[]): TranscriptSpan {
+  const first = items[0]!
+  const last = items[items.length - 1]!
+
+  return {
+    key: `span:${first.key}..${last.key}`,
+    kind,
+    startSourceKey: first.key,
+    endSourceKey: last.key,
+    sourceKeys: items.map((item) => item.key),
+    role: first.role,
+    messageCount: items.length,
+  }
+}
+
 /**
  * Build a deterministic source-item key.
  *
@@ -79,8 +115,10 @@ export function buildSourceItemKey(message: any, ordinal: number): string {
 /**
  * Build a Phase 1 transcript snapshot.
  *
- * For now, each source message becomes its own `message` span. Future phases
- * will coalesce assistant/tool-result groups into `tool-exchange` spans.
+ * This now performs one low-risk structural upgrade for v2: assistant messages
+ * with tool calls are grouped together with their immediately-following
+ * matching `toolResult` / `bashExecution` messages plus intervening passthrough
+ * roles into a single `tool-exchange` span.
  */
 export function buildTranscriptSnapshot(messages: any[]): TranscriptSnapshot {
   const sourceItems: TranscriptSourceItem[] = messages.map((message, ordinal) => {
@@ -94,15 +132,51 @@ export function buildTranscriptSnapshot(messages: any[]): TranscriptSnapshot {
     }
   })
 
-  const spans: TranscriptSpan[] = sourceItems.map((item) => ({
-    key: `span:${item.key}`,
-    kind: "message",
-    startSourceKey: item.key,
-    endSourceKey: item.key,
-    sourceKeys: [item.key],
-    role: item.role,
-    messageCount: 1,
-  }))
+  const spans: TranscriptSpan[] = []
+
+  for (let i = 0; i < sourceItems.length; i++) {
+    const item = sourceItems[i]!
+
+    if (item.role === "assistant") {
+      const toolCallIds = getAssistantToolCallIds(item.message)
+
+      if (toolCallIds.size > 0) {
+        const grouped: TranscriptSourceItem[] = [item]
+        const trailingPassthrough: TranscriptSourceItem[] = []
+        let matchedResult = false
+        let j = i + 1
+
+        while (j < sourceItems.length) {
+          const next = sourceItems[j]!
+
+          if (PASSTHROUGH_ROLES.has(next.role)) {
+            trailingPassthrough.push(next)
+            j++
+            continue
+          }
+
+          if (isMatchingToolResult(next.message, toolCallIds)) {
+            grouped.push(...trailingPassthrough, next)
+            trailingPassthrough.length = 0
+            matchedResult = true
+            j++
+            continue
+          }
+
+          break
+        }
+
+        if (matchedResult) {
+          grouped.push(...trailingPassthrough)
+          spans.push(createSpan("tool-exchange", grouped))
+          i = j - 1
+          continue
+        }
+      }
+    }
+
+    spans.push(createSpan("message", [item]))
+  }
 
   return { sourceItems, spans }
 }
