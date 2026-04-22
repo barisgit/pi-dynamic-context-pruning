@@ -21,6 +21,8 @@ export interface DcpConfig {
     nudgeFrequency: number // legacy context-pass cadence knob; retained for backward compatibility
     iterationNudgeThreshold: number // nudge after N tool calls since last user msg (default: 15)
     protectRecentTurns: number // protect the hot tail beginning at the Nth-most-recent user/assistant turn
+    renderFullBlockCount: number // newest N compressed blocks render in full detail
+    renderCompactBlockCount: number // next N older compressed blocks render in compact form; the rest become minimal
     nudgeForce: "strong" | "soft"
     protectedTools: string[] // these tool outputs always protected from pruning
     protectUserMessages: boolean
@@ -58,6 +60,8 @@ const DEFAULT_CONFIG: DcpConfig = {
     nudgeFrequency: 8,
     iterationNudgeThreshold: 15,
     protectRecentTurns: 4,
+    renderFullBlockCount: 2,
+    renderCompactBlockCount: 3,
     nudgeForce: "soft",
     protectedTools: ["compress", "write", "edit"],
     protectUserMessages: false,
@@ -98,6 +102,8 @@ const DEFAULT_CONFIG_FILE_CONTENT = `{
   //   "nudgeFrequency": 8,
   //   "iterationNudgeThreshold": 15,
   //   "protectRecentTurns": 4,
+  //   "renderFullBlockCount": 2,
+  //   "renderCompactBlockCount": 3,
   //   "nudgeForce": "soft",
   //   "protectedTools": ["compress", "write", "edit"],
   //   "protectUserMessages": false

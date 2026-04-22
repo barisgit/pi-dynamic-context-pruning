@@ -13,6 +13,8 @@ export interface MaterializedTranscript {
   renderedBlockIds: number[]
 }
 
+export type CompressionBlockRenderDetail = "full" | "compact" | "minimal"
+
 /** Minimal shared shape needed to render a compressed block message. */
 export interface CompressionBlockRenderData {
   id: number
@@ -20,10 +22,13 @@ export interface CompressionBlockRenderData {
   summary: string
   activityLogVersion?: number
   activityLog?: CompressionLogEntry[]
+  detailLevel?: CompressionBlockRenderDetail
 }
 
 const MAX_ACTIVITY_LOG_LINES = 24
 const MAX_ACTIVITY_LOG_CHARS = 160
+const MAX_COMPACT_SUMMARY_CHARS = 320
+const MAX_MINIMAL_SUMMARY_CHARS = 140
 
 function cloneMessage(message: any): any {
   const clone = { ...message }
@@ -59,11 +64,19 @@ function renderLogEntry(entry: CompressionLogEntry): string {
 
 /** Render the plain text body for a compressed block. */
 export function renderCompressedBlockText(block: CompressionBlockRenderData): string {
+  const detailLevel = block.detailLevel ?? "full"
   const summary = block.summary.trim()
+  const normalizedSummary = normalizeInlineWhitespace(summary)
   const activityLog = (block.activityLog ?? []).slice(0, MAX_ACTIVITY_LOG_LINES)
   const parts = [`[Compressed section: ${block.topic}]`]
 
-  if (activityLog.length > 0) {
+  if (detailLevel === "minimal") {
+    parts.push(truncateText(normalizedSummary, MAX_MINIMAL_SUMMARY_CHARS))
+  } else if (detailLevel === "compact") {
+    parts.push(
+      `<agent-summary>\n${truncateText(summary, MAX_COMPACT_SUMMARY_CHARS)}\n</agent-summary>`,
+    )
+  } else if (activityLog.length > 0) {
     parts.push(`<agent-summary>\n${summary}\n</agent-summary>`)
     parts.push(
       `<dcp-log v="${block.activityLogVersion ?? 1}">\n${activityLog

@@ -129,9 +129,22 @@ export function resolveCompressionRangeIndices(
  * Apply active compression blocks to the message array.
  * Mutates messages in place (via splice/sort) and returns it.
  */
-function applyCompressionBlocks(messages: any[], state: DcpState): any[] {
+function applyCompressionBlocks(messages: any[], state: DcpState, config: DcpConfig): any[] {
   const activeBlocks = state.compressionBlocks.filter((b) => b.active);
   if (activeBlocks.length === 0) return messages;
+
+  const blocksByRecency = [...activeBlocks].sort(
+    (a, b) => (b.createdAt ?? b.id) - (a.createdAt ?? a.id),
+  );
+  const blockDetailById = new Map<number, "full" | "compact" | "minimal">();
+  const fullCount = Math.max(0, Math.floor(config.compress.renderFullBlockCount));
+  const compactCount = Math.max(0, Math.floor(config.compress.renderCompactBlockCount));
+
+  blocksByRecency.forEach((block, index) => {
+    const detailLevel =
+      index < fullCount ? "full" : index < fullCount + compactCount ? "compact" : "minimal";
+    blockDetailById.set(block.id, detailLevel);
+  });
 
   for (const block of activeBlocks) {
     // Skip blocks with corrupted timestamps (from pre-fix sessions)
@@ -159,6 +172,7 @@ function applyCompressionBlocks(messages: any[], state: DcpState): any[] {
         summary: block.summary,
         activityLogVersion: block.activityLogVersion,
         activityLog: block.activityLog,
+        detailLevel: blockDetailById.get(block.id),
       }),
       // anchorTimestamp is always finite (resolveAnchorTimestamp returns
       // endTimestamp + 1 instead of Infinity), but guard against corrupted
@@ -430,7 +444,7 @@ export function applyPruning(
   state.currentTurn = msgs.filter((m) => m.role === "user").length;
 
   // 2. Apply active compression blocks
-  applyCompressionBlocks(msgs, state);
+  applyCompressionBlocks(msgs, state, config);
 
   // 2b. Post-compression safety net: remove any orphaned tool pairs that the
   // expansion logic could not catch (e.g. multi-block interactions, pre-broken state).
@@ -535,7 +549,7 @@ export function getNudgeType(
   } = config.compress;
   const debounceTurns = Math.max(1, nudgeDebounceTurns);
 
-  if (contextPercent <= minContextPercent) {
+  if (contextPercent < minContextPercent) {
     return null;
   }
 

@@ -34,6 +34,8 @@ function makeConfig(): DcpConfig {
       nudgeFrequency: 5,
       iterationNudgeThreshold: 15,
       protectRecentTurns: 4,
+      renderFullBlockCount: 2,
+      renderCompactBlockCount: 3,
       nudgeForce: "soft",
       protectedTools: [],
       protectUserMessages: false,
@@ -836,6 +838,11 @@ function findOrphanedToolUse(result: any[]): string | null {
     "turn",
     "FAIL — should emit once enough newer user turns have happened",
   );
+  assert.strictEqual(
+    getNudgeType(0.75, state, config, 0),
+    "turn",
+    "FAIL — hitting the exact minimum threshold should now be enough to emit a nudge",
+  );
 
   state.currentTurn = 7;
   state.lastCompressTurn = 7;
@@ -1016,7 +1023,28 @@ function findOrphanedToolUse(result: any[]): string | null {
   assert.ok(text.includes('commit: ff104f4 "Refine DCP v2 block design"'), "FAIL — expected commit log line");
   assert.ok(!text.includes("m029"), "FAIL — visible message ids should not appear in normal rendered block text by default");
 
-  console.log("  PASS: v2 block renderer emits a bounded factual activity log");
+  const compact = renderCompressedBlockMessage({
+    id: 8,
+    topic: "older block",
+    summary: "A much older compressed block should still keep a bounded summary but drop the detailed chronological activity log once it is no longer one of the newest active blocks.",
+    activityLogVersion: 1,
+    activityLog: [{ kind: "command", text: "bun run pruner.test.ts -> ok" }],
+    detailLevel: "compact",
+  }).content?.[0]?.text ?? "";
+  assert.ok(compact.includes("<agent-summary>"), "FAIL — compact blocks should still render an agent summary");
+  assert.ok(!compact.includes("<dcp-log v=\"1\">"), "FAIL — compact blocks should omit the detailed log");
+
+  const minimal = renderCompressedBlockMessage({
+    id: 9,
+    topic: "oldest block",
+    summary: "The oldest block in the transcript should collapse to a one-line style summary so synthetic block history does not keep expanding forever even when the compressed semantics stay the same.",
+    detailLevel: "minimal",
+  }).content?.[0]?.text ?? "";
+  assert.ok(!minimal.includes("<agent-summary>"), "FAIL — minimal blocks should omit the structured summary wrapper");
+  assert.ok(!minimal.includes("<dcp-log v=\"1\">"), "FAIL — minimal blocks should omit the detailed log");
+  assert.ok(minimal.includes("<dcp-block-id>b9</dcp-block-id>"), "FAIL — minimal blocks should still keep the stable block marker");
+
+  console.log("  PASS: v2 block renderer emits full, compact, and minimal deterministic forms");
   console.log("TEST 15 PASSED\n");
 }
 
