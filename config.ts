@@ -15,11 +15,12 @@ export interface DcpConfig {
     automaticStrategies: boolean // run dedup/purge even in manual mode
   }
   compress: {
-    maxContextPercent: number // 0-1, e.g. 0.9 — above this, aggressive nudges
+    maxContextPercent: number // 0-1, e.g. 0.9 — above this, aggressive nudges / emergency override
     minContextPercent: number // 0-1, e.g. 0.75 — below this, no nudges
     nudgeDebounceTurns: number // minimum number of newer user turns between nudges
     nudgeFrequency: number // legacy context-pass cadence knob; retained for backward compatibility
     iterationNudgeThreshold: number // nudge after N tool calls since last user msg (default: 15)
+    protectRecentTurns: number // protect the hot tail beginning at the Nth-most-recent user/assistant turn
     nudgeForce: "strong" | "soft"
     protectedTools: string[] // these tool outputs always protected from pruning
     protectUserMessages: boolean
@@ -56,6 +57,7 @@ const DEFAULT_CONFIG: DcpConfig = {
     nudgeDebounceTurns: 2,
     nudgeFrequency: 8,
     iterationNudgeThreshold: 15,
+    protectRecentTurns: 4,
     nudgeForce: "soft",
     protectedTools: ["compress", "write", "edit"],
     protectUserMessages: false,
@@ -95,6 +97,7 @@ const DEFAULT_CONFIG_FILE_CONTENT = `{
   //   "nudgeDebounceTurns": 2,
   //   "nudgeFrequency": 8,
   //   "iterationNudgeThreshold": 15,
+  //   "protectRecentTurns": 4,
   //   "nudgeForce": "soft",
   //   "protectedTools": ["compress", "write", "edit"],
   //   "protectUserMessages": false

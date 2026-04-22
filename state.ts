@@ -58,6 +58,12 @@ export interface CompressionBlock {
   summaryTokenEstimate: number
   /** Wall-clock time the block was created (Date.now()) */
   createdAt: number
+  /** Version of the deterministic visible activity log format */
+  activityLogVersion?: 1
+  /** Deterministic chronological activity log shown in the rendered block */
+  activityLog?: CompressionLogEntry[]
+  /** Hidden exact coverage and artifact metadata */
+  metadata?: CompressionBlockMetadata
 }
 
 /** Status for a v2 span-key compression block. */

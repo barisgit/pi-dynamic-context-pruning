@@ -62,6 +62,8 @@ DCP uses a layered configuration system (later layers override earlier ones):
     "nudgeFrequency": 8,
     // Nudge after this many tool calls since the last user message
     "iterationNudgeThreshold": 15,
+    // Protect the hot tail beginning at the Nth-most-recent user/assistant turn
+    "protectRecentTurns": 4,
     // "strong" = emergency tone, "soft" = housekeeping tone
     "nudgeForce": "soft",
     // These tool outputs are never auto-pruned
@@ -114,6 +116,8 @@ When the LLM calls the `compress` tool it provides one or more `{startId, endId,
 2. On every `context` event, splices out the raw messages in that range
 3. Injects a synthetic `[Compressed section: …]` user message containing the summary
 4. Keeps the block state in the session so it survives restarts
+
+By default, DCP also protects the hot tail of the conversation: ranges that end inside the last `protectRecentTurns` user/assistant turns are rejected unless the session is already above the hard emergency threshold (`maxContextPercent`).
 
 Message IDs (`m001`, `m042`, etc.) and block IDs (`b1`, `b3`) are injected into every message in the context so the LLM can reference exact boundaries.
 

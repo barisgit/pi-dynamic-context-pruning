@@ -138,6 +138,12 @@ function normalizeLegacyBlock(value: unknown): CompressionBlock | null {
     return null
   }
 
+  const activityLog = Array.isArray(block.activityLog)
+    ? block.activityLog
+        .map(normalizeCompressionLogEntry)
+        .filter((entry): entry is CompressionLogEntry => entry !== null)
+    : undefined
+
   return {
     id: block.id,
     topic: block.topic,
@@ -152,6 +158,9 @@ function normalizeLegacyBlock(value: unknown): CompressionBlock | null {
       ? block.summaryTokenEstimate
       : 0,
     createdAt: isFiniteNumber(block.createdAt) ? block.createdAt : Date.now(),
+    activityLogVersion: activityLog ? 1 : undefined,
+    activityLog,
+    metadata: normalizeCompressionBlockMetadata(block.metadata, []),
   }
 }
 

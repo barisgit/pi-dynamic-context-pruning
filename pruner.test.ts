@@ -6,6 +6,10 @@
  */
 
 import assert from "assert";
+import {
+  buildCompressionArtifactsForRange,
+  resolveProtectedTailStartTimestamp,
+} from "./compress-tool.js";
 import { restorePersistedState, mapLegacyBlockToSpanRange } from "./migration.js";
 import { renderCompressedBlockMessage } from "./materialize.js";
 import { applyPruning, getNudgeType, injectNudge } from "./pruner.js";
@@ -28,6 +32,7 @@ function makeConfig(): DcpConfig {
       nudgeDebounceTurns: 2,
       nudgeFrequency: 5,
       iterationNudgeThreshold: 15,
+      protectRecentTurns: 4,
       nudgeForce: "soft",
       protectedTools: [],
       protectUserMessages: false,
@@ -1053,6 +1058,101 @@ function findOrphanedToolUse(result: any[]): string | null {
 
   console.log("  PASS: legacy v2 scaffold state restores into the new metadata-rich shape");
   console.log("TEST 16 PASSED\n");
+}
+
+// ---------------------------------------------------------------------------
+// Test 17 — LEGACY COMPRESS ARTIFACTS REUSE THE EXPANDED TOOL RANGE
+// ---------------------------------------------------------------------------
+{
+  console.log("TEST 17: legacy compress artifacts include expanded assistant + tool metadata");
+
+  const messages: any[] = [
+    { role: "user", content: [{ type: "text", text: "please read the file" }], timestamp: 1000 },
+    {
+      role: "assistant",
+      content: [
+        { type: "text", text: "I'll inspect it." },
+        { type: "toolCall", id: "toolu_read", name: "read", arguments: { path: "src/app.ts", offset: 10, limit: 5 } },
+      ],
+      timestamp: 2000,
+    },
+    {
+      role: "toolResult",
+      toolCallId: "toolu_read",
+      toolName: "read",
+      content: [{ type: "text", text: "file contents" }],
+      isError: false,
+      timestamp: 3000,
+    },
+    { role: "user", content: [{ type: "text", text: "thanks" }], timestamp: 4000 },
+  ];
+
+  const state = makeState();
+  state.toolCalls.set("toolu_read", {
+    toolCallId: "toolu_read",
+    toolName: "read",
+    inputArgs: { path: "src/app.ts", offset: 10, limit: 5 },
+    inputFingerprint: "read::{}",
+    isError: false,
+    turnIndex: 0,
+    timestamp: 3000,
+    tokenEstimate: 10,
+  });
+
+  const artifacts = buildCompressionArtifactsForRange(messages, state, 3000, 3000);
+
+  assert.deepStrictEqual(
+    artifacts.activityLog.map((entry) => `${entry.kind}:${entry.text}`),
+    [
+      'assistant_excerpt:"I\'ll inspect it."',
+      'read:src/app.ts#L10-L14',
+    ],
+    "FAIL — activity log should include the backward-expanded assistant excerpt and deterministic read record",
+  );
+  assert.deepStrictEqual(artifacts.metadata.coveredToolIds, ["toolu_read"], "FAIL — covered tool ids should include the read call");
+  assert.deepStrictEqual(
+    artifacts.metadata.fileReadStats,
+    [{ path: "src/app.ts", count: 1, lineSpans: ["L10-L14"] }],
+    "FAIL — file read stats should be populated from tool input args",
+  );
+
+  console.log("  PASS: legacy compress artifacts reuse expanded range coverage and tool metadata");
+  console.log("TEST 17 PASSED\n");
+}
+
+// ---------------------------------------------------------------------------
+// Test 18 — RECENT TURN PROTECTION STARTS AT THE NTH-MOST-RECENT USER/ASSISTANT TURN
+// ---------------------------------------------------------------------------
+{
+  console.log("TEST 18: recent-turn protection guards the hot conversational tail");
+
+  const messages: any[] = [
+    { role: "user", content: [{ type: "text", text: "one" }], timestamp: 1000 },
+    { role: "assistant", content: [{ type: "text", text: "two" }], timestamp: 2000 },
+    { role: "toolResult", toolCallId: "toolu_x", toolName: "read", content: [{ type: "text", text: "ignored" }], timestamp: 3000 },
+    { role: "assistant", content: [{ type: "text", text: "three" }], timestamp: 4000 },
+    { role: "bashExecution", toolCallId: "toolu_y", toolName: "bash", content: [{ type: "text", text: "ignored" }], timestamp: 5000 },
+    { role: "user", content: [{ type: "text", text: "four" }], timestamp: 6000 },
+  ];
+
+  assert.strictEqual(
+    resolveProtectedTailStartTimestamp(messages, 2),
+    4000,
+    "FAIL — protecting the last 2 user/assistant turns should start at timestamp 4000",
+  );
+  assert.strictEqual(
+    resolveProtectedTailStartTimestamp(messages, 4),
+    1000,
+    "FAIL — when fewer than 4 conversational turns exist beyond the head, protection should extend to the earliest available turn",
+  );
+  assert.strictEqual(
+    resolveProtectedTailStartTimestamp(messages, 0),
+    null,
+    "FAIL — zero protected turns should disable recent-turn protection",
+  );
+
+  console.log("  PASS: recent-turn protection is deterministic and assistant turns count");
+  console.log("TEST 18 PASSED\n");
 }
 
 console.log("All tests passed.");

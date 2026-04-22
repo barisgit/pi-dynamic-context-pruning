@@ -41,6 +41,91 @@ function estimateMessageTokens(msg: any): number {
 }
 
 /**
+ * Resolve the inclusive message index range covered by a timestamp-bounded
+ * compression block, including the same assistant/tool-result expansion rules
+ * used by the live pruning path.
+ */
+export function resolveCompressionRangeIndices(
+  messages: any[],
+  startTimestamp: number,
+  endTimestamp: number,
+): { lo: number; hi: number } | null {
+  const startIdx = messages.findIndex((m) => m.timestamp === startTimestamp);
+  const endIdx = messages.findIndex((m) => m.timestamp === endTimestamp);
+
+  if (startIdx === -1 || endIdx === -1) return null;
+
+  let lo = Math.min(startIdx, endIdx);
+  let hi = Math.max(startIdx, endIdx);
+
+  // Expand lo backward: if there is an assistant before lo whose tool_use
+  // blocks have matching tool_results inside [lo..hi], pull the entire
+  // assistant + any intermediate result messages into the range so the
+  // group is always removed atomically.
+  while (lo > 0) {
+    let scanIdx = lo - 1;
+    while (scanIdx >= 0) {
+      const r = (messages[scanIdx] as any).role as string;
+      if (r !== "toolResult" && r !== "bashExecution" && !PASSTHROUGH_ROLES.has(r)) break;
+      scanIdx--;
+    }
+    if (scanIdx < 0 || (messages[scanIdx] as any).role !== "assistant") break;
+
+    const prev = messages[scanIdx] as any;
+    const toolCallIdsInRange = new Set<string>();
+    for (let i = lo; i <= hi; i++) {
+      const m = messages[i] as any;
+      if (
+        (m.role === "toolResult" || m.role === "bashExecution") &&
+        typeof m.toolCallId === "string"
+      ) {
+        toolCallIdsInRange.add(m.toolCallId);
+      }
+    }
+    const prevContent: any[] = Array.isArray(prev.content) ? prev.content : [];
+    const hasMatchingToolCalls = prevContent.some(
+      (block: any) => block.type === "toolCall" && toolCallIdsInRange.has(block.id)
+    );
+    if (!hasMatchingToolCalls) break;
+    lo = scanIdx;
+  }
+
+  // Expand hi forward: for every assistant message in [lo..hi] that has
+  // tool_use blocks, include any immediately-following tool_result messages
+  // that correspond to those blocks.
+  let prevHi: number;
+  do {
+    prevHi = hi;
+    const assistantToolCallIds = new Set<string>();
+    for (let i = lo; i <= hi; i++) {
+      const m = messages[i] as any;
+      if (m.role !== "assistant") continue;
+      const content: any[] = Array.isArray(m.content) ? m.content : [];
+      for (const block of content) {
+        if (block.type === "toolCall" && typeof block.id === "string") {
+          assistantToolCallIds.add(block.id);
+        }
+      }
+    }
+    while (hi + 1 < messages.length) {
+      const next = messages[hi + 1] as any;
+      if (
+        (next.role === "toolResult" || next.role === "bashExecution") &&
+        assistantToolCallIds.has(next.toolCallId)
+      ) {
+        hi++;
+      } else if (PASSTHROUGH_ROLES.has(next.role)) {
+        hi++;
+      } else {
+        break;
+      }
+    }
+  } while (hi !== prevHi);
+
+  return { lo, hi };
+}
+
+/**
  * Apply active compression blocks to the message array.
  * Mutates messages in place (via splice/sort) and returns it.
  */
@@ -52,85 +137,10 @@ function applyCompressionBlocks(messages: any[], state: DcpState): any[] {
     // Skip blocks with corrupted timestamps (from pre-fix sessions)
     if (!Number.isFinite(block.startTimestamp) || !Number.isFinite(block.endTimestamp)) continue;
 
-    // Find start and end indices by timestamp
-    const startIdx = messages.findIndex((m) => m.timestamp === block.startTimestamp);
-    const endIdx = messages.findIndex((m) => m.timestamp === block.endTimestamp);
+    const range = resolveCompressionRangeIndices(messages, block.startTimestamp, block.endTimestamp);
+    if (!range) continue;
 
-    if (startIdx === -1 || endIdx === -1) continue;
-
-    let lo = Math.min(startIdx, endIdx);
-    let hi = Math.max(startIdx, endIdx);
-
-    // Expand lo backward: if there is an assistant before lo whose tool_use
-    // blocks have matching tool_results inside [lo..hi], pull the entire
-    // assistant + any intermediate result messages into the range so the
-    // group is always removed atomically.
-    //
-    // Critically we must skip backward past any toolResult / bashExecution
-    // messages before lo, because an assistant with multiple tool_calls emits
-    // N consecutive result messages — the assistant itself sits further back.
-    while (lo > 0) {
-      // Walk backward past tool-result messages to find the preceding assistant
-      let scanIdx = lo - 1;
-      while (scanIdx >= 0) {
-        const r = (messages[scanIdx] as any).role as string;
-        if (r !== "toolResult" && r !== "bashExecution" && !PASSTHROUGH_ROLES.has(r)) break;
-        scanIdx--;
-      }
-      if (scanIdx < 0 || (messages[scanIdx] as any).role !== "assistant") break;
-
-      const prev = messages[scanIdx] as any;
-      const toolCallIdsInRange = new Set<string>();
-      for (let i = lo; i <= hi; i++) {
-        const m = messages[i] as any;
-        if (
-          (m.role === "toolResult" || m.role === "bashExecution") &&
-          typeof m.toolCallId === "string"
-        ) {
-          toolCallIdsInRange.add(m.toolCallId);
-        }
-      }
-      const prevContent: any[] = Array.isArray(prev.content) ? prev.content : [];
-      const hasMatchingToolCalls = prevContent.some(
-        (block: any) => block.type === "toolCall" && toolCallIdsInRange.has(block.id)
-      );
-      if (!hasMatchingToolCalls) break;
-      // Pull assistant + all intermediate result messages into the range
-      lo = scanIdx;
-    }
-
-    // Expand hi forward: for every assistant message in [lo..hi] that has
-    // tool_use blocks, include any immediately-following tool_result messages
-    // that correspond to those blocks. Loop to fixed point because expanding
-    // hi could expose more assistants in theory.
-    let prevHi: number;
-    do {
-      prevHi = hi;
-      const assistantToolCallIds = new Set<string>();
-      for (let i = lo; i <= hi; i++) {
-        const m = messages[i] as any;
-        if (m.role !== "assistant") continue;
-        const content: any[] = Array.isArray(m.content) ? m.content : [];
-        for (const block of content) {
-          if (block.type === "toolCall" && typeof block.id === "string") {
-            assistantToolCallIds.add(block.id);
-          }
-        }
-      }
-      while (hi + 1 < messages.length) {
-        const next = messages[hi + 1] as any;
-        if (
-          (next.role === "toolResult" || next.role === "bashExecution") &&
-          assistantToolCallIds.has(next.toolCallId)
-        ) {
-          hi++;
-        } else if (PASSTHROUGH_ROLES.has(next.role)) {
-          hi++;
-        } else {
-          break;
-        }
-      }
-    } while (hi !== prevHi);
+    const { lo, hi } = range;
 
     // Estimate tokens removed
     let removedTokens = 0;
@@ -147,6 +157,8 @@ function applyCompressionBlocks(messages: any[], state: DcpState): any[] {
         id: block.id,
         topic: block.topic,
         summary: block.summary,
+        activityLogVersion: block.activityLogVersion,
+        activityLog: block.activityLog,
       }),
       // anchorTimestamp is always finite (resolveAnchorTimestamp returns
       // endTimestamp + 1 instead of Infinity), but guard against corrupted
