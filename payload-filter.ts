@@ -1,3 +1,5 @@
+import type { CompressionBlock } from "./state.js"
+
 function getTextParts(content: unknown): string[] {
   if (typeof content === "string") return [content]
   if (!Array.isArray(content)) return []
@@ -136,7 +138,43 @@ function buildNextAssistantOwners(
   return owners
 }
 
-export function filterProviderPayloadInput(input: any[], liveOwnerKeys: Iterable<string>): any[] {
+type CompressArtifactBlock = Pick<CompressionBlock, "id" | "active" | "compressCallId">
+
+function buildRepresentedCompressCallIds(
+  liveOwnerKeys: Set<string>,
+  compressionBlocks: readonly CompressArtifactBlock[],
+): Set<string> {
+  const compressCallIds = new Set<string>()
+
+  for (const block of compressionBlocks) {
+    if (!block.active) continue
+    if (typeof block.compressCallId !== "string") continue
+    if (!liveOwnerKeys.has(`block:b${block.id}`)) continue
+    compressCallIds.add(block.compressCallId)
+  }
+
+  return compressCallIds
+}
+
+function isRedundantCompressArtifact(item: any, representedCompressCallIds: Set<string>): boolean {
+  if (representedCompressCallIds.size === 0) return false
+
+  if (item?.type === "function_call") {
+    return item?.name === "compress" && typeof item.call_id === "string" && representedCompressCallIds.has(item.call_id)
+  }
+
+  if (item?.type === "function_call_output") {
+    return typeof item.call_id === "string" && representedCompressCallIds.has(item.call_id)
+  }
+
+  return false
+}
+
+export function filterProviderPayloadInput(
+  input: any[],
+  liveOwnerKeys: Iterable<string>,
+  compressionBlocks: readonly CompressArtifactBlock[] = [],
+): any[] {
   if (!Array.isArray(input)) return input
 
   const liveOwners = liveOwnerKeys instanceof Set ? liveOwnerKeys : new Set(liveOwnerKeys)
@@ -145,8 +183,13 @@ export function filterProviderPayloadInput(input: any[], liveOwnerKeys: Iterable
   const directOwners = buildDirectOwnerKeys(input)
   const previousAssistantOwners = buildPreviousAssistantOwners(input, directOwners)
   const nextAssistantOwners = buildNextAssistantOwners(input, directOwners)
+  const representedCompressCallIds = buildRepresentedCompressCallIds(liveOwners, compressionBlocks)
 
   return input.filter((item, index) => {
+    if (isRedundantCompressArtifact(item, representedCompressCallIds)) {
+      return false
+    }
+
     if (isMessageLike(item)) {
       const owner = directOwners[index]
       return owner === null ? true : liveOwners.has(owner)

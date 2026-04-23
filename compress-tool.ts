@@ -812,7 +812,7 @@ export function registerCompressTool(
       ),
     }),
 
-    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+    async execute(toolCallId, params, _signal, _onUpdate, ctx) {
       const newBlockIds: number[] = []
       const currentMessages = buildCurrentBranchMessages(ctx)
       const usage = ctx.getContextUsage()
@@ -923,6 +923,7 @@ export function registerCompressTool(
             summaryTokenEstimate: estimateTokens(expandedSummary),
             savedTokenEstimate: 0,
             createdAt: Date.now(),
+            compressCallId: toolCallId,
             activityLogVersion: artifacts.activityLogVersion,
             activityLog: artifacts.activityLog,
             metadata: artifacts.metadata,

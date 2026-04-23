@@ -10,6 +10,7 @@ Automatically reduces token usage in Pi coding agent sessions by managing conver
 - **Context nudges** — injects compression reminders into the context at configurable thresholds: soft housekeeping notices, strong emergency warnings, and iteration reminders after long tool-call chains
 - **Manual mode** — disable autonomous compression nudges; trigger compression only via `/dcp compress` or explicit user request
 - **Session persistence** — compression blocks and pruning state survive session restarts
+- **Debug logging** — optional best-effort JSONL diagnostics at `~/.pi/log/dcp.jsonl`
 - **`/dcp` commands** — inspect context usage, view stats, sweep tool outputs, and manage compression blocks interactively
 
 ## Installation
@@ -59,6 +60,9 @@ DCP uses a layered configuration system (later layers override earlier ones):
 
   // Start every session in manual mode
   // "manualMode": { "enabled": true, "automaticStrategies": true },
+
+  // Best-effort JSONL diagnostics at ~/.pi/log/dcp.jsonl
+  // "debug": false,
 
   "compress": {
     // Above 90 % context: fire an emergency nudge
@@ -128,7 +132,7 @@ When the LLM calls the `compress` tool it provides one or more `{startId, endId,
 
 When a new compression exactly covers an older exact-coverage block, DCP now supersedes the older block instead of accumulating both summaries. Ambiguous partial overlap still rejects conservatively.
 
-By default, DCP also protects the hot tail of the conversation: ranges that end inside the last `protectRecentTurns` logical turns/tool batches are rejected unless the session is already above the hard emergency threshold (`maxContextPercent`).
+By default, DCP also protects the hot tail of the conversation: ranges that end inside the last `protectRecentTurns` logical turns/tool batches are rejected unless the session is already above the hard emergency threshold (`maxContextPercent`). When a range is rejected, DCP now includes planning hints that surface the hot-tail start, protected `mNNN` / `bN` IDs, and the largest visible safe candidate ranges; the same guidance is appended to live compression nudges.
 
 Message IDs (`m001`, `m042`, etc.) and block IDs (`b1`, `b3`) are injected into every message in the context so the LLM can reference exact boundaries.
 
@@ -160,11 +164,11 @@ A `DCP` badge is shown in the pi status bar. In manual mode it displays `DCP [ma
 ## Development
 
 ```bash
-npm install
-npx tsc --noEmit   # type-check without emitting
+bun run pruner.test.ts
+tsc --noEmit --module esnext --moduleResolution bundler --target es2022 --skipLibCheck *.ts
 ```
 
-The extension is loaded by pi via [jiti](https://github.com/unjs/jiti) so TypeScript is executed directly — no build step required for normal use.
+Pi loads the extension TypeScript directly — there is no build step for normal development.
 
 ## Contributors
 

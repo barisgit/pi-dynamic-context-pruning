@@ -1549,6 +1549,94 @@ function findOrphanedToolUse(result: any[]): string | null {
 }
 
 // ---------------------------------------------------------------------------
+// Test 20b — REDUNDANT COMPRESS TOOL ARTIFACTS ARE NOT SENT TO THE MODEL
+// ---------------------------------------------------------------------------
+{
+  console.log("TEST 20b: provider payload filter drops redundant compress tool artifacts");
+
+  const liveOwners = new Set([
+    buildSourceOwnerKey(0),
+    buildSourceOwnerKey(1),
+    buildBlockOwnerKey(7),
+    buildSourceOwnerKey(3),
+    buildSourceOwnerKey(4),
+  ]);
+
+  const payloadInput: any[] = [
+    { role: "user", content: [{ type: "input_text", text: "current ask\n<dcp-id>m001</dcp-id>\n<dcp-owner>s0</dcp-owner>" }] },
+    { type: "reasoning", encrypted_content: "keep-current" },
+    { role: "assistant", content: [{ type: "output_text", text: "compressing now" }] },
+    { role: "assistant", content: [{ type: "output_text", text: "\n<dcp-id>m002</dcp-id>\n<dcp-owner>s1</dcp-owner>" }] },
+    { type: "function_call", name: "compress", call_id: "call_compress", arguments: "{\"topic\":\"cleanup\"}" },
+    { type: "function_call_output", call_id: "call_compress", output: "Compressed 1 range(s): cleanup" },
+    {
+      role: "user",
+      content: [{ type: "input_text", text: "[Compressed section: cleanup]\n\nsummary\n\n<dcp-block-id>b7</dcp-block-id>" }],
+    },
+    { role: "assistant", content: [{ type: "output_text", text: "bash follow-up" }] },
+    { role: "assistant", content: [{ type: "output_text", text: "\n<dcp-id>m003</dcp-id>\n<dcp-owner>s3</dcp-owner>" }] },
+    { type: "function_call", name: "bash", call_id: "call_bash", arguments: "{\"command\":\"echo ok\"}" },
+    { type: "function_call_output", call_id: "call_bash", output: "ok" },
+    { role: "user", content: [{ type: "input_text", text: "latest ask\n<dcp-id>m004</dcp-id>\n<dcp-owner>s4</dcp-owner>" }] },
+  ];
+
+  const compressionBlocks = [
+    {
+      id: 7,
+      active: true,
+      compressCallId: "call_compress",
+    },
+  ];
+
+  const filtered = filterProviderPayloadInput(payloadInput, liveOwners, compressionBlocks);
+  const serialized = JSON.stringify(filtered);
+
+  assert.ok(!serialized.includes("call_compress"), "FAIL — compress function call/output should be dropped only when represented by a live block");
+  assert.ok(!serialized.includes("Compressed 1 range(s): cleanup"), "FAIL — redundant successful compress tool result should not be forwarded");
+  assert.ok(serialized.includes("[Compressed section: cleanup]"), "FAIL — rendered compressed block should stay in the provider payload");
+  assert.ok(serialized.includes("call_bash"), "FAIL — live non-compress tool artifacts should still stay");
+  assert.ok(serialized.includes("keep-current"), "FAIL — neighboring live reasoning should still stay");
+
+  console.log("  PASS: redundant compress tool artifacts are removed only when represented by a live block");
+  console.log("TEST 20b PASSED\n");
+}
+
+// ---------------------------------------------------------------------------
+// Test 20c — FAILED / UNREPRESENTED COMPRESS ATTEMPTS REMAIN VISIBLE
+// ---------------------------------------------------------------------------
+{
+  console.log("TEST 20c: provider payload filter preserves failed or unrepresented compress attempts");
+
+  const liveOwners = new Set([
+    buildSourceOwnerKey(0),
+    buildSourceOwnerKey(1),
+    buildSourceOwnerKey(2),
+  ]);
+
+  const payloadInput: any[] = [
+    { role: "user", content: [{ type: "input_text", text: "current ask\n<dcp-id>m001</dcp-id>\n<dcp-owner>s0</dcp-owner>" }] },
+    { role: "assistant", content: [{ type: "output_text", text: "trying compress" }] },
+    { role: "assistant", content: [{ type: "output_text", text: "\n<dcp-id>m002</dcp-id>\n<dcp-owner>s1</dcp-owner>" }] },
+    { type: "function_call", name: "compress", call_id: "call_failed_compress", arguments: "{\"topic\":\"cleanup\"}" },
+    {
+      type: "function_call_output",
+      call_id: "call_failed_compress",
+      output: "Compression ranges may not end inside the recent protected tail.",
+    },
+    { role: "user", content: [{ type: "input_text", text: "latest ask\n<dcp-id>m003</dcp-id>\n<dcp-owner>s2</dcp-owner>" }] },
+  ];
+
+  const filtered = filterProviderPayloadInput(payloadInput, liveOwners, []);
+  const serialized = JSON.stringify(filtered);
+
+  assert.ok(serialized.includes("call_failed_compress"), "FAIL — failed compress function_call should remain visible when no live block represents it");
+  assert.ok(serialized.includes("recent protected tail"), "FAIL — failed compress tool output should remain visible when no live block represents it");
+
+  console.log("  PASS: failed or unrepresented compress attempts stay visible");
+  console.log("TEST 20c PASSED\n");
+}
+
+// ---------------------------------------------------------------------------
 // Test 21 — EXACT FULL COVERAGE SUPERCEDES OLDER ACTIVE BLOCKS
 // ---------------------------------------------------------------------------
 {

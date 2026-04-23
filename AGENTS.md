@@ -83,9 +83,11 @@ This repo is in a **hybrid state**:
 
 - New `compress` calls still create legacy `CompressionBlock`s with timestamp boundaries.
 - New blocks also persist exact canonical metadata when possible.
+- Successful `compress` blocks also persist `compressCallId` so provider-payload filtering can recognize when a rendered block already represents that tool call.
 - Fully covered older exact-coverage blocks are **superseded**.
 - Partial ambiguous overlap still rejects conservatively.
 - Timestamp-only legacy overlap remains conservative and still rejects.
+- Protected-tail rejections and injected nudges now surface planning hints: hot-tail start, protected visible IDs, protected active block IDs, and the largest safe visible candidate ranges.
 
 ### 2. Ownership / hidden-provider pruning
 
@@ -93,6 +95,8 @@ This repo is in a **hybrid state**:
 - Hidden/provider artifact ownership is **not** derived from rendered visibility.
 - `dcp-owner` is an internal canonical owner marker used to associate hidden payload artifacts with canonical source entities.
 - `payload-filter.ts` prunes stale `reasoning`, `function_call`, and `function_call_output` using canonical live owner keys derived from the source transcript plus active blocks.
+- Successful `compress` `function_call` / `function_call_output` artifacts are suppressed only when a live rendered block with the matching `CompressionBlock.compressCallId` already represents them.
+- Failed or otherwise unrepresented `compress` attempts must stay visible.
 - Do **not** reintroduce visibility-based ownership heuristics.
 
 ### 3. Logical turns
@@ -116,6 +120,12 @@ This logical-turn model is used by:
 - Each active block stores `savedTokenEstimate`.
 - Repeated `context` passes must not double-count.
 
+### 5. Debug logging
+
+- `config.debug` writes best-effort JSONL diagnostics to `~/.pi/log/dcp.jsonl`.
+- Current logs include extension/session lifecycle, state saves, context evaluation, nudge emission, provider-payload filtering, and `compress` success/failure.
+- Debug logging must never affect runtime behavior.
+
 ---
 
 ## Module map
@@ -133,6 +143,7 @@ This logical-turn model is used by:
 | `materialize.ts` | Shared compressed-block renderer + v2 materialization scaffolding |
 | `commands.ts` | `/dcp` slash commands |
 | `prompts.ts` | system prompt additions, compress tool contract text, nudge text |
+| `debug-log.ts` | best-effort JSONL debug logging helpers |
 | `pruner.test.ts` | Executable regression suite for current semantics |
 | `DCP_V2_DESIGN.md` | future-state design and invariants |
 

@@ -49,7 +49,7 @@ context ← main transform
     └─ injectNudge() if warranted
 
 before_provider_request
-    └─ filterProviderPayloadInput() — prune stale reasoning/function_call from provider payload
+    └─ filterProviderPayloadInput() — prune stale reasoning/function_call from provider payload and suppress redundant successful compress artifacts already represented by live blocks
 
 agent_end / session_shutdown
     └─ saveState() — serializePersistedState() → custom session entry
@@ -60,7 +60,7 @@ agent_end / session_shutdown
 | Type | Location | Purpose |
 |------|----------|---------|
 | `DcpState` | `state.ts` | Runtime state: toolCalls Map, compressionBlocks[], currentTurn, tokensSaved, etc. |
-| `CompressionBlock` | `state.ts` | Legacy v1 block: timestamp-bounded range + summary |
+| `CompressionBlock` | `state.ts` | Legacy v1 block: timestamp-bounded range + summary, plus optional `compressCallId` for represented compress artifacts |
 | `CompressionBlockV2` | `state.ts` | Draft v2 block: span-key bounded, exact metadata |
 | `TranscriptSnapshot` | `transcript.ts` | Phase 1 scaffold: sourceItems[] + spans[] (message/tool-exchange) |
 
@@ -86,9 +86,9 @@ Used by:
 ### Compression Block Lifecycle
 
 1. **Creation** (`compress-tool.ts`): LLM calls `compress` tool with topic + ranges
-2. **Validation**: Resolve IDs → timestamps, check for protected tail overlap, check supersession
+2. **Validation**: Resolve IDs → timestamps, check for protected tail overlap, compute planning hints, check supersession
 3. **Supersession**: Exact-full-coverage of older exact blocks → absorbed; partial overlap → rejected
-4. **Persistence**: Block added to `state.compressionBlocks`, serialized to session entry
+4. **Persistence**: Block added to `state.compressionBlocks`, serialized to session entry, and now records the originating `compressCallId` when available
 5. **Application** (`pruner.ts`): Each `context` pass resolves range indices, splices messages, inserts summary
 6. **Restoration**: `/dcp decompress N` sets `block.active = false`
 

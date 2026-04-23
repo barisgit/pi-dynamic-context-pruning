@@ -319,7 +319,11 @@ export default function (pi: ExtensionAPI) {
       return
     }
 
-    const filteredInput = filterProviderPayloadInput(payload.input, state.lastLiveOwnerKeys)
+    const filteredInput = filterProviderPayloadInput(
+      payload.input,
+      state.lastLiveOwnerKeys,
+      state.compressionBlocks,
+    )
     if (filteredInput.length === payload.input.length) {
       return
     }

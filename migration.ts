@@ -162,6 +162,7 @@ function normalizeLegacyBlock(value: unknown): CompressionBlock | null {
       ? block.savedTokenEstimate
       : 0,
     createdAt: isFiniteNumber(block.createdAt) ? block.createdAt : Date.now(),
+    compressCallId: typeof block.compressCallId === "string" ? block.compressCallId : undefined,
     activityLogVersion: activityLog ? 1 : undefined,
     activityLog,
     metadata: normalizeCompressionBlockMetadata(block.metadata, []),

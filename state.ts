@@ -61,6 +61,8 @@ export interface CompressionBlock {
   savedTokenEstimate?: number
   /** Wall-clock time the block was created (Date.now()) */
   createdAt: number
+  /** Originating compress tool call id when this block came from a successful compress call */
+  compressCallId?: string
   /** Version of the deterministic visible activity log format */
   activityLogVersion?: 1
   /** Deterministic chronological activity log shown in the rendered block */
