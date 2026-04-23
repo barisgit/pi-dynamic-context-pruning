@@ -123,15 +123,46 @@ export function buildBlockOwnerKey(blockId: number): string {
   return `block:b${blockId}`
 }
 
-function resolveLegacyCoveredOrdinals(
+function resolveCoveredOrdinals(
   snapshot: TranscriptSnapshot,
   compressionBlocks: CompressionBlock[],
 ): { coveredOrdinals: Set<number>; activeBlockOwnerKeys: Set<string> } {
   const coveredOrdinals = new Set<number>()
   const activeBlockOwnerKeys = new Set<string>()
+  const sourceOrdinalByKey = new Map(snapshot.sourceItems.map((item) => [item.key, item.ordinal]))
+  const spanByKey = new Map(snapshot.spans.map((span) => [span.key, span]))
 
   for (const block of compressionBlocks) {
     if (!block.active) continue
+
+    const metadata = block.metadata
+    const exactSourceKeys = metadata?.coveredSourceKeys ?? []
+    const exactSpanKeys = metadata?.coveredSpanKeys ?? []
+
+    if (exactSourceKeys.length > 0 || exactSpanKeys.length > 0) {
+      activeBlockOwnerKeys.add(buildBlockOwnerKey(block.id))
+
+      for (const sourceKey of exactSourceKeys) {
+        const ordinal = sourceOrdinalByKey.get(sourceKey)
+        if (ordinal !== undefined) {
+          coveredOrdinals.add(ordinal)
+        }
+      }
+
+      for (const spanKey of exactSpanKeys) {
+        const span = spanByKey.get(spanKey)
+        if (!span) continue
+        for (const sourceKey of span.sourceKeys) {
+          const ordinal = sourceOrdinalByKey.get(sourceKey)
+          if (ordinal !== undefined) {
+            coveredOrdinals.add(ordinal)
+          }
+        }
+      }
+
+      continue
+    }
+
     if (!Number.isFinite(block.startTimestamp) || !Number.isFinite(block.endTimestamp)) continue
 
     const coveredItems = snapshot.sourceItems.filter(
@@ -157,7 +188,7 @@ export function buildLiveOwnerKeys(
   compressionBlocks: CompressionBlock[],
 ): Set<string> {
   const snapshot = buildTranscriptSnapshot(messages)
-  const { coveredOrdinals, activeBlockOwnerKeys } = resolveLegacyCoveredOrdinals(
+  const { coveredOrdinals, activeBlockOwnerKeys } = resolveCoveredOrdinals(
     snapshot,
     compressionBlocks,
   )

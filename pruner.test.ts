@@ -1084,6 +1084,7 @@ function findOrphanedToolUse(result: any[]): string | null {
   const block = state.compressionBlocksV2[0]!;
   assert.deepStrictEqual(block.metadata.supersededBlockIds, [1], "FAIL — legacy superseded block ids should migrate into hidden metadata");
   assert.deepStrictEqual(block.activityLog, [], "FAIL — missing activity log should normalize to an empty array");
+  assert.deepStrictEqual(block.metadata.coveredSourceKeys, [], "FAIL — missing coveredSourceKeys should normalize to an empty array");
   assert.deepStrictEqual(block.metadata.coveredSpanKeys, [], "FAIL — missing coveredSpanKeys should normalize to an empty array");
   assert.deepStrictEqual(block.metadata.commandStats, [], "FAIL — missing commandStats should normalize to an empty array");
 
@@ -1139,6 +1140,15 @@ function findOrphanedToolUse(result: any[]): string | null {
       'read:src/app.ts#L10-L14',
     ],
     "FAIL — activity log should include the backward-expanded assistant excerpt and deterministic read record",
+  );
+  assert.deepStrictEqual(artifacts.metadata.coveredSourceKeys, [
+    "msg:2000:assistant:1",
+    "msg:3000:toolResult:toolu_read:2",
+  ], "FAIL — exact covered source keys should be persisted for the expanded range");
+  assert.deepStrictEqual(
+    artifacts.metadata.coveredSpanKeys,
+    ["span:msg:2000:assistant:1..msg:3000:toolResult:toolu_read:2"],
+    "FAIL — exact covered span keys should be persisted for the expanded range",
   );
   assert.deepStrictEqual(artifacts.metadata.coveredToolIds, ["toolu_read"], "FAIL — covered tool ids should include the read call");
   assert.deepStrictEqual(
@@ -1238,19 +1248,31 @@ function findOrphanedToolUse(result: any[]): string | null {
 {
   console.log("TEST 19: live owner keys are derived from the source transcript, not rendered ids");
 
+  const messages = makeMessages();
+  const snapshot = buildTranscriptSnapshot(messages);
   const block = {
     id: 1,
     topic: "tool exchange",
     summary: "compressed",
-    startTimestamp: 2000,
-    endTimestamp: 3000,
+    startTimestamp: 1000,
+    endTimestamp: 4000,
     anchorTimestamp: 4000,
     active: true,
     summaryTokenEstimate: 1,
     createdAt: 1,
+    metadata: {
+      coveredSourceKeys: [snapshot.sourceItems[1]!.key, snapshot.sourceItems[2]!.key],
+      coveredSpanKeys: [snapshot.spans[1]!.key],
+      coveredArtifactRefs: [],
+      coveredToolIds: [],
+      supersededBlockIds: [],
+      fileReadStats: [],
+      fileWriteStats: [],
+      commandStats: [],
+    },
   };
 
-  const liveOwners = buildLiveOwnerKeys(makeMessages(), [block]);
+  const liveOwners = buildLiveOwnerKeys(messages, [block]);
 
   assert.ok(liveOwners.has(buildSourceOwnerKey(0)), "FAIL — head user source owner should stay live");
   assert.ok(!liveOwners.has(buildSourceOwnerKey(1)), "FAIL — compressed assistant source owner should not stay live");

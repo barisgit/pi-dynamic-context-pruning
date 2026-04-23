@@ -107,6 +107,7 @@ export interface CompressionCommandStat {
 
 /** Hidden deterministic metadata attached to a v2 compressed block. */
 export interface CompressionBlockMetadata {
+  coveredSourceKeys: string[]
   coveredSpanKeys: string[]
   coveredArtifactRefs: string[]
   coveredToolIds: string[]
@@ -119,6 +120,7 @@ export interface CompressionBlockMetadata {
 /** Create empty hidden metadata for a v2 compressed block. */
 export function createEmptyCompressionBlockMetadata(): CompressionBlockMetadata {
   return {
+    coveredSourceKeys: [],
     coveredSpanKeys: [],
     coveredArtifactRefs: [],
     coveredToolIds: [],

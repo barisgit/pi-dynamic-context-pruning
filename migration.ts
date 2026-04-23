@@ -106,6 +106,7 @@ function normalizeCompressionBlockMetadata(value: unknown, legacySupersededBlock
   }
 
   return {
+    coveredSourceKeys: normalizeStringArray(metadata.coveredSourceKeys),
     coveredSpanKeys: normalizeStringArray(metadata.coveredSpanKeys),
     coveredArtifactRefs: normalizeStringArray(metadata.coveredArtifactRefs),
     coveredToolIds: normalizeStringArray(metadata.coveredToolIds),

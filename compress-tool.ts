@@ -14,6 +14,7 @@ import {
 import type { DcpConfig } from "./config.js"
 import { COMPRESS_RANGE_DESCRIPTION } from "./prompts.js"
 import { estimateTokens, resolveCompressionRangeIndices } from "./pruner.js"
+import { buildTranscriptSnapshot } from "./transcript.js"
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -412,8 +413,8 @@ export function resolveProtectedTailStartTimestamp(
 function buildCompressionArtifactsFromMessages(
   messages: any[],
   state: DcpState,
+  metadata: CompressionBlockMetadata = createEmptyCompressionBlockMetadata(),
 ): CompressionArtifacts {
-  const metadata = createEmptyCompressionBlockMetadata()
   const activityLog: CompressionLogEntry[] = []
   const toolCallLookup = buildToolCallLookup(messages)
 
@@ -468,7 +469,17 @@ export function buildCompressionArtifactsForRange(
     }
   }
 
-  return buildCompressionArtifactsFromMessages(messages.slice(range.lo, range.hi + 1), state)
+  const snapshot = buildTranscriptSnapshot(messages)
+  const coveredItems = snapshot.sourceItems.slice(range.lo, range.hi + 1)
+  const coveredSourceKeys = coveredItems.map((item) => item.key)
+  const coveredSourceKeySet = new Set(coveredSourceKeys)
+  const metadata = createEmptyCompressionBlockMetadata()
+  metadata.coveredSourceKeys = coveredSourceKeys
+  metadata.coveredSpanKeys = snapshot.spans
+    .filter((span) => span.sourceKeys.every((key) => coveredSourceKeySet.has(key)))
+    .map((span) => span.key)
+
+  return buildCompressionArtifactsFromMessages(messages.slice(range.lo, range.hi + 1), state, metadata)
 }
 
 // ---------------------------------------------------------------------------
