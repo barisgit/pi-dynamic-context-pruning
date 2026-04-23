@@ -6,11 +6,17 @@
  */
 
 import assert from "assert";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import {
   buildCompressionArtifactsForRange,
+  buildCompressionPlanningHints,
+  renderCompressionPlanningHints,
   resolveProtectedTailStartTimestamp,
   resolveSupersededBlockIdsForRange,
 } from "./compress-tool.js";
+import { appendDebugLogLine, buildSessionDebugPayload } from "./debug-log.js";
 import { restorePersistedState, mapLegacyBlockToSpanRange } from "./migration.js";
 import { renderCompressedBlockMessage } from "./materialize.js";
 import { filterProviderPayloadInput } from "./payload-filter.js";
@@ -1317,6 +1323,91 @@ function findOrphanedToolUse(result: any[]): string | null {
 }
 
 // ---------------------------------------------------------------------------
+// Test 18b — PLANNING HINTS SURFACE PROTECTED IDS + SAFE LARGE RANGES
+// ---------------------------------------------------------------------------
+{
+  console.log("TEST 18b: compression planning hints surface protected ids and large safe ranges");
+
+  const messages: any[] = [
+    { role: "user", content: [{ type: "text", text: "alpha alpha alpha alpha alpha alpha" }], timestamp: 1000 },
+    { role: "assistant", content: [{ type: "text", text: "beta beta beta beta beta beta" }], timestamp: 2000 },
+    { role: "user", content: [{ type: "text", text: "gamma gamma gamma gamma gamma gamma" }], timestamp: 3000 },
+    { role: "assistant", content: [{ type: "text", text: "delta delta delta delta delta delta" }], timestamp: 4000 },
+    { role: "user", content: [{ type: "text", text: "protected newer turn" }], timestamp: 5000 },
+    { role: "assistant", content: [{ type: "text", text: "protected newest turn" }], timestamp: 6000 },
+  ];
+
+  const state = makeState([
+    {
+      id: 7,
+      topic: "protected tail",
+      summary: "tail summary",
+      startTimestamp: 5000,
+      endTimestamp: 6000,
+      anchorTimestamp: 7000,
+      active: true,
+      summaryTokenEstimate: 1,
+      createdAt: 1,
+    },
+  ]);
+  state.messageIdSnapshot = new Map([
+    ["m001", 1000],
+    ["m002", 2000],
+    ["m003", 3000],
+    ["m004", 4000],
+    ["m005", 5000],
+    ["m006", 6000],
+  ]);
+
+  const hints = buildCompressionPlanningHints(messages, state, 2);
+  const rendered = renderCompressionPlanningHints(hints);
+
+  assert.deepStrictEqual(
+    hints.protectedMessageIds,
+    ["m005", "m006"],
+    "FAIL — protected message ids should list the visible hot-tail messages",
+  );
+  assert.deepStrictEqual(
+    hints.protectedBlockIds,
+    ["b7"],
+    "FAIL — protected block ids should list active blocks whose end lies in the hot tail",
+  );
+  assert.strictEqual(
+    hints.candidateRanges[0]?.startId,
+    "m001",
+    "FAIL — the largest safe range should start at the oldest visible uncompressed id",
+  );
+  assert.strictEqual(
+    hints.candidateRanges[0]?.endId,
+    "m004",
+    "FAIL — the largest safe range should stop before the protected tail",
+  );
+  assert.ok(
+    (hints.candidateRanges[0]?.tokenEstimate ?? 0) > 0,
+    "FAIL — the largest safe range should report a positive token estimate",
+  );
+  assert.ok(
+    rendered.includes("Protected hot tail starts at m005."),
+    "FAIL — rendered hints should include the visible hot-tail boundary",
+  );
+  assert.ok(
+    rendered.includes("messages m005, m006"),
+    "FAIL — rendered hints should enumerate protected message ids",
+  );
+  assert.ok(
+    rendered.includes("blocks b7"),
+    "FAIL — rendered hints should enumerate protected block ids",
+  );
+  assert.ok(
+    rendered.includes("- m001..m004"),
+    "FAIL — rendered hints should suggest the largest visible safe candidate range",
+  );
+
+  console.log("  PASS: planning hints expose protected end ids and large safe ranges");
+  console.log("TEST 18b PASSED\n");
+}
+
+// ---------------------------------------------------------------------------
 // Test 19 — LIVE OWNER KEYS COME FROM SOURCE ORDINALS + ACTIVE BLOCKS
 // ---------------------------------------------------------------------------
 {
@@ -1536,6 +1627,72 @@ function findOrphanedToolUse(result: any[]): string | null {
 
   console.log("  PASS: timestamp-only legacy overlap stays conservative");
   console.log("TEST 23 PASSED\n");
+}
+
+// ---------------------------------------------------------------------------
+// Test 24 — SESSION DEBUG PAYLOAD EXPOSES SESSION IDS AND DIRECTORIES
+// ---------------------------------------------------------------------------
+{
+  console.log("TEST 24: session debug payload exposes session ids and directories");
+
+  const payload = buildSessionDebugPayload({
+    getSessionId: () => "session-123",
+    getCwd: () => "/repo",
+    getSessionDir: () => "/sessions",
+    getSessionFile: () => "/sessions/abc.jsonl",
+    getLeafId: () => "entry-9",
+  });
+
+  assert.deepStrictEqual(
+    payload,
+    {
+      sessionId: "session-123",
+      cwd: "/repo",
+      sessionDir: "/sessions",
+      sessionFile: "/sessions/abc.jsonl",
+      leafId: "entry-9",
+    },
+    "FAIL — session debug payload should expose session id, cwd, session dir, session file, and leaf id",
+  );
+
+  console.log("  PASS: session debug payload exposes session metadata");
+  console.log("TEST 24 PASSED\n");
+}
+
+// ---------------------------------------------------------------------------
+// Test 25 — DEBUG LOG APPENDS JSONL ENTRIES TO AN EXPLICIT FILE PATH
+// ---------------------------------------------------------------------------
+{
+  console.log("TEST 25: debug log appends JSONL entries to an explicit file path");
+
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "dcp-debug-log-"));
+  const logPath = path.join(tmpDir, "dcp.jsonl");
+
+  appendDebugLogLine(logPath, "test_event", {
+    nested: { ok: true },
+    nonFinite: Infinity,
+  });
+
+  const lines = fs.readFileSync(logPath, "utf8").trim().split("\n");
+  assert.strictEqual(lines.length, 1, "FAIL — debug log should append exactly one JSONL line");
+
+  const entry = JSON.parse(lines[0]!);
+  assert.strictEqual(entry.event, "test_event", "FAIL — debug log should persist the event name");
+  assert.deepStrictEqual(
+    entry.payload.nested,
+    { ok: true },
+    "FAIL — debug log should preserve nested payload objects",
+  );
+  assert.strictEqual(
+    entry.payload.nonFinite,
+    "Infinity",
+    "FAIL — debug log should normalize non-finite numbers before serialization",
+  );
+
+  fs.rmSync(tmpDir, { recursive: true, force: true });
+
+  console.log("  PASS: debug log writes normalized JSONL entries");
+  console.log("TEST 25 PASSED\n");
 }
 
 console.log("All tests passed.");

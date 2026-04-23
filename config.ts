@@ -90,7 +90,7 @@ const DEFAULT_CONFIG_FILE_CONTENT = `{
   // Uncomment and edit properties you want to override:
   //
   // "enabled": true,
-  // "debug": false,
+  // "debug": false, // best-effort JSONL log at ~/.pi/log/dcp.jsonl
   // "manualMode": {
   //   "enabled": false,
   //   "automaticStrategies": true

@@ -12,6 +12,7 @@ import {
   type DcpState,
 } from "./state.js"
 import type { DcpConfig } from "./config.js"
+import { appendDebugLog, buildSessionDebugPayload } from "./debug-log.js"
 import { COMPRESS_RANGE_DESCRIPTION } from "./prompts.js"
 import { estimateTokens, resolveCompressionRangeIndices } from "./pruner.js"
 import {
@@ -36,6 +37,25 @@ type ToolCallDescriptor = {
   toolName: string
   inputArgs: Record<string, unknown>
 }
+
+/** Suggested visible raw range that is currently safe to compress. */
+export interface CompressionCandidateRange {
+  startId: string
+  endId: string
+  tokenEstimate: number
+}
+
+/** Diagnostic hints for choosing safe compression boundaries. */
+export interface CompressionPlanningHints {
+  protectedTailStartId: string | null
+  protectedMessageIds: string[]
+  protectedBlockIds: string[]
+  candidateRanges: CompressionCandidateRange[]
+}
+
+const DEFAULT_CANDIDATE_LIMIT = 3
+const MAX_RENDERED_PROTECTED_MESSAGE_IDS = 8
+const MAX_RENDERED_PROTECTED_BLOCK_IDS = 6
 
 /**
  * Replace `(bN)` placeholders in a summary with the stored content of the
@@ -92,6 +112,239 @@ function resolveVisibleIdForTimestamp(timestamp: number, state: DcpState): strin
     if (candidateTimestamp === timestamp) return messageId
   }
   return null
+}
+
+function compareMessageIds(a: string, b: string): number {
+  return parseInt(a.slice(1), 10) - parseInt(b.slice(1), 10)
+}
+
+function compareBlockIds(a: string, b: string): number {
+  return parseInt(a.slice(1), 10) - parseInt(b.slice(1), 10)
+}
+
+function summarizeIdList(ids: string[], limit: number): string {
+  const visibleIds = ids.slice(0, limit)
+  const hiddenCount = ids.length - visibleIds.length
+  if (hiddenCount > 0) {
+    return `${visibleIds.join(", ")} (+${hiddenCount} more)`
+  }
+  return visibleIds.join(", ")
+}
+
+function formatCandidateRange(candidate: CompressionCandidateRange): string {
+  if (candidate.startId === candidate.endId) return candidate.startId
+  return `${candidate.startId}..${candidate.endId}`
+}
+
+function estimateMessageTokenCost(message: any): number {
+  if (!message) return 0
+
+  const content = message.content
+  if (!content) return 0
+  if (typeof content === "string") return estimateTokens(content)
+  if (!Array.isArray(content)) return 0
+
+  let total = 0
+  for (const part of content) {
+    if (!part || typeof part !== "object") continue
+    if (typeof part.text === "string") total += estimateTokens(part.text)
+    else if (typeof (part as any).thinking === "string") {
+      total += estimateTokens((part as any).thinking)
+    } else if (typeof (part as any).input === "string") {
+      total += estimateTokens((part as any).input)
+    } else if ((part as any).type === "image") {
+      total += 500
+    }
+  }
+
+  return total
+}
+
+function collectCoveredSourceKeys(
+  snapshot: ReturnType<typeof buildTranscriptSnapshot>,
+  compressionBlocks: CompressionBlock[],
+): Set<string> {
+  const coveredSourceKeys = new Set<string>()
+
+  for (const block of compressionBlocks) {
+    if (!block.active) continue
+
+    const exactCoveredSourceKeys = resolveCompressionBlockCoveredSourceKeys(snapshot, block)
+    if (exactCoveredSourceKeys !== null) {
+      for (const sourceKey of exactCoveredSourceKeys) {
+        coveredSourceKeys.add(sourceKey)
+      }
+      continue
+    }
+
+    if (!Number.isFinite(block.startTimestamp) || !Number.isFinite(block.endTimestamp)) continue
+
+    for (const item of snapshot.sourceItems) {
+      if (item.timestamp === null) continue
+      if (item.timestamp < block.startTimestamp || item.timestamp > block.endTimestamp) continue
+      coveredSourceKeys.add(item.key)
+    }
+  }
+
+  return coveredSourceKeys
+}
+
+/**
+ * Build structured diagnostics about the current hot tail and safe candidate
+ * ranges the agent can use for compression.
+ */
+export function buildCompressionPlanningHints(
+  messages: any[],
+  state: DcpState,
+  protectRecentTurns: number,
+  candidateLimit: number = DEFAULT_CANDIDATE_LIMIT,
+): CompressionPlanningHints {
+  const protectedTailStartTimestamp = resolveProtectedTailStartTimestamp(messages, protectRecentTurns)
+  const protectedTailStartId =
+    protectedTailStartTimestamp === null
+      ? null
+      : resolveVisibleIdForTimestamp(protectedTailStartTimestamp, state)
+
+  const protectedMessageIds =
+    protectedTailStartTimestamp === null
+      ? []
+      : Array.from(state.messageIdSnapshot.entries())
+          .filter(([, timestamp]) => timestamp >= protectedTailStartTimestamp)
+          .map(([messageId]) => messageId)
+          .sort(compareMessageIds)
+
+  const protectedBlockIds =
+    protectedTailStartTimestamp === null
+      ? []
+      : state.compressionBlocks
+          .filter(
+            (block) =>
+              block.active &&
+              Number.isFinite(block.endTimestamp) &&
+              block.endTimestamp >= protectedTailStartTimestamp,
+          )
+          .map((block) => `b${block.id}`)
+          .sort(compareBlockIds)
+
+  const snapshot = buildTranscriptSnapshot(messages)
+  const sourceItemByKey = new Map(snapshot.sourceItems.map((item) => [item.key, item]))
+  const coveredSourceKeys = collectCoveredSourceKeys(snapshot, state.compressionBlocks)
+  const candidateRanges: CompressionCandidateRange[] = []
+  let activeCandidate: CompressionCandidateRange | null = null
+
+  const pushActiveCandidate = (): void => {
+    if (!activeCandidate || activeCandidate.tokenEstimate <= 0) {
+      activeCandidate = null
+      return
+    }
+    candidateRanges.push(activeCandidate)
+    activeCandidate = null
+  }
+
+  for (const span of snapshot.spans) {
+    const sourceItems = span.sourceKeys
+      .map((sourceKey) => sourceItemByKey.get(sourceKey))
+      .filter((item): item is NonNullable<typeof item> => item !== undefined)
+
+    if (sourceItems.length === 0) {
+      pushActiveCandidate()
+      continue
+    }
+
+    const timestamps = sourceItems
+      .map((item) => item.timestamp)
+      .filter((timestamp): timestamp is number => timestamp !== null && Number.isFinite(timestamp))
+
+    if (timestamps.length === 0) {
+      pushActiveCandidate()
+      continue
+    }
+
+    const spanStartTimestamp = timestamps[0]!
+    const spanEndTimestamp = timestamps[timestamps.length - 1]!
+    const spanStartId = resolveVisibleIdForTimestamp(spanStartTimestamp, state)
+    const spanEndId = resolveVisibleIdForTimestamp(spanEndTimestamp, state)
+    const touchesProtectedTail =
+      protectedTailStartTimestamp !== null && spanEndTimestamp >= protectedTailStartTimestamp
+    const isCovered = sourceItems.some((item) => coveredSourceKeys.has(item.key))
+
+    if (!spanStartId || !spanEndId || touchesProtectedTail || isCovered) {
+      pushActiveCandidate()
+      continue
+    }
+
+    const spanTokenEstimate = sourceItems.reduce(
+      (sum, item) => sum + estimateMessageTokenCost(item.message),
+      0,
+    )
+
+    if (spanTokenEstimate <= 0) {
+      pushActiveCandidate()
+      continue
+    }
+
+    if (!activeCandidate) {
+      activeCandidate = {
+        startId: spanStartId,
+        endId: spanEndId,
+        tokenEstimate: 0,
+      }
+    }
+
+    activeCandidate.endId = spanEndId
+    activeCandidate.tokenEstimate += spanTokenEstimate
+  }
+
+  pushActiveCandidate()
+
+  candidateRanges.sort((a, b) => {
+    if (b.tokenEstimate !== a.tokenEstimate) return b.tokenEstimate - a.tokenEstimate
+    return compareMessageIds(a.startId, b.startId)
+  })
+
+  return {
+    protectedTailStartId,
+    protectedMessageIds,
+    protectedBlockIds,
+    candidateRanges: candidateRanges.slice(0, Math.max(0, candidateLimit)),
+  }
+}
+
+/** Render concise hot-tail and candidate-range guidance for the agent. */
+export function renderCompressionPlanningHints(
+  hints: CompressionPlanningHints,
+  options: { includeTailStart?: boolean } = {},
+): string {
+  const { includeTailStart = true } = options
+  const lines: string[] = []
+
+  if (includeTailStart && hints.protectedTailStartId) {
+    lines.push(`Protected hot tail starts at ${hints.protectedTailStartId}.`)
+  }
+
+  const protectedParts: string[] = []
+  if (hints.protectedMessageIds.length > 0) {
+    protectedParts.push(
+      `messages ${summarizeIdList(hints.protectedMessageIds, MAX_RENDERED_PROTECTED_MESSAGE_IDS)}`,
+    )
+  }
+  if (hints.protectedBlockIds.length > 0) {
+    protectedParts.push(
+      `blocks ${summarizeIdList(hints.protectedBlockIds, MAX_RENDERED_PROTECTED_BLOCK_IDS)}`,
+    )
+  }
+  if (protectedParts.length > 0) {
+    lines.push(`Do not use these as endId right now: ${protectedParts.join("; ")}.`)
+  }
+
+  if (hints.candidateRanges.length > 0) {
+    lines.push("Largest safe uncompressed ranges right now:")
+    for (const candidate of hints.candidateRanges) {
+      lines.push(`- ${formatCandidateRange(candidate)} (~${candidate.tokenEstimate} tokens)`)
+    }
+  }
+
+  return lines.join("\n")
 }
 
 function normalizeInlineWhitespace(text: string): string {
@@ -567,134 +820,178 @@ export function registerCompressTool(
         currentMessages,
         config.compress.protectRecentTurns,
       )
+      const planningHints = buildCompressionPlanningHints(
+        currentMessages,
+        state,
+        config.compress.protectRecentTurns,
+      )
       const plannedBlocks: CompressionBlock[] = []
       const pendingSupersededBlockIds = new Set<number>()
       let nextBlockId = state.nextBlockId
+      let activeRange: { startId: string; endId: string } | null = null
 
-      for (const range of params.ranges) {
-        const { startId, endId, summary } = range
+      appendDebugLog(config, "compress_requested", {
+        ...buildSessionDebugPayload(ctx.sessionManager),
+        topic: params.topic,
+        rangeCount: params.ranges.length,
+        ranges: params.ranges.map((range) => ({
+          startId: range.startId,
+          endId: range.endId,
+          summaryLength: range.summary.length,
+        })),
+        contextPercent,
+        planningHints,
+      })
 
-        const startTimestamp = resolveIdToTimestamp(startId, "startTimestamp", state)
-        const endTimestamp = resolveIdToTimestamp(endId, "endTimestamp", state)
+      try {
+        for (const range of params.ranges) {
+          const { startId, endId, summary } = range
+          activeRange = { startId, endId }
 
-        if (startTimestamp > endTimestamp) {
-          throw new Error(
-            `Range start "${startId}" must appear before end "${endId}" in the conversation`,
+          const startTimestamp = resolveIdToTimestamp(startId, "startTimestamp", state)
+          const endTimestamp = resolveIdToTimestamp(endId, "endTimestamp", state)
+
+          if (startTimestamp > endTimestamp) {
+            throw new Error(
+              `Range start "${startId}" must appear before end "${endId}" in the conversation`,
+            )
+          }
+
+          if (!Number.isFinite(startTimestamp)) {
+            throw new Error(
+              `Start ID "${startId}" resolved to a non-finite timestamp (${startTimestamp}). ` +
+                `This usually means the referenced message has a corrupted timestamp.`,
+            )
+          }
+          if (!Number.isFinite(endTimestamp)) {
+            throw new Error(
+              `End ID "${endId}" resolved to a non-finite timestamp (${endTimestamp}). ` +
+                `This usually means the referenced message has a corrupted timestamp.`,
+            )
+          }
+
+          const touchesProtectedTail =
+            protectedTailStartTimestamp !== null && endTimestamp >= protectedTailStartTimestamp
+          const emergencyOverride =
+            contextPercent !== null && contextPercent > config.compress.maxContextPercent
+
+          if (touchesProtectedTail && !emergencyOverride) {
+            const planningHintText = renderCompressionPlanningHints(planningHints, {
+              includeTailStart: false,
+            })
+            throw new Error(
+              `Compression ranges may not end inside the recent protected tail. ` +
+                `This tail starts at ${planningHints.protectedTailStartId ?? "the protected hot-tail boundary"} and protects the last ` +
+                `${config.compress.protectRecentTurns} logical turns/tool batches.` +
+                `${planningHintText ? `\n\n${planningHintText}` : ""}` +
+                `\n\nChoose an older range or wait for a hard context emergency.`,
+            )
+          }
+
+          const anchorTimestamp = resolveAnchorTimestamp(endTimestamp, state)
+          const expandedSummary = expandBlockPlaceholders(summary, state)
+          const artifacts = buildCompressionArtifactsForRange(
+            currentMessages,
+            state,
+            startTimestamp,
+            endTimestamp,
           )
-        }
-
-        if (!Number.isFinite(startTimestamp)) {
-          throw new Error(
-            `Start ID "${startId}" resolved to a non-finite timestamp (${startTimestamp}). ` +
-              `This usually means the referenced message has a corrupted timestamp.`,
+          const supersededBlockIds = resolveSupersededBlockIdsForRange(
+            currentMessages,
+            [...state.compressionBlocks, ...plannedBlocks],
+            startTimestamp,
+            endTimestamp,
+            artifacts.metadata.coveredSourceKeys,
+            startId,
+            endId,
+            pendingSupersededBlockIds,
           )
-        }
-        if (!Number.isFinite(endTimestamp)) {
-          throw new Error(
-            `End ID "${endId}" resolved to a non-finite timestamp (${endTimestamp}). ` +
-              `This usually means the referenced message has a corrupted timestamp.`,
-          )
-        }
+          for (const blockId of supersededBlockIds) {
+            pendingSupersededBlockIds.add(blockId)
+          }
+          artifacts.metadata.supersededBlockIds = supersededBlockIds
 
-        const touchesProtectedTail =
-          protectedTailStartTimestamp !== null && endTimestamp >= protectedTailStartTimestamp
-        const emergencyOverride =
-          contextPercent !== null && contextPercent > config.compress.maxContextPercent
+          const block: CompressionBlock = {
+            id: nextBlockId++,
+            topic: params.topic,
+            summary: expandedSummary,
+            startTimestamp,
+            endTimestamp,
+            anchorTimestamp,
+            active: true,
+            summaryTokenEstimate: estimateTokens(expandedSummary),
+            savedTokenEstimate: 0,
+            createdAt: Date.now(),
+            activityLogVersion: artifacts.activityLogVersion,
+            activityLog: artifacts.activityLog,
+            metadata: artifacts.metadata,
+          }
 
-        if (touchesProtectedTail && !emergencyOverride) {
-          const protectedTailStartId = resolveVisibleIdForTimestamp(protectedTailStartTimestamp, state)
-          throw new Error(
-            `Compression ranges may not end inside the recent protected tail. ` +
-              `This tail starts at ${protectedTailStartId ?? "the protected hot-tail boundary"} and protects the last ` +
-              `${config.compress.protectRecentTurns} logical turns/tool batches. ` +
-              `Choose an older range or wait for a hard context emergency.`,
-          )
-        }
-
-        const anchorTimestamp = resolveAnchorTimestamp(endTimestamp, state)
-        const expandedSummary = expandBlockPlaceholders(summary, state)
-        const artifacts = buildCompressionArtifactsForRange(
-          currentMessages,
-          state,
-          startTimestamp,
-          endTimestamp,
-        )
-        const supersededBlockIds = resolveSupersededBlockIdsForRange(
-          currentMessages,
-          [...state.compressionBlocks, ...plannedBlocks],
-          startTimestamp,
-          endTimestamp,
-          artifacts.metadata.coveredSourceKeys,
-          startId,
-          endId,
-          pendingSupersededBlockIds,
-        )
-        for (const blockId of supersededBlockIds) {
-          pendingSupersededBlockIds.add(blockId)
-        }
-        artifacts.metadata.supersededBlockIds = supersededBlockIds
-
-        const block: CompressionBlock = {
-          id: nextBlockId++,
-          topic: params.topic,
-          summary: expandedSummary,
-          startTimestamp,
-          endTimestamp,
-          anchorTimestamp,
-          active: true,
-          summaryTokenEstimate: estimateTokens(expandedSummary),
-          savedTokenEstimate: 0,
-          createdAt: Date.now(),
-          activityLogVersion: artifacts.activityLogVersion,
-          activityLog: artifacts.activityLog,
-          metadata: artifacts.metadata,
+          plannedBlocks.push(block)
+          newBlockIds.push(block.id)
         }
 
-        plannedBlocks.push(block)
-        newBlockIds.push(block.id)
-      }
+        if (plannedBlocks.length > 0) {
+          state.nextBlockId = nextBlockId
+          for (const existing of state.compressionBlocks) {
+            if (pendingSupersededBlockIds.has(existing.id)) {
+              existing.active = false
+            }
+          }
+          state.compressionBlocks.push(...plannedBlocks)
+          state.lastCompressTurn = state.currentTurn
+          state.lastNudgeTurn = state.currentTurn
+        }
 
-      if (plannedBlocks.length > 0) {
-        state.nextBlockId = nextBlockId
-        for (const existing of state.compressionBlocks) {
-          if (pendingSupersededBlockIds.has(existing.id)) {
-            existing.active = false
+        if (config.pruneNotification !== "off") {
+          const count = params.ranges.length
+          const rangeWord = count === 1 ? "range" : "ranges"
+
+          if (config.pruneNotification === "detailed") {
+            const totalTokens = newBlockIds.reduce((sum, id) => {
+              const b = state.compressionBlocks.find((block) => block.id === id)
+              return sum + (b?.summaryTokenEstimate ?? 0)
+            }, 0)
+            ctx.ui.notify(
+              `Compressed: ${params.topic} (${count} ${rangeWord}, ~${totalTokens} tokens in summaries)`,
+              "info",
+            )
+          } else {
+            ctx.ui.notify(`Compressed: ${params.topic}`, "info")
           }
         }
-        state.compressionBlocks.push(...plannedBlocks)
-        state.lastCompressTurn = state.currentTurn
-        state.lastNudgeTurn = state.currentTurn
-      }
 
-      if (config.pruneNotification !== "off") {
-        const count = params.ranges.length
-        const rangeWord = count === 1 ? "range" : "ranges"
-
-        if (config.pruneNotification === "detailed") {
-          const totalTokens = newBlockIds.reduce((sum, id) => {
-            const b = state.compressionBlocks.find((block) => block.id === id)
-            return sum + (b?.summaryTokenEstimate ?? 0)
-          }, 0)
-          ctx.ui.notify(
-            `Compressed: ${params.topic} (${count} ${rangeWord}, ~${totalTokens} tokens in summaries)`,
-            "info",
-          )
-        } else {
-          ctx.ui.notify(`Compressed: ${params.topic}`, "info")
-        }
-      }
-
-      return {
-        content: [
-          {
-            type: "text",
-            text: `Compressed ${params.ranges.length} range(s): ${params.topic}`,
-          },
-        ],
-        details: {
-          blockIds: newBlockIds,
+        appendDebugLog(config, "compress_succeeded", {
+          ...buildSessionDebugPayload(ctx.sessionManager),
           topic: params.topic,
-        },
+          blockIds: newBlockIds,
+          supersededBlockIds: Array.from(pendingSupersededBlockIds),
+          planningHints,
+          contextPercent,
+        })
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Compressed ${params.ranges.length} range(s): ${params.topic}`,
+            },
+          ],
+          details: {
+            blockIds: newBlockIds,
+            topic: params.topic,
+          },
+        }
+      } catch (error) {
+        appendDebugLog(config, "compress_failed", {
+          ...buildSessionDebugPayload(ctx.sessionManager),
+          topic: params.topic,
+          activeRange,
+          contextPercent,
+          planningHints,
+          error,
+        })
+        throw error
       }
     },
   })

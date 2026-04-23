@@ -19,8 +19,13 @@ import {
   ITERATION_NUDGE,
 } from "./prompts.js"
 import { applyPruning, injectNudge, getNudgeType } from "./pruner.js"
-import { registerCompressTool } from "./compress-tool.js"
+import {
+  buildCompressionPlanningHints,
+  registerCompressTool,
+  renderCompressionPlanningHints,
+} from "./compress-tool.js"
 import { registerCommands } from "./commands.js"
+import { DEBUG_LOG_PATH, appendDebugLog, buildSessionDebugPayload } from "./debug-log.js"
 import { restorePersistedState, serializePersistedState } from "./migration.js"
 import { filterProviderPayloadInput } from "./payload-filter.js"
 import { buildLiveOwnerKeys } from "./transcript.js"
@@ -33,8 +38,23 @@ import { buildLiveOwnerKeys } from "./transcript.js"
  * Persist the current DCP runtime state as a custom session entry so it
  * survives session restarts and pi process restarts.
  */
-function saveState(pi: ExtensionAPI, state: DcpState): void {
+function saveState(
+  pi: ExtensionAPI,
+  state: DcpState,
+  config: ReturnType<typeof loadConfig>,
+  reason: "session_shutdown" | "agent_end",
+  sessionPayload: Record<string, unknown>,
+): void {
   pi.appendEntry("dcp-state", serializePersistedState(state))
+  appendDebugLog(config, "state_saved", {
+    ...sessionPayload,
+    reason,
+    manualMode: state.manualMode,
+    activeCompressionBlockCount: state.compressionBlocks.filter((block) => block.active).length,
+    nextBlockId: state.nextBlockId,
+    totalPruneCount: state.totalPruneCount,
+    tokensSaved: state.tokensSaved,
+  })
 }
 
 function cloneRenderedMessages(messages: any[]): any[] {
@@ -49,6 +69,17 @@ function cloneRenderedMessages(messages: any[]): any[] {
   })
 }
 
+function appendReminderDetails(reminder: string, details: string): string {
+  if (!details) return reminder
+
+  const closingTag = "</dcp-system-reminder>"
+  if (!reminder.includes(closingTag)) {
+    return `${reminder}\n\n${details}`
+  }
+
+  return reminder.replace(closingTag, `\n\n${details}\n${closingTag}`)
+}
+
 // ---------------------------------------------------------------------------
 // Extension entry point
 // ---------------------------------------------------------------------------
@@ -58,6 +89,15 @@ export default function (pi: ExtensionAPI) {
   const config = loadConfig(process.cwd())
 
   if (!config.enabled) return
+
+  appendDebugLog(config, "extension_init", {
+    cwd: process.cwd(),
+    debugLogPath: DEBUG_LOG_PATH,
+    manualModeConfigured: config.manualMode.enabled,
+    automaticStrategiesInManualMode: config.manualMode.automaticStrategies,
+    protectRecentTurns: config.compress.protectRecentTurns,
+    pruneNotification: config.pruneNotification,
+  })
 
   // ── 2. Create state ───────────────────────────────────────────────────────
   const state = createState()
@@ -74,7 +114,7 @@ export default function (pi: ExtensionAPI) {
   registerCommands(pi, state, config)
 
   // ── 5. session_start: restore state from session entries ──────────────────
-  pi.on("session_start", async (event, ctx) => {
+  pi.on("session_start", async (_event, ctx) => {
     // Reset to a clean slate first.
     resetState(state)
 
@@ -84,19 +124,37 @@ export default function (pi: ExtensionAPI) {
     }
 
     // Walk the branch looking for the most-recent persisted dcp-state entry.
-    for (const entry of ctx.sessionManager.getBranch()) {
+    const branchEntries = ctx.sessionManager.getBranch()
+    let restoredStateEntries = 0
+    for (const entry of branchEntries) {
       if (entry.type === "custom" && entry.customType === "dcp-state") {
         restorePersistedState(entry.data, state)
+        restoredStateEntries++
       }
     }
+
+    appendDebugLog(config, "session_start", {
+      ...buildSessionDebugPayload(ctx.sessionManager),
+      branchEntryCount: branchEntries.length,
+      restoredStateEntries,
+      manualMode: state.manualMode,
+      activeCompressionBlockCount: state.compressionBlocks.filter((block) => block.active).length,
+      nextBlockId: state.nextBlockId,
+    })
 
     // Show a status indicator in the pi TUI.
     ctx.ui.setStatus("dcp", state.manualMode ? "DCP [manual]" : "DCP")
   })
 
   // ── 6. session_shutdown: save state ───────────────────────────────────────
-  pi.on("session_shutdown", async (_event, _ctx) => {
-    saveState(pi, state)
+  pi.on("session_shutdown", async (_event, ctx) => {
+    saveState(
+      pi,
+      state,
+      config,
+      "session_shutdown",
+      buildSessionDebugPayload(ctx.sessionManager),
+    )
   })
 
   // ── 7. before_agent_start: inject system prompt ───────────────────────────
@@ -169,14 +227,16 @@ export default function (pi: ExtensionAPI) {
     // tool output replacement, message ID injection).
     const prunedMessages = applyPruning(event.messages, state, config)
 
+    const usage = ctx.getContextUsage()
+    const contextPercent = usage && usage.tokens !== null ? usage.tokens / usage.contextWindow : null
+    let toolCallsSinceLastUser: number | null = null
+    let nudgeType: ReturnType<typeof getNudgeType> = null
+
     // In manual mode we still apply pruning strategies (if
     // automaticStrategies is on) but skip autonomous nudge injection.
-    const usage = ctx.getContextUsage()
-    if (usage && usage.tokens !== null && !state.manualMode) {
-      const contextPercent = usage.tokens / usage.contextWindow
-
+    if (contextPercent !== null && !state.manualMode) {
       // Count tool calls since the last user message (used for iteration nudge).
-      let toolCallsSinceLastUser = 0
+      toolCallsSinceLastUser = 0
       for (let i = prunedMessages.length - 1; i >= 0; i--) {
         const msg = prunedMessages[i] as any
         if (msg.role === "user") break
@@ -185,7 +245,7 @@ export default function (pi: ExtensionAPI) {
         }
       }
 
-      const nudgeType = getNudgeType(
+      nudgeType = getNudgeType(
         contextPercent,
         state,
         config,
@@ -206,13 +266,48 @@ export default function (pi: ExtensionAPI) {
           nudgeText = TURN_NUDGE
         }
 
-        injectNudge(prunedMessages, nudgeText)
+        const planningHints = buildCompressionPlanningHints(
+          event.messages,
+          state,
+          config.compress.protectRecentTurns,
+        )
+        const planningHintText = renderCompressionPlanningHints(planningHints)
+        const injectedNudgeText = appendReminderDetails(nudgeText, planningHintText)
+
+        injectNudge(prunedMessages, injectedNudgeText)
         state.lastNudgeTurn = state.currentTurn
+
+        appendDebugLog(config, "nudge_emitted", {
+          ...buildSessionDebugPayload(ctx.sessionManager),
+          nudgeType,
+          nudgeMessage: injectedNudgeText,
+          contextPercent,
+          currentTurn: state.currentTurn,
+          toolCallsSinceLastUser,
+          planningHints,
+        })
       }
     }
 
     state.lastRenderedMessages = cloneRenderedMessages(prunedMessages)
     state.lastLiveOwnerKeys = Array.from(liveOwnerKeys)
+
+    appendDebugLog(config, "context_evaluated", {
+      ...buildSessionDebugPayload(ctx.sessionManager),
+      contextTokens: usage?.tokens ?? null,
+      contextWindow: usage?.contextWindow ?? null,
+      contextPercent,
+      currentTurn: state.currentTurn,
+      manualMode: state.manualMode,
+      sourceMessageCount: event.messages.length,
+      renderedMessageCount: prunedMessages.length,
+      liveOwnerCount: liveOwnerKeys.size,
+      activeCompressionBlockCount: state.compressionBlocks.filter((block) => block.active).length,
+      tokensSaved: state.tokensSaved,
+      totalPruneCount: state.totalPruneCount,
+      toolCallsSinceLastUser,
+      nudgeType,
+    })
 
     return { messages: prunedMessages }
   })
@@ -229,6 +324,13 @@ export default function (pi: ExtensionAPI) {
       return
     }
 
+    appendDebugLog(config, "provider_payload_filtered", {
+      ...buildSessionDebugPayload(_ctx.sessionManager),
+      inputCountBefore: payload.input.length,
+      inputCountAfter: filteredInput.length,
+      liveOwnerCount: state.lastLiveOwnerKeys.length,
+    })
+
     return {
       ...payload,
       input: filteredInput,
@@ -236,7 +338,13 @@ export default function (pi: ExtensionAPI) {
   })
 
   // ── 12. agent_end: persist state after each agent run ────────────────────
-  pi.on("agent_end", async (_event, _ctx) => {
-    saveState(pi, state)
+  pi.on("agent_end", async (_event, ctx) => {
+    saveState(
+      pi,
+      state,
+      config,
+      "agent_end",
+      buildSessionDebugPayload(ctx.sessionManager),
+    )
   })
 }
