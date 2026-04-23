@@ -299,6 +299,48 @@ function findOrphanedToolUse(result: any[]): string | null {
 }
 
 // ---------------------------------------------------------------------------
+// Test 2b — TOKENS SAVED SHOULD NOT DOUBLE-COUNT ACROSS CONTEXT PASSES
+// ---------------------------------------------------------------------------
+{
+  console.log("TEST 2b: tokensSaved remains stable across repeated context passes");
+
+  const state = makeState([
+    {
+      id: 1,
+      topic: "file read",
+      summary: "The file was read and contained some data.",
+      startTimestamp: 2000,
+      endTimestamp: 3000,
+      anchorTimestamp: 4000,
+      active: true,
+      summaryTokenEstimate: 15,
+      savedTokenEstimate: 0,
+      createdAt: Date.now(),
+    },
+  ]);
+
+  applyPruning(makeMessages(), state, makeConfig());
+  const firstSaved = state.tokensSaved;
+  applyPruning(makeMessages(), state, makeConfig());
+  const secondSaved = state.tokensSaved;
+
+  assert.ok(firstSaved >= 0, "FAIL — saved-token estimate should be non-negative");
+  assert.strictEqual(
+    secondSaved,
+    firstSaved,
+    "FAIL — repeated applyPruning calls should not keep incrementing tokensSaved for the same block",
+  );
+  assert.strictEqual(
+    state.compressionBlocks[0]?.savedTokenEstimate,
+    firstSaved,
+    "FAIL — block.savedTokenEstimate should track the current per-block saved-token estimate",
+  );
+
+  console.log("  PASS: tokensSaved no longer ratchets upward across context passes");
+  console.log("TEST 2b PASSED\n");
+}
+
+// ---------------------------------------------------------------------------
 // Test 3 — MULTI-TOOLRESULT BACKWARD GAP
 //
 // assistant has TWO tool_calls (A + B) producing two consecutive toolResult

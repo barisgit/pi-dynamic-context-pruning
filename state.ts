@@ -57,6 +57,8 @@ export interface CompressionBlock {
   active: boolean
   /** Token estimate for the summary text itself */
   summaryTokenEstimate: number
+  /** Current estimated net tokens saved by rendering this block */
+  savedTokenEstimate?: number
   /** Wall-clock time the block was created (Date.now()) */
   createdAt: number
   /** Version of the deterministic visible activity log format */
@@ -237,7 +239,7 @@ export interface DcpState {
   currentTurn: number
 
   // ── Statistics ─────────────────────────────────────────────────────────────
-  /** Running total of tokens estimated to have been saved by pruning/compression */
+  /** Current estimated net tokens saved by active compression blocks */
   tokensSaved: number
   /** Number of discrete pruning operations performed */
   totalPruneCount: number

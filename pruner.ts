@@ -133,7 +133,10 @@ export function resolveCompressionRangeIndices(
  */
 function applyCompressionBlocks(messages: any[], state: DcpState, config: DcpConfig): any[] {
   const activeBlocks = state.compressionBlocks.filter((b) => b.active);
-  if (activeBlocks.length === 0) return messages;
+  if (activeBlocks.length === 0) {
+    state.tokensSaved = 0;
+    return messages;
+  }
 
   const blocksByRecency = [...activeBlocks].sort(
     (a, b) => (b.createdAt ?? b.id) - (a.createdAt ?? a.id),
@@ -147,6 +150,8 @@ function applyCompressionBlocks(messages: any[], state: DcpState, config: DcpCon
       index < fullCount ? "full" : index < fullCount + compactCount ? "compact" : "minimal";
     blockDetailById.set(block.id, detailLevel);
   });
+
+  let totalSaved = 0;
 
   for (const block of activeBlocks) {
     // Skip blocks with corrupted timestamps (from pre-fix sessions)
@@ -191,11 +196,14 @@ function applyCompressionBlocks(messages: any[], state: DcpState, config: DcpCon
     // Re-sort by timestamp
     messages.sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
 
-    // Update tokens saved
-    const saved = removedTokens - addedTokens;
-    if (saved > 0) state.tokensSaved += saved;
+    // Update the block's current saved-token estimate without double-counting
+    // across repeated `context` passes.
+    const saved = Math.max(0, removedTokens - addedTokens);
+    block.savedTokenEstimate = saved;
+    totalSaved += saved;
   }
 
+  state.tokensSaved = totalSaved;
   return messages;
 }
 

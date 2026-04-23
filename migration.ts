@@ -158,6 +158,9 @@ function normalizeLegacyBlock(value: unknown): CompressionBlock | null {
     summaryTokenEstimate: isFiniteNumber(block.summaryTokenEstimate)
       ? block.summaryTokenEstimate
       : 0,
+    savedTokenEstimate: isFiniteNumber(block.savedTokenEstimate)
+      ? block.savedTokenEstimate
+      : 0,
     createdAt: isFiniteNumber(block.createdAt) ? block.createdAt : Date.now(),
     activityLogVersion: activityLog ? 1 : undefined,
     activityLog,

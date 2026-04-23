@@ -643,6 +643,7 @@ export function registerCompressTool(
           anchorTimestamp,
           active: true,
           summaryTokenEstimate: estimateTokens(expandedSummary),
+          savedTokenEstimate: 0,
           createdAt: Date.now(),
           activityLogVersion: artifacts.activityLogVersion,
           activityLog: artifacts.activityLog,
