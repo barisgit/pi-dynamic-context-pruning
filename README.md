@@ -56,13 +56,13 @@ DCP uses a layered configuration system (later layers override earlier ones):
     "maxContextPercent": 0.9,
     // Below 75 % context: no nudges
     "minContextPercent": 0.75,
-    // Minimum newer user turns between nudges
+    // Minimum newer logical turns between nudges
     "nudgeDebounceTurns": 2,
     // Legacy context-pass cadence knob (retained for backward compatibility)
     "nudgeFrequency": 8,
     // Nudge after this many tool calls since the last user message
     "iterationNudgeThreshold": 15,
-    // Protect the hot tail beginning at the Nth-most-recent user/assistant turn
+    // Protect the hot tail beginning at the Nth-most-recent logical turn/tool batch
     "protectRecentTurns": 4,
     // "strong" = emergency tone, "soft" = housekeeping tone
     "nudgeForce": "soft",
@@ -77,7 +77,7 @@ DCP uses a layered configuration system (later layers override earlier ones):
     },
     "purgeErrors": {
       "enabled": true,
-      // Purge failed tool inputs after N user turns
+      // Purge failed tool inputs after N logical turns
       "turns": 4,
       "protectedTools": []
     }
@@ -117,7 +117,7 @@ When the LLM calls the `compress` tool it provides one or more `{startId, endId,
 3. Injects a synthetic `[Compressed section: …]` user message containing the summary
 4. Keeps the block state in the session so it survives restarts
 
-By default, DCP also protects the hot tail of the conversation: ranges that end inside the last `protectRecentTurns` user/assistant turns are rejected unless the session is already above the hard emergency threshold (`maxContextPercent`).
+By default, DCP also protects the hot tail of the conversation: ranges that end inside the last `protectRecentTurns` logical turns/tool batches are rejected unless the session is already above the hard emergency threshold (`maxContextPercent`).
 
 Message IDs (`m001`, `m042`, etc.) and block IDs (`b1`, `b3`) are injected into every message in the context so the LLM can reference exact boundaries.
 

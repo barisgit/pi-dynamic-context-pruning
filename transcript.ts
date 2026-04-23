@@ -62,6 +62,7 @@ function getTimestamp(message: any): number | null {
 
 const PASSTHROUGH_ROLES = new Set(["compaction", "branch_summary", "custom_message"])
 const LIVE_OWNER_ELIGIBLE_ROLES = new Set(["user", "assistant", "toolResult", "bashExecution"])
+const LOGICAL_TURN_ELIGIBLE_ROLES = LIVE_OWNER_ELIGIBLE_ROLES
 
 function getAssistantToolCallIds(message: any): Set<string> {
   const ids = new Set<string>()
@@ -121,6 +122,29 @@ export function buildSourceOwnerKey(ordinal: number): string {
 
 export function buildBlockOwnerKey(blockId: number): string {
   return `block:b${blockId}`
+}
+
+export function countLogicalTurns(messages: any[]): number {
+  return buildTranscriptSnapshot(messages).spans.filter((span) => LOGICAL_TURN_ELIGIBLE_ROLES.has(span.role)).length
+}
+
+export function resolveLogicalTurnTailStartTimestamp(
+  messages: any[],
+  protectRecentTurns: number,
+): number | null {
+  const protectedTurns = Math.max(0, Math.floor(protectRecentTurns))
+  if (protectedTurns === 0) return null
+
+  const snapshot = buildTranscriptSnapshot(messages)
+  const sourceItemByKey = new Map(snapshot.sourceItems.map((item) => [item.key, item]))
+  const logicalTurnStartTimestamps = snapshot.spans
+    .filter((span) => LOGICAL_TURN_ELIGIBLE_ROLES.has(span.role))
+    .map((span) => sourceItemByKey.get(span.startSourceKey)?.timestamp ?? null)
+    .filter((timestamp): timestamp is number => timestamp !== null && Number.isFinite(timestamp))
+
+  if (logicalTurnStartTimestamps.length === 0) return null
+
+  return logicalTurnStartTimestamps[Math.max(0, logicalTurnStartTimestamps.length - protectedTurns)] ?? null
 }
 
 function resolveCoveredOrdinals(

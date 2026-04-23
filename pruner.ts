@@ -1,7 +1,7 @@
 import type { DcpState } from "./state.js";
 import type { DcpConfig } from "./config.js";
 import { renderCompressedBlockMessage } from "./materialize.js";
-import { buildSourceOwnerKey, buildTranscriptSnapshot } from "./transcript.js";
+import { buildSourceOwnerKey, countLogicalTurns } from "./transcript.js";
 
 // Always-protected tool names for deduplication
 const ALWAYS_PROTECTED_DEDUP = new Set(["compress", "write", "edit"]);
@@ -40,10 +40,6 @@ function estimateMessageTokens(msg: any): number {
     return total;
   }
   return 0;
-}
-
-function countLogicalTurns(messages: any[]): number {
-  return buildTranscriptSnapshot(messages).spans.filter((span) => ID_ELIGIBLE_ROLES.has(span.role)).length;
 }
 
 /**

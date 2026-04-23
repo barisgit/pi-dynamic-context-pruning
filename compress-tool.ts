@@ -14,7 +14,7 @@ import {
 import type { DcpConfig } from "./config.js"
 import { COMPRESS_RANGE_DESCRIPTION } from "./prompts.js"
 import { estimateTokens, resolveCompressionRangeIndices } from "./pruner.js"
-import { buildTranscriptSnapshot } from "./transcript.js"
+import { buildTranscriptSnapshot, resolveLogicalTurnTailStartTimestamp } from "./transcript.js"
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -388,26 +388,7 @@ export function resolveProtectedTailStartTimestamp(
   messages: any[],
   protectRecentTurns: number,
 ): number | null {
-  const protectedTurns = Math.max(0, Math.floor(protectRecentTurns))
-  if (protectedTurns === 0) return null
-
-  let turnsSeen = 0
-  let earliestProtectedTimestamp: number | null = null
-
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const message = messages[i] as any
-    if (message?.role !== "user" && message?.role !== "assistant") continue
-    if (typeof message?.timestamp !== "number" || !Number.isFinite(message.timestamp)) continue
-
-    turnsSeen++
-    earliestProtectedTimestamp = message.timestamp
-
-    if (turnsSeen >= protectedTurns) {
-      return earliestProtectedTimestamp
-    }
-  }
-
-  return earliestProtectedTimestamp
+  return resolveLogicalTurnTailStartTimestamp(messages, protectRecentTurns)
 }
 
 function buildCompressionArtifactsFromMessages(
@@ -565,7 +546,7 @@ export function registerCompressTool(
           throw new Error(
             `Compression ranges may not end inside the recent protected tail. ` +
               `This tail starts at ${protectedTailStartId ?? "the protected hot-tail boundary"} and protects the last ` +
-              `${config.compress.protectRecentTurns} user/assistant turns. ` +
+              `${config.compress.protectRecentTurns} logical turns/tool batches. ` +
               `Choose an older range or wait for a hard context emergency.`,
           )
         }

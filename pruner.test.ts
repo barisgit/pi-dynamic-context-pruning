@@ -1228,29 +1228,40 @@ function findOrphanedToolUse(result: any[]): string | null {
 }
 
 // ---------------------------------------------------------------------------
-// Test 18 — RECENT TURN PROTECTION STARTS AT THE NTH-MOST-RECENT USER/ASSISTANT TURN
+// Test 18 — RECENT TURN PROTECTION STARTS AT THE NTH-MOST-RECENT LOGICAL TURN
 // ---------------------------------------------------------------------------
 {
-  console.log("TEST 18: recent-turn protection guards the hot conversational tail");
+  console.log("TEST 18: recent-turn protection guards the hot logical tail");
 
   const messages: any[] = [
     { role: "user", content: [{ type: "text", text: "one" }], timestamp: 1000 },
-    { role: "assistant", content: [{ type: "text", text: "two" }], timestamp: 2000 },
+    {
+      role: "assistant",
+      content: [
+        { type: "text", text: "running tool" },
+        { type: "toolCall", id: "toolu_x", name: "read", arguments: {} },
+      ],
+      timestamp: 2000,
+    },
     { role: "toolResult", toolCallId: "toolu_x", toolName: "read", content: [{ type: "text", text: "ignored" }], timestamp: 3000 },
     { role: "assistant", content: [{ type: "text", text: "three" }], timestamp: 4000 },
-    { role: "bashExecution", toolCallId: "toolu_y", toolName: "bash", content: [{ type: "text", text: "ignored" }], timestamp: 5000 },
-    { role: "user", content: [{ type: "text", text: "four" }], timestamp: 6000 },
+    { role: "user", content: [{ type: "text", text: "four" }], timestamp: 5000 },
   ];
 
   assert.strictEqual(
     resolveProtectedTailStartTimestamp(messages, 2),
     4000,
-    "FAIL — protecting the last 2 user/assistant turns should start at timestamp 4000",
+    "FAIL — protecting the last 2 logical turns should start at timestamp 4000",
+  );
+  assert.strictEqual(
+    resolveProtectedTailStartTimestamp(messages, 3),
+    2000,
+    "FAIL — an assistant tool batch should count as one protected logical turn starting at the assistant timestamp",
   );
   assert.strictEqual(
     resolveProtectedTailStartTimestamp(messages, 4),
     1000,
-    "FAIL — when fewer than 4 conversational turns exist beyond the head, protection should extend to the earliest available turn",
+    "FAIL — when fewer than 4 logical turns exist beyond the head, protection should extend to the earliest available turn",
   );
   assert.strictEqual(
     resolveProtectedTailStartTimestamp(messages, 0),
@@ -1258,7 +1269,7 @@ function findOrphanedToolUse(result: any[]): string | null {
     "FAIL — zero protected turns should disable recent-turn protection",
   );
 
-  console.log("  PASS: recent-turn protection is deterministic and assistant turns count");
+  console.log("  PASS: recent-turn protection is deterministic and tool batches count as one turn");
   console.log("TEST 18 PASSED\n");
 }
 
