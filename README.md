@@ -32,6 +32,15 @@ pi install https://github.com/complexthings/pi-dynamic-context-pruning
 pi -e https://github.com/complexthings/pi-dynamic-context-pruning
 ```
 
+## Documentation map
+
+- `README.md` — user-facing install, config, commands, and current shipped behavior
+- `AGENTS.md` — contributor/agent-oriented architecture guide for editing this repo
+- `DCP_V2_DESIGN.md` — target architecture and future-state design notes; parts are intentionally aspirational
+- `pruner.test.ts` — executable specification for current runtime semantics
+
+If you are modifying DCP behavior rather than just using it, read `AGENTS.md` first.
+
 ## Configuration
 
 DCP uses a layered configuration system (later layers override earlier ones):
