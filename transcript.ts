@@ -124,6 +124,43 @@ export function buildBlockOwnerKey(blockId: number): string {
   return `block:b${blockId}`
 }
 
+export function resolveCompressionBlockCoveredSourceKeys(
+  snapshot: TranscriptSnapshot,
+  block: CompressionBlock,
+): Set<string> | null {
+  const metadata = block.metadata
+  const exactSourceKeys = metadata?.coveredSourceKeys ?? []
+  const exactSpanKeys = metadata?.coveredSpanKeys ?? []
+  if (exactSourceKeys.length === 0 && exactSpanKeys.length === 0) return null
+
+  const snapshotSourceKeys = new Set(snapshot.sourceItems.map((item) => item.key))
+  const spanByKey = new Map(snapshot.spans.map((span) => [span.key, span]))
+  const coveredSourceKeys = new Set<string>()
+  let unresolvedExactCoverage = false
+
+  for (const sourceKey of exactSourceKeys) {
+    if (!snapshotSourceKeys.has(sourceKey)) {
+      unresolvedExactCoverage = true
+      continue
+    }
+    coveredSourceKeys.add(sourceKey)
+  }
+
+  for (const spanKey of exactSpanKeys) {
+    const span = spanByKey.get(spanKey)
+    if (!span) {
+      unresolvedExactCoverage = true
+      continue
+    }
+    for (const sourceKey of span.sourceKeys) {
+      coveredSourceKeys.add(sourceKey)
+    }
+  }
+
+  if (unresolvedExactCoverage) return null
+  return coveredSourceKeys
+}
+
 export function countLogicalTurns(messages: any[]): number {
   return buildTranscriptSnapshot(messages).spans.filter((span) => LOGICAL_TURN_ELIGIBLE_ROLES.has(span.role)).length
 }
@@ -159,28 +196,15 @@ function resolveCoveredOrdinals(
   for (const block of compressionBlocks) {
     if (!block.active) continue
 
-    const metadata = block.metadata
-    const exactSourceKeys = metadata?.coveredSourceKeys ?? []
-    const exactSpanKeys = metadata?.coveredSpanKeys ?? []
+    const exactCoveredSourceKeys = resolveCompressionBlockCoveredSourceKeys(snapshot, block)
 
-    if (exactSourceKeys.length > 0 || exactSpanKeys.length > 0) {
+    if (exactCoveredSourceKeys !== null) {
       activeBlockOwnerKeys.add(buildBlockOwnerKey(block.id))
 
-      for (const sourceKey of exactSourceKeys) {
+      for (const sourceKey of exactCoveredSourceKeys) {
         const ordinal = sourceOrdinalByKey.get(sourceKey)
         if (ordinal !== undefined) {
           coveredOrdinals.add(ordinal)
-        }
-      }
-
-      for (const spanKey of exactSpanKeys) {
-        const span = spanByKey.get(spanKey)
-        if (!span) continue
-        for (const sourceKey of span.sourceKeys) {
-          const ordinal = sourceOrdinalByKey.get(sourceKey)
-          if (ordinal !== undefined) {
-            coveredOrdinals.add(ordinal)
-          }
         }
       }
 

@@ -14,7 +14,11 @@ import {
 import type { DcpConfig } from "./config.js"
 import { COMPRESS_RANGE_DESCRIPTION } from "./prompts.js"
 import { estimateTokens, resolveCompressionRangeIndices } from "./pruner.js"
-import { buildTranscriptSnapshot, resolveLogicalTurnTailStartTimestamp } from "./transcript.js"
+import {
+  buildTranscriptSnapshot,
+  resolveCompressionBlockCoveredSourceKeys,
+  resolveLogicalTurnTailStartTimestamp,
+} from "./transcript.js"
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -391,6 +395,59 @@ export function resolveProtectedTailStartTimestamp(
   return resolveLogicalTurnTailStartTimestamp(messages, protectRecentTurns)
 }
 
+function buildOverlapError(startId: string, endId: string, existing: CompressionBlock): Error {
+  return new Error(
+    `Overlapping compression ranges are not supported. ` +
+      `New range (${startId}..${endId}) overlaps existing block ` +
+      `b${existing.id} "${existing.topic}". ` +
+      `Choose a range entirely before or after b${existing.id}, or compress relative to b${existing.id} itself.`,
+  )
+}
+
+export function resolveSupersededBlockIdsForRange(
+  messages: any[],
+  compressionBlocks: CompressionBlock[],
+  startTimestamp: number,
+  endTimestamp: number,
+  newCoveredSourceKeys: Iterable<string>,
+  startId: string,
+  endId: string,
+  ignoredBlockIds: Set<number> = new Set(),
+): number[] {
+  const snapshot = buildTranscriptSnapshot(messages)
+  const newCoveredSourceKeySet = new Set(newCoveredSourceKeys)
+  const supersededBlockIds: number[] = []
+
+  for (const existing of compressionBlocks) {
+    if (!existing.active) continue
+    if (ignoredBlockIds.has(existing.id)) continue
+    if (!Number.isFinite(existing.startTimestamp) || !Number.isFinite(existing.endTimestamp)) continue
+
+    const overlaps =
+      startTimestamp <= existing.endTimestamp && existing.startTimestamp <= endTimestamp
+    if (!overlaps) continue
+
+    const existingCoveredSourceKeys = resolveCompressionBlockCoveredSourceKeys(snapshot, existing)
+    if (existingCoveredSourceKeys === null || existingCoveredSourceKeys.size === 0) {
+      throw buildOverlapError(startId, endId, existing)
+    }
+
+    let coveredCount = 0
+    for (const sourceKey of existingCoveredSourceKeys) {
+      if (newCoveredSourceKeySet.has(sourceKey)) coveredCount++
+    }
+
+    if (coveredCount === existingCoveredSourceKeys.size) {
+      supersededBlockIds.push(existing.id)
+      continue
+    }
+
+    throw buildOverlapError(startId, endId, existing)
+  }
+
+  return supersededBlockIds
+}
+
 function buildCompressionArtifactsFromMessages(
   messages: any[],
   state: DcpState,
@@ -510,6 +567,9 @@ export function registerCompressTool(
         currentMessages,
         config.compress.protectRecentTurns,
       )
+      const plannedBlocks: CompressionBlock[] = []
+      const pendingSupersededBlockIds = new Set<number>()
+      let nextBlockId = state.nextBlockId
 
       for (const range of params.ranges) {
         const { startId, endId, summary } = range
@@ -551,23 +611,6 @@ export function registerCompressTool(
           )
         }
 
-        for (const existing of state.compressionBlocks) {
-          if (!existing.active) continue
-          if (!Number.isFinite(existing.startTimestamp) || !Number.isFinite(existing.endTimestamp)) {
-            continue
-          }
-          const overlaps =
-            startTimestamp <= existing.endTimestamp && existing.startTimestamp <= endTimestamp
-          if (overlaps) {
-            throw new Error(
-              `Overlapping compression ranges are not supported. ` +
-                `New range (${startId}..${endId}) overlaps existing block ` +
-                `b${existing.id} "${existing.topic}". ` +
-                `Choose a range entirely before or after b${existing.id}, or compress relative to b${existing.id} itself.`,
-            )
-          }
-        }
-
         const anchorTimestamp = resolveAnchorTimestamp(endTimestamp, state)
         const expandedSummary = expandBlockPlaceholders(summary, state)
         const artifacts = buildCompressionArtifactsForRange(
@@ -576,9 +619,23 @@ export function registerCompressTool(
           startTimestamp,
           endTimestamp,
         )
+        const supersededBlockIds = resolveSupersededBlockIdsForRange(
+          currentMessages,
+          [...state.compressionBlocks, ...plannedBlocks],
+          startTimestamp,
+          endTimestamp,
+          artifacts.metadata.coveredSourceKeys,
+          startId,
+          endId,
+          pendingSupersededBlockIds,
+        )
+        for (const blockId of supersededBlockIds) {
+          pendingSupersededBlockIds.add(blockId)
+        }
+        artifacts.metadata.supersededBlockIds = supersededBlockIds
 
         const block: CompressionBlock = {
-          id: state.nextBlockId++,
+          id: nextBlockId++,
           topic: params.topic,
           summary: expandedSummary,
           startTimestamp,
@@ -592,11 +649,18 @@ export function registerCompressTool(
           metadata: artifacts.metadata,
         }
 
-        state.compressionBlocks.push(block)
+        plannedBlocks.push(block)
         newBlockIds.push(block.id)
       }
 
-      if (newBlockIds.length > 0) {
+      if (plannedBlocks.length > 0) {
+        state.nextBlockId = nextBlockId
+        for (const existing of state.compressionBlocks) {
+          if (pendingSupersededBlockIds.has(existing.id)) {
+            existing.active = false
+          }
+        }
+        state.compressionBlocks.push(...plannedBlocks)
         state.lastCompressTurn = state.currentTurn
         state.lastNudgeTurn = state.currentTurn
       }

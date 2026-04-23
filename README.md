@@ -117,6 +117,8 @@ When the LLM calls the `compress` tool it provides one or more `{startId, endId,
 3. Injects a synthetic `[Compressed section: …]` user message containing the summary
 4. Keeps the block state in the session so it survives restarts
 
+When a new compression exactly covers an older exact-coverage block, DCP now supersedes the older block instead of accumulating both summaries. Ambiguous partial overlap still rejects conservatively.
+
 By default, DCP also protects the hot tail of the conversation: ranges that end inside the last `protectRecentTurns` logical turns/tool batches are rejected unless the session is already above the hard emergency threshold (`maxContextPercent`).
 
 Message IDs (`m001`, `m042`, etc.) and block IDs (`b1`, `b3`) are injected into every message in the context so the LLM can reference exact boundaries.

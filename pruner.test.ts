@@ -9,6 +9,7 @@ import assert from "assert";
 import {
   buildCompressionArtifactsForRange,
   resolveProtectedTailStartTimestamp,
+  resolveSupersededBlockIdsForRange,
 } from "./compress-tool.js";
 import { restorePersistedState, mapLegacyBlockToSpanRange } from "./migration.js";
 import { renderCompressedBlockMessage } from "./materialize.js";
@@ -955,10 +956,10 @@ function findOrphanedToolUse(result: any[]): string | null {
 }
 
 // ---------------------------------------------------------------------------
-// Test 14 — LEGACY BLOCKS MAP TO ENCOMPASSING TOOL-EXCHANGE SPANS
+// Test 14b — LEGACY BLOCKS MAP TO ENCOMPASSING TOOL-EXCHANGE SPANS
 // ---------------------------------------------------------------------------
 {
-  console.log("TEST 14: legacy block remap targets enclosing tool-exchange span");
+  console.log("TEST 14b: legacy block remap targets enclosing tool-exchange span");
 
   const messages: any[] = [
     { role: "user", content: [{ type: "text", text: "run two tools" }], timestamp: 1000 },
@@ -1012,7 +1013,7 @@ function findOrphanedToolUse(result: any[]): string | null {
   assert.strictEqual(mapped!.endSpanKey, toolExchange.key, "FAIL — end timestamp inside tool exchange should map to the exchange span");
 
   console.log("  PASS: legacy timestamp blocks remap to enclosing tool-exchange spans");
-  console.log("TEST 14 PASSED\n");
+  console.log("TEST 14b PASSED\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -1362,6 +1363,137 @@ function findOrphanedToolUse(result: any[]): string | null {
 
   console.log("  PASS: provider payload filtering prunes by canonical owner, not visible ids");
   console.log("TEST 20 PASSED\n");
+}
+
+// ---------------------------------------------------------------------------
+// Test 21 — EXACT FULL COVERAGE SUPERCEDES OLDER ACTIVE BLOCKS
+// ---------------------------------------------------------------------------
+{
+  console.log("TEST 21: exact full coverage supersedes older active blocks");
+
+  const messages = makeMessages();
+  const olderArtifacts = buildCompressionArtifactsForRange(messages, makeState(), 2000, 3000);
+  const newerArtifacts = buildCompressionArtifactsForRange(messages, makeState(), 1000, 3000);
+  const olderBlock = {
+    id: 7,
+    topic: "tool exchange",
+    summary: "older",
+    startTimestamp: 2000,
+    endTimestamp: 3000,
+    anchorTimestamp: 4000,
+    active: true,
+    summaryTokenEstimate: 1,
+    createdAt: 1,
+    metadata: olderArtifacts.metadata,
+  };
+
+  assert.deepStrictEqual(
+    resolveSupersededBlockIdsForRange(
+      messages,
+      [olderBlock],
+      1000,
+      3000,
+      newerArtifacts.metadata.coveredSourceKeys,
+      "m001",
+      "m003",
+    ),
+    [7],
+    "FAIL — fully covered exact old block should be superseded",
+  );
+
+  console.log("  PASS: fully covered exact old blocks are superseded");
+  console.log("TEST 21 PASSED\n");
+}
+
+// ---------------------------------------------------------------------------
+// Test 22 — PARTIAL EXACT OVERLAP STILL REJECTS
+// ---------------------------------------------------------------------------
+{
+  console.log("TEST 22: partial exact overlap still rejects");
+
+  const messages: any[] = [
+    { role: "user", content: [{ type: "text", text: "one" }], timestamp: 1000 },
+    { role: "assistant", content: [{ type: "text", text: "two" }], timestamp: 2000 },
+    { role: "user", content: [{ type: "text", text: "three" }], timestamp: 3000 },
+  ];
+  const snapshot = buildTranscriptSnapshot(messages);
+  const olderBlock = {
+    id: 8,
+    topic: "older",
+    summary: "older",
+    startTimestamp: 1000,
+    endTimestamp: 2000,
+    anchorTimestamp: 3000,
+    active: true,
+    summaryTokenEstimate: 1,
+    createdAt: 1,
+    metadata: {
+      coveredSourceKeys: [snapshot.sourceItems[0]!.key, snapshot.sourceItems[1]!.key],
+      coveredSpanKeys: [snapshot.spans[0]!.key, snapshot.spans[1]!.key],
+      coveredArtifactRefs: [],
+      coveredToolIds: [],
+      supersededBlockIds: [],
+      fileReadStats: [],
+      fileWriteStats: [],
+      commandStats: [],
+    },
+  };
+
+  assert.throws(
+    () =>
+      resolveSupersededBlockIdsForRange(
+        messages,
+        [olderBlock],
+        2000,
+        3000,
+        [snapshot.sourceItems[1]!.key, snapshot.sourceItems[2]!.key],
+        "m002",
+        "m003",
+      ),
+    /Overlapping compression ranges are not supported/,
+    "FAIL — partial exact overlap should still reject",
+  );
+
+  console.log("  PASS: partial exact overlap still rejects");
+  console.log("TEST 22 PASSED\n");
+}
+
+// ---------------------------------------------------------------------------
+// Test 23 — TIMESTAMP-ONLY LEGACY OVERLAP STAYS CONSERVATIVE
+// ---------------------------------------------------------------------------
+{
+  console.log("TEST 23: timestamp-only legacy overlap stays conservative");
+
+  const messages = makeMessages();
+  const legacyBlock = {
+    id: 9,
+    topic: "legacy",
+    summary: "legacy",
+    startTimestamp: 2000,
+    endTimestamp: 3000,
+    anchorTimestamp: 4000,
+    active: true,
+    summaryTokenEstimate: 1,
+    createdAt: 1,
+  };
+
+  assert.throws(
+    () =>
+      resolveSupersededBlockIdsForRange(
+        messages,
+        [legacyBlock],
+        1000,
+        3000,
+        buildCompressionArtifactsForRange(messages, makeState(), 1000, 3000).metadata.coveredSourceKeys,
+        "m001",
+        "m003",
+      ),
+    /Overlapping compression ranges are not supported/,
+    "FAIL — timestamp-only legacy overlap should still reject conservatively",
+  );
+
+  console.log("  PASS: timestamp-only legacy overlap stays conservative");
+  console.log("TEST 23 PASSED\n");
 }
 
 console.log("All tests passed.");
