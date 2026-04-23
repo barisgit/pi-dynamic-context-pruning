@@ -16,7 +16,7 @@ The ONLY tool you have for context management is \`compress\`. It replaces older
 \`<dcp-id>\` and \`<dcp-system-reminder>\` tags are environment-injected metadata. Do not output them.
 
 THE PHILOSOPHY OF COMPRESS
-\`compress\` transforms conversation content into dense, high-fidelity summaries. This is not cleanup — it is crystallization. Your summary becomes the authoritative record of what transpired.
+\`compress\` transforms conversation content into dense, high-fidelity summaries. This is not cleanup — it is crystallization. Your summary becomes the durable handoff record for what transpired.
 
 Think of compression as phase transitions: raw exploration becomes refined understanding. The original context served its purpose; your summary now carries that understanding forward.
 
@@ -64,14 +64,14 @@ It is your responsibility to keep a sharp, high-quality context window for optim
  *     ranges: Array<{
  *       startId: string        // mNNN or bN
  *       endId:   string        // mNNN or bN
- *       summary: string        // exhaustive technical summary
+ *       summary: string        // detailed technical handoff summary
  *     }>
  *   }
  */
 export const COMPRESS_RANGE_DESCRIPTION = `Collapse one or more ranges of the conversation into detailed summaries.
 
 THE SUMMARY
-Your summary must be EXHAUSTIVE. Capture file paths, function signatures, decisions made, constraints discovered, key findings... EVERYTHING that maintains context integrity. This is not a brief note — it is an authoritative record so faithful that the original conversation adds no value.
+Your summary must be explicit, durable, and high-fidelity. Capture the essential technical context needed to continue safely: file paths, function signatures, decisions made, constraints discovered, key findings, and current state. You do not need to replay every raw message or tool output verbatim; the deterministic log already carries chronology and provenance. This is not a brief note — it is a durable handoff summary that preserves context integrity.
 
 USER INTENT FIDELITY
 When the compressed range includes user messages, preserve the user's intent with extra care. Do not change scope, constraints, priorities, acceptance criteria, or requested outcomes.
@@ -208,7 +208,7 @@ WHEN TO COMPRESS
 WHEN YOU DO COMPRESS
 Apply the same quality standards as always:
 
-- Summaries must be EXHAUSTIVE — file paths, decisions, findings, exact constraints
+- Summaries must be explicit and high-fidelity — file paths, decisions, findings, exact constraints
 - Preserve user intent precisely; prefer direct quotes for short user messages
 - Use only boundary IDs visible in context (\`mNNN\` for messages, \`bN\` for compressed blocks)
 - Batch independent ranges in a single \`compress\` call when possible

@@ -13,6 +13,7 @@ import {
 } from "./state.js"
 import type { DcpConfig } from "./config.js"
 import { appendDebugLog, buildSessionDebugPayload } from "./debug-log.js"
+import { stripDcpMetadataTags } from "./dcp-metadata.js"
 import { COMPRESS_RANGE_DESCRIPTION } from "./prompts.js"
 import { estimateTokens, resolveCompressionRangeIndices } from "./pruner.js"
 import {
@@ -25,7 +26,7 @@ import {
 // Helpers
 // ---------------------------------------------------------------------------
 
-const MAX_EXCERPT_CHARS = 160
+const MAX_EXCERPT_CHARS = 420
 
 type CompressionArtifacts = {
   activityLogVersion: 1
@@ -375,7 +376,7 @@ function getTextParts(content: unknown): string[] {
 }
 
 function extractMessageExcerpt(message: any): string | null {
-  const joined = normalizeInlineWhitespace(getTextParts(message?.content).join(" "))
+  const joined = normalizeInlineWhitespace(stripDcpMetadataTags(getTextParts(message?.content).join(" ")))
   if (!joined) return null
   return truncateText(joined, MAX_EXCERPT_CHARS)
 }

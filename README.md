@@ -4,7 +4,7 @@ Automatically reduces token usage in Pi coding agent sessions by managing conver
 
 ## Features
 
-- **Compress tool** — LLM-callable tool that replaces stale conversation ranges with exhaustive technical summaries, preserving full context fidelity at a fraction of the token cost
+- **Compress tool** — LLM-callable tool that replaces stale conversation ranges with explicit high-fidelity technical summaries, preserving full context fidelity at a fraction of the token cost
 - **Deduplication** — automatically removes duplicate tool call outputs (same tool, same args) keeping only the most recent result
 - **Error purging** — cleans up failed tool inputs after a configurable number of logical turns
 - **Context nudges** — injects compression reminders into the context at configurable thresholds: soft housekeeping notices, strong emergency warnings, and iteration reminders after long tool-call chains
@@ -123,7 +123,7 @@ When the LLM calls the `compress` tool it provides one or more `{startId, endId,
 
 1. Records the range as a `CompressionBlock` with start/end timestamps
 2. On every `context` event, splices out the raw messages in that range
-3. Injects a synthetic `[Compressed section: …]` user message containing the summary
+3. Injects a synthetic `[Compressed section: …]` user message containing the summary and, for newer blocks, a deterministic activity log
 4. Keeps the block state in the session so it survives restarts
 
 When a new compression exactly covers an older exact-coverage block, DCP now supersedes the older block instead of accumulating both summaries. Ambiguous partial overlap still rejects conservatively.

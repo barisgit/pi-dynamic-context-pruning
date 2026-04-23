@@ -2,6 +2,7 @@
 // Dynamic Context Pruning (DCP) — v2 materialization scaffolding
 // ---------------------------------------------------------------------------
 
+import { stripDcpMetadataTags } from "./dcp-metadata.js"
 import type { CompressionBlockV2, CompressionLogEntry } from "./state.js"
 import type { TranscriptSnapshot } from "./transcript.js"
 
@@ -25,8 +26,8 @@ export interface CompressionBlockRenderData {
   detailLevel?: CompressionBlockRenderDetail
 }
 
-const MAX_ACTIVITY_LOG_LINES = 24
-const MAX_ACTIVITY_LOG_CHARS = 160
+const MAX_ACTIVITY_LOG_LINES = 48
+const MAX_ACTIVITY_LOG_CHARS = 420
 const MAX_COMPACT_SUMMARY_CHARS = 320
 const MAX_MINIMAL_SUMMARY_CHARS = 140
 
@@ -59,7 +60,10 @@ function renderLogEntry(entry: CompressionLogEntry): string {
           ? "cmd: "
           : `${entry.kind}: `
 
-  return prefix + truncateText(normalizeInlineWhitespace(entry.text), MAX_ACTIVITY_LOG_CHARS)
+  return prefix + truncateText(
+    normalizeInlineWhitespace(stripDcpMetadataTags(entry.text)),
+    MAX_ACTIVITY_LOG_CHARS,
+  )
 }
 
 /** Render the plain text body for a compressed block. */

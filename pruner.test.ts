@@ -1076,8 +1076,8 @@ function findOrphanedToolUse(result: any[]): string | null {
     summary: "Renderer work started for the new deterministic block shape.",
     activityLogVersion: 1,
     activityLog: [
-      { kind: "user_excerpt", text: '"You need to remember one thing: SIMPLE..."' },
-      { kind: "assistant_excerpt", text: '"Default answer: keep `compress` simple..."' },
+      { kind: "user_excerpt", text: '"You need to remember one thing: SIMPLE... <dcp-id>m029</dcp-id> <dcp-owner>s14</dcp-owner> and keep the useful trailing context."' },
+      { kind: "assistant_excerpt", text: '"Default answer: keep `compress` simple <dcp-block-id>b3</dcp-block-id> and preserve the useful follow-up."' },
       { kind: "command", text: "bun run pruner.test.ts -> ok" },
       { kind: "commit", text: 'ff104f4 "Refine DCP v2 block design"' },
     ],
@@ -1087,11 +1087,13 @@ function findOrphanedToolUse(result: any[]): string | null {
   assert.ok(text.includes("[Compressed section: dogfood block format]"), "FAIL — missing compressed section header");
   assert.ok(text.includes("<agent-summary>"), "FAIL — expected structured summary wrapper when activity log exists");
   assert.ok(text.includes("<dcp-log v=\"1\">"), "FAIL — expected deterministic log wrapper");
-  assert.ok(text.includes('u: "You need to remember one thing: SIMPLE..."'), "FAIL — expected raw user excerpt log line");
-  assert.ok(text.includes('a: "Default answer: keep `compress` simple..."'), "FAIL — expected raw assistant excerpt log line");
+  assert.ok(text.includes('u: "You need to remember one thing: SIMPLE... and keep the useful trailing context."'), "FAIL — expected sanitized user excerpt log line");
+  assert.ok(text.includes('a: "Default answer: keep `compress` simple and preserve the useful follow-up."'), "FAIL — expected sanitized assistant excerpt log line");
   assert.ok(text.includes("cmd: bun run pruner.test.ts -> ok"), "FAIL — expected command log line");
   assert.ok(text.includes('commit: ff104f4 "Refine DCP v2 block design"'), "FAIL — expected commit log line");
   assert.ok(!text.includes("m029"), "FAIL — visible message ids should not appear in normal rendered block text by default");
+  assert.ok(!text.includes("<dcp-owner>s14</dcp-owner>"), "FAIL — renderer should strip DCP owner tags from visible log lines");
+  assert.ok(!text.includes("<dcp-block-id>b3</dcp-block-id>"), "FAIL — renderer should strip stale block markers from visible log lines");
 
   const compact = renderCompressedBlockMessage({
     id: 8,
@@ -1274,6 +1276,39 @@ function findOrphanedToolUse(result: any[]): string | null {
 
   console.log("  PASS: covered assistant toolCall blocks recover missing tool metadata");
   console.log("TEST 17b PASSED\n");
+}
+
+// ---------------------------------------------------------------------------
+// Test 17c — EXCERPTS STRIP DCP METADATA WHILE KEEPING USEFUL TEXT
+// ---------------------------------------------------------------------------
+{
+  console.log("TEST 17c: excerpts strip DCP metadata while keeping useful text");
+
+  const messages: any[] = [
+    {
+      role: "assistant",
+      content: [
+        {
+          type: "text",
+          text: "[Compressed section: older block]\n\n<agent-summary>\nKeep the useful trail <dcp-id>m001</dcp-id> <dcp-owner>s7</dcp-owner> after the tag.\n</agent-summary>\n\n<dcp-block-id>b1</dcp-block-id>",
+        },
+      ],
+      timestamp: 1000,
+    },
+  ];
+
+  const artifacts = buildCompressionArtifactsForRange(messages, makeState(), 1000, 1000);
+
+  assert.deepStrictEqual(
+    artifacts.activityLog.map((entry) => `${entry.kind}:${entry.text}`),
+    [
+      'assistant_excerpt:"[Compressed section: older block] Keep the useful trail after the tag."',
+    ],
+    "FAIL — excerpt capture should strip DCP metadata tags while preserving useful surrounding text",
+  );
+
+  console.log("  PASS: excerpt capture strips DCP metadata and keeps useful context");
+  console.log("TEST 17c PASSED\n");
 }
 
 // ---------------------------------------------------------------------------
