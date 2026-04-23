@@ -804,10 +804,30 @@ function findOrphanedToolUse(result: any[]): string | null {
 }
 
 // ---------------------------------------------------------------------------
-// Test 12 — TURN NUDGES SHOULD RESPECT TURN DEBOUNCE AND COMPRESS COOL-DOWN
+// Test 12 — LOGICAL TURN COUNTING GROUPS TOOL BATCHES INTO ONE TURN
 // ---------------------------------------------------------------------------
 {
-  console.log("TEST 12: turn nudge debounce + post-compress suppression");
+  console.log("TEST 12: logical turn counting treats one tool batch as one turn");
+
+  const state = makeState();
+  const result = applyPruning(makeMessages(), state, makeConfig());
+
+  assert.strictEqual(result.length, 4, "FAIL — baseline pruning should preserve the four raw messages");
+  assert.strictEqual(
+    state.currentTurn,
+    3,
+    "FAIL — expected user + tool batch + user to count as 3 logical turns",
+  );
+
+  console.log("  PASS: logical turn counting matches message/tool-batch semantics");
+  console.log("TEST 12 PASSED\n");
+}
+
+// ---------------------------------------------------------------------------
+// Test 13 — TURN NUDGES SHOULD RESPECT TURN DEBOUNCE AND COMPRESS COOL-DOWN
+// ---------------------------------------------------------------------------
+{
+  console.log("TEST 13: turn nudge debounce + post-compress suppression");
 
   const config = makeConfig();
   config.compress.minContextPercent = 0.75;
@@ -821,7 +841,7 @@ function findOrphanedToolUse(result: any[]): string | null {
   assert.strictEqual(
     getNudgeType(0.8, state, config, 0),
     null,
-    "FAIL — should not emit a turn nudge twice in the same user turn",
+    "FAIL — should not emit a turn nudge twice in the same logical turn",
   );
 
   state.currentTurn = 6;
@@ -829,7 +849,7 @@ function findOrphanedToolUse(result: any[]): string | null {
   assert.strictEqual(
     getNudgeType(0.8, state, config, 0),
     null,
-    "FAIL — should debounce for one newer user turn when debounceTurns=2",
+    "FAIL — should debounce for one newer logical turn when debounceTurns=2",
   );
 
   state.currentTurn = 7;
@@ -837,7 +857,7 @@ function findOrphanedToolUse(result: any[]): string | null {
   assert.strictEqual(
     getNudgeType(0.8, state, config, 0),
     "turn",
-    "FAIL — should emit once enough newer user turns have happened",
+    "FAIL — should emit once enough newer logical turns have happened",
   );
   assert.strictEqual(
     getNudgeType(0.75, state, config, 0),
@@ -851,14 +871,14 @@ function findOrphanedToolUse(result: any[]): string | null {
   assert.strictEqual(
     getNudgeType(0.95, state, config, 0),
     null,
-    "FAIL — should not emit in the same user turn that already compressed",
+    "FAIL — should not emit in the same logical turn that already compressed",
   );
 
   state.currentTurn = 8;
   assert.strictEqual(
     getNudgeType(0.95, state, config, 0),
     null,
-    "FAIL — should stay quiet on the first newer user turn after compress when debounceTurns=2",
+    "FAIL — should stay quiet on the first newer logical turn after compress when debounceTurns=2",
   );
 
   state.currentTurn = 9;
@@ -869,14 +889,14 @@ function findOrphanedToolUse(result: any[]): string | null {
   );
 
   console.log("  PASS: turn debounce and post-compress suppression work");
-  console.log("TEST 12 PASSED\n");
+  console.log("TEST 13 PASSED\n");
 }
 
 // ---------------------------------------------------------------------------
-// Test 13 — TRANSCRIPT SNAPSHOT GROUPS TOOL EXCHANGES
+// Test 14 — TRANSCRIPT SNAPSHOT GROUPS TOOL EXCHANGES
 // ---------------------------------------------------------------------------
 {
-  console.log("TEST 13: transcript snapshot groups tool exchanges");
+  console.log("TEST 14: transcript snapshot groups tool exchanges");
 
   const messages: any[] = [
     { role: "user", content: [{ type: "text", text: "run two tools" }], timestamp: 1000 },
@@ -931,7 +951,7 @@ function findOrphanedToolUse(result: any[]): string | null {
   );
 
   console.log("  PASS: transcript snapshot builds coherent tool-exchange spans");
-  console.log("TEST 13 PASSED\n");
+  console.log("TEST 14 PASSED\n");
 }
 
 // ---------------------------------------------------------------------------

@@ -42,6 +42,48 @@ These are the rules for v2.
    - Fully covered prior blocks may be superseded by the new block.
    - Recompressing prior blocks should be supported, but it should be rare rather than the main path.
 
+## Session axioms worth preserving
+
+These are the practical axioms this implementation/design work kept converging on.
+
+1. **Infer ownership from canonical source reality, not from rendered visibility.**
+   - Visible `mNNN` tags are for agent-facing boundaries.
+   - Hidden/provider artifact ownership must come from canonical source items/spans and active blocks.
+
+2. **Every hidden artifact must have a deterministic owner.**
+   - `reasoning`, `function_call`, `function_call_output`, reminder fragments, and tool ballast should be attached to canonical transcript entities.
+   - If an owner is removed by compression, its attached hidden artifacts should disappear with it.
+
+3. **Do not solve liveness with long-lived caches.**
+   - Persist canonical facts.
+   - Recompute liveness from the current source transcript plus active blocks.
+   - Runtime recomputation is safer than cache repair.
+
+4. **Exact coverage beats timestamp approximation whenever available.**
+   - New blocks should persist exact `coveredSourceKeys` / `coveredSpanKeys`.
+   - Legacy timestamp fallback exists only for backward compatibility.
+
+5. **One assistant tool batch is one logical turn.**
+   - Standalone visible messages count as turns.
+   - An assistant tool-call plus its matching tool results should count as one turn for debounce/cool-down semantics.
+   - Long-running tool loops must not look like zero progress just because the user has not spoken again.
+
+6. **Partial ambiguous overlap is invalid; fully covered prior blocks should be absorbable.**
+   - New compressions should be allowed to supersede older active blocks when coverage is exact and complete.
+   - Ambiguous partial overlap should still fail until there is one deterministic closure rule.
+
+7. **Compaction is canonical until deterministically superseded.**
+   - Keep compaction/compressed blocks unless there is a precise reason to remove or replace them.
+   - Do not drop them just because nearby raw history changed.
+
+8. **Render detail may vary, identity may not.**
+   - Older blocks may render in full / compact / minimal forms.
+   - Stable ownership and stable block identity matter more than always showing the same verbosity.
+
+9. **Prompt shrink comes from deleting hidden ballast as well as visible text.**
+   - Replacing visible history alone is not enough.
+   - The big wins happen when compression also removes stale hidden/provider payload attached to covered history.
+
 ---
 
 ## Why v1 still grows too much

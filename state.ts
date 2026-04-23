@@ -227,9 +227,11 @@ export interface DcpState {
 
   // ── Turn tracking ──────────────────────────────────────────────────────────
   /**
-   * Zero-based index of the current user turn.
-   * Incremented each time a user message is encountered while processing the
-   * context array in the `context` event handler.
+   * Monotonic logical-turn counter for the current context snapshot.
+   *
+   * A standalone visible message counts as one turn. An assistant tool-call
+   * message plus its matching `toolResult` / `bashExecution` batch counts as a
+   * single turn.
    */
   currentTurn: number
 
@@ -250,14 +252,15 @@ export interface DcpState {
   // ── Nudge state ────────────────────────────────────────────────────────────
   /**
    * The value of `currentTurn` at the time the last nudge was emitted.
-   * Used to debounce nudges by user turns rather than raw context passes.
+   * Used to debounce nudges by logical turns rather than raw context passes.
    */
   lastNudgeTurn: number
   /**
    * The value of `currentTurn` at the time the last successful `compress`
    * transaction completed.
    *
-   * Used to suppress further nudges until at least one newer user turn exists.
+   * Used to suppress further nudges until at least one newer logical turn
+   * exists.
    */
   lastCompressTurn: number
 }

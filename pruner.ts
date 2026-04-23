@@ -1,7 +1,7 @@
 import type { DcpState } from "./state.js";
 import type { DcpConfig } from "./config.js";
 import { renderCompressedBlockMessage } from "./materialize.js";
-import { buildSourceOwnerKey } from "./transcript.js";
+import { buildSourceOwnerKey, buildTranscriptSnapshot } from "./transcript.js";
 
 // Always-protected tool names for deduplication
 const ALWAYS_PROTECTED_DEDUP = new Set(["compress", "write", "edit"]);
@@ -40,6 +40,10 @@ function estimateMessageTokens(msg: any): number {
     return total;
   }
   return 0;
+}
+
+function countLogicalTurns(messages: any[]): number {
+  return buildTranscriptSnapshot(messages).spans.filter((span) => ID_ELIGIBLE_ROLES.has(span.role)).length;
 }
 
 /**
@@ -450,8 +454,10 @@ export function applyPruning(
     return clone;
   });
 
-  // 1. Count user turns → update state.currentTurn
-  state.currentTurn = msgs.filter((m) => m.role === "user").length;
+  // 1. Count logical turns → update state.currentTurn.
+  // A standalone visible message counts as one turn; an assistant tool batch
+  // grouped with its matching tool results counts as one turn.
+  state.currentTurn = countLogicalTurns(msgs);
 
   // 2. Apply active compression blocks
   applyCompressionBlocks(msgs, state, config);

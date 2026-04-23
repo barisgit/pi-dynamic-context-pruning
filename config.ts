@@ -17,7 +17,7 @@ export interface DcpConfig {
   compress: {
     maxContextPercent: number // 0-1, e.g. 0.9 — above this, aggressive nudges / emergency override
     minContextPercent: number // 0-1, e.g. 0.75 — below this, no nudges
-    nudgeDebounceTurns: number // minimum number of newer user turns between nudges
+    nudgeDebounceTurns: number // minimum number of newer logical turns between nudges
     nudgeFrequency: number // legacy context-pass cadence knob; retained for backward compatibility
     iterationNudgeThreshold: number // nudge after N tool calls since last user msg (default: 15)
     protectRecentTurns: number // protect the hot tail beginning at the Nth-most-recent user/assistant turn
