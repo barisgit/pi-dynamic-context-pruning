@@ -6,7 +6,7 @@ Automatically reduces token usage in Pi coding agent sessions by managing conver
 
 - **Compress tool** — LLM-callable tool that replaces stale conversation ranges with exhaustive technical summaries, preserving full context fidelity at a fraction of the token cost
 - **Deduplication** — automatically removes duplicate tool call outputs (same tool, same args) keeping only the most recent result
-- **Error purging** — cleans up failed tool inputs after a configurable number of user turns
+- **Error purging** — cleans up failed tool inputs after a configurable number of logical turns
 - **Context nudges** — injects compression reminders into the context at configurable thresholds: soft housekeeping notices, strong emergency warnings, and iteration reminders after long tool-call chains
 - **Manual mode** — disable autonomous compression nudges; trigger compression only via `/dcp compress` or explicit user request
 - **Session persistence** — compression blocks and pruning state survive session restarts
@@ -131,10 +131,10 @@ When a compression range touches any part of an assistant→toolResult group, DC
 
 | Nudge | Condition |
 |---|---|
-| **context-strong** | Above `maxContextPercent`, after turn debounce / post-compress cool-down, `nudgeForce = "strong"` |
+| **context-strong** | Above `maxContextPercent`, after logical-turn debounce / post-compress cool-down, `nudgeForce = "strong"` |
 | **context-soft** | Same as above with `nudgeForce = "soft"` |
-| **iteration** | Between min/max percent, after turn debounce / post-compress cool-down, AND ≥ `iterationNudgeThreshold` tool calls since last user message |
-| **turn** | Between min/max percent, after turn debounce / post-compress cool-down |
+| **iteration** | Between min/max percent, after logical-turn debounce / post-compress cool-down, AND ≥ `iterationNudgeThreshold` tool calls since last user message |
+| **turn** | Between min/max percent, after logical-turn debounce / post-compress cool-down |
 
 ### Deduplication
 
@@ -142,7 +142,7 @@ Two tool results share the same fingerprint (`toolName::JSON(sorted-args)`) if t
 
 ### Error purging
 
-Tool results that were errors are replaced with a tombstone after `purgeErrors.turns` user turns have passed, keeping the context clean of long-dead failure traces.
+Tool results that were errors are replaced with a tombstone after `purgeErrors.turns` logical turns have passed, keeping the context clean of long-dead failure traces.
 
 ## Status indicator
 

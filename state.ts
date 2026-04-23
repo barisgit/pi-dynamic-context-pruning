@@ -20,8 +20,9 @@ export interface ToolRecord {
   /** Whether the tool result was an error */
   isError: boolean
   /**
-   * Zero-based index of the user turn during which this tool was called.
-   * Incremented each time a user message is encountered in the context stream.
+   * Zero-based index of the logical turn during which this tool was called.
+   * Standalone visible messages count as turns; an assistant tool batch counts
+   * as one turn.
    */
   turnIndex: number
   /** message.timestamp from the ToolResultMessage */

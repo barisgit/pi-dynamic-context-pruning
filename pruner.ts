@@ -542,8 +542,8 @@ export function injectNudge(messages: any[], nudgeText: string): void {
  *
  * Policy:
  * - only when context usage is above the configured minimum threshold
- * - debounced by user turns, not raw `context` event cadence
- * - suppressed immediately after a successful compress until enough newer user
+ * - debounced by logical turns, not raw `context` event cadence
+ * - suppressed immediately after a successful compress until enough newer logical
  *   turns have happened
  */
 export function getNudgeType(
@@ -566,12 +566,12 @@ export function getNudgeType(
   }
 
   // A successful compress should buy immediate quiet. Do not nudge again in
-  // the same user turn that already produced a compress.
+  // the same logical turn that already produced a compress.
   if (state.currentTurn <= state.lastCompressTurn) {
     return null;
   }
 
-  // Debounce by user turns rather than by raw context passes.
+  // Debounce by logical turns rather than by raw context passes.
   if (
     state.lastNudgeTurn >= 0 &&
     state.currentTurn - state.lastNudgeTurn < debounceTurns
