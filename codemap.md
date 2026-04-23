@@ -15,7 +15,7 @@ Runtime: Bun, ESM, TypeScript (no build step — pi loads `.ts` directly).
 
 | File | Purpose |
 |------|---------|
-| `index.ts` | Extension entry point; registers all hooks (session_start, context, before_agent_start, etc.) and wires pruning/filtering/nudge logic |
+| `index.ts` | Extension entry point; registers all 8 hooks (numbered 1–12) and wires pruning/filtering/nudge logic |
 | `config.ts` | JSONC config loading with 4-layer merge: defaults → global → PI_CONFIG_DIR → project-local |
 | `pruner.ts` | Active runtime pruning path: compression block application, dedup, error purge, tool output replacement, message ID injection |
 | `compress-tool.ts` | `compress` tool registration, range validation, exact metadata generation, supersession planning |
