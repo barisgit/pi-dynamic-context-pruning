@@ -17,17 +17,40 @@ function normalizeInlineWhitespace(text: string): string {
   return text.replace(/\s+/g, " ").trim()
 }
 
+type CanonicalOwnerMarker = {
+  ownerKey: string
+  index: number
+}
+
+function findLastCanonicalOwnerMarker(text: string): CanonicalOwnerMarker | null {
+  let lastOwnerMarker: CanonicalOwnerMarker | null = null
+  for (const match of text.matchAll(/<dcp-owner>([^<]+)<\/dcp-owner>/g)) {
+    const ownerKey = match[1]
+    const index = match.index
+    if (typeof ownerKey === "string" && typeof index === "number") {
+      lastOwnerMarker = { ownerKey, index }
+    }
+  }
+
+  let lastBlockMarker: CanonicalOwnerMarker | null = null
+  for (const match of text.matchAll(/<dcp-block-id>(b\d+)<\/dcp-block-id>/g)) {
+    const blockId = match[1]
+    const index = match.index
+    if (typeof blockId === "string" && typeof index === "number") {
+      lastBlockMarker = { ownerKey: `block:${blockId}`, index }
+    }
+  }
+
+  if (!lastOwnerMarker) return lastBlockMarker
+  if (!lastBlockMarker) return lastOwnerMarker
+  return lastBlockMarker.index > lastOwnerMarker.index ? lastBlockMarker : lastOwnerMarker
+}
+
 export function extractCanonicalOwnerKeyFromMessageLike(message: any): string | null {
   const normalized = normalizeInlineWhitespace(extractMessageLikeText(message))
   if (!normalized) return null
 
-  const ownerMatch = normalized.match(/<dcp-owner>([^<]+)<\/dcp-owner>/)
-  if (ownerMatch) return ownerMatch[1] ?? null
-
-  const blockMatch = normalized.match(/<dcp-block-id>(b\d+)<\/dcp-block-id>/)
-  if (blockMatch) return `block:${blockMatch[1]}`
-
-  return null
+  return findLastCanonicalOwnerMarker(normalized)?.ownerKey ?? null
 }
 
 function isMessageLike(item: any): boolean {

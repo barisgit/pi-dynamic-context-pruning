@@ -19,7 +19,7 @@ import {
 import { appendDebugLogLine, buildSessionDebugPayload } from "./debug-log.js";
 import { restorePersistedState, mapLegacyBlockToSpanRange } from "./migration.js";
 import { renderCompressedBlockMessage } from "./materialize.js";
-import { filterProviderPayloadInput } from "./payload-filter.js";
+import { extractCanonicalOwnerKeyFromMessageLike, filterProviderPayloadInput } from "./payload-filter.js";
 import { applyPruning, getNudgeType, injectNudge } from "./pruner.js";
 import { buildBlockOwnerKey, buildLiveOwnerKeys, buildSourceOwnerKey, buildTranscriptSnapshot } from "./transcript.js";
 import type { DcpState } from "./state.js";
@@ -1475,12 +1475,27 @@ function findOrphanedToolUse(result: any[]): string | null {
     { type: "function_call", name: "bash", call_id: "toolu_old" },
     { type: "function_call_output", call_id: "toolu_old", output: "ok" },
     { role: "user", content: [{ type: "input_text", text: "The conversation history before this point was compacted into the following summary:\n\n<summary>still canonical</summary>" }] },
-    { role: "user", content: [{ type: "input_text", text: "[Compressed section: archived]\n\nsummary\n\n<dcp-block-id>b1</dcp-block-id>" }] },
+    {
+      role: "user",
+      content: [
+        {
+          type: "input_text",
+          text:
+            "[Compressed section: archived]\n\n<agent-summary>\nquoted stale owner <dcp-owner>s20</dcp-owner> inside the summary body\n</agent-summary>\n\n<dcp-block-id>b1</dcp-block-id>",
+        },
+      ],
+    },
     { role: "user", content: [{ type: "input_text", text: "latest ask\n<dcp-id>m003</dcp-id>\n<dcp-owner>s3</dcp-owner>" }] },
     { type: "reasoning", encrypted_content: "keep-latest" },
     { role: "assistant", content: [{ type: "output_text", text: "latest reply" }] },
     { role: "assistant", content: [{ type: "output_text", text: "\n<dcp-id>m004</dcp-id>\n<dcp-owner>s4</dcp-owner>" }] },
   ];
+
+  assert.strictEqual(
+    extractCanonicalOwnerKeyFromMessageLike(payloadInput[11]),
+    buildBlockOwnerKey(1),
+    "FAIL — compressed block ownership should not be stolen by quoted stale dcp-owner tags inside the summary body",
+  );
 
   const filtered = filterProviderPayloadInput(payloadInput, liveOwners);
   const serialized = JSON.stringify(filtered);
@@ -1488,8 +1503,8 @@ function findOrphanedToolUse(result: any[]): string | null {
   assert.ok(serialized.includes("keep-current"), "FAIL — reasoning owned by a live assistant should stay");
   assert.ok(serialized.includes("keep-latest"), "FAIL — later reasoning owned by a live assistant should stay");
   assert.ok(!serialized.includes("drop-stale"), "FAIL — reasoning owned by a stale canonical owner should be pruned");
-  assert.ok(!serialized.includes("s20"), "FAIL — stale raw user turn should be pruned by canonical owner");
-  assert.ok(!serialized.includes("s21"), "FAIL — stale assistant owner tag should be pruned by canonical owner");
+  assert.ok(!serialized.includes("stale raw turn"), "FAIL — stale raw user turn should be pruned by canonical owner");
+  assert.ok(!serialized.includes("stale reply"), "FAIL — stale assistant message owned by a stale canonical owner should be pruned");
   assert.ok(!serialized.includes("toolu_old"), "FAIL — function_call/function_call_output owned by a stale assistant should be pruned");
   assert.ok(serialized.includes("still canonical"), "FAIL — compaction should stay when no removable owner is proven");
   assert.ok(serialized.includes("b1"), "FAIL — current compressed block should stay in the provider payload");
