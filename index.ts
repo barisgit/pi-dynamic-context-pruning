@@ -23,6 +23,7 @@ import { registerCompressTool } from "./compress-tool.js"
 import { registerCommands } from "./commands.js"
 import { restorePersistedState, serializePersistedState } from "./migration.js"
 import { filterProviderPayloadInput } from "./payload-filter.js"
+import { buildLiveOwnerKeys } from "./transcript.js"
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -162,6 +163,8 @@ export default function (pi: ExtensionAPI) {
 
   // ── 10. context: apply pruning and inject nudges ──────────────────────────
   pi.on("context", async (event, ctx) => {
+    const liveOwnerKeys = buildLiveOwnerKeys(event.messages, state.compressionBlocks)
+
     // Apply all pruning transforms (compression blocks, dedup, error purge,
     // tool output replacement, message ID injection).
     const prunedMessages = applyPruning(event.messages, state, config)
@@ -209,6 +212,7 @@ export default function (pi: ExtensionAPI) {
     }
 
     state.lastRenderedMessages = cloneRenderedMessages(prunedMessages)
+    state.lastLiveOwnerKeys = Array.from(liveOwnerKeys)
 
     return { messages: prunedMessages }
   })
@@ -216,11 +220,11 @@ export default function (pi: ExtensionAPI) {
   // ── 11. before_provider_request: filter stale payload history ─────────────
   pi.on("before_provider_request", async (event, _ctx) => {
     const payload = event.payload as any
-    if (!payload || !Array.isArray(payload.input) || state.lastRenderedMessages.length === 0) {
+    if (!payload || !Array.isArray(payload.input) || state.lastLiveOwnerKeys.length === 0) {
       return
     }
 
-    const filteredInput = filterProviderPayloadInput(payload.input, state.lastRenderedMessages)
+    const filteredInput = filterProviderPayloadInput(payload.input, state.lastLiveOwnerKeys)
     if (filteredInput.length === payload.input.length) {
       return
     }

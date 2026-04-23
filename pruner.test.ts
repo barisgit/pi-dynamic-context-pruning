@@ -14,7 +14,7 @@ import { restorePersistedState, mapLegacyBlockToSpanRange } from "./migration.js
 import { renderCompressedBlockMessage } from "./materialize.js";
 import { filterProviderPayloadInput } from "./payload-filter.js";
 import { applyPruning, getNudgeType, injectNudge } from "./pruner.js";
-import { buildTranscriptSnapshot } from "./transcript.js";
+import { buildBlockOwnerKey, buildLiveOwnerKeys, buildSourceOwnerKey, buildTranscriptSnapshot } from "./transcript.js";
 import type { DcpState } from "./state.js";
 import type { DcpConfig } from "./config.js";
 
@@ -58,6 +58,7 @@ function makeState(compressionBlocks: DcpState["compressionBlocks"] = []): DcpSt
     compressionBlocksV2: [],
     nextBlockId: 1,
     lastRenderedMessages: [],
+    lastLiveOwnerKeys: [],
     messageIdSnapshot: new Map(),
     currentTurn: 0,
     tokensSaved: 0,
@@ -1232,52 +1233,82 @@ function findOrphanedToolUse(result: any[]): string | null {
 }
 
 // ---------------------------------------------------------------------------
-// Test 19 — PROVIDER PAYLOAD FILTER PRUNES ONLY PROVEN STALE OWNERS
+// Test 19 — LIVE OWNER KEYS COME FROM SOURCE ORDINALS + ACTIVE BLOCKS
 // ---------------------------------------------------------------------------
 {
-  console.log("TEST 19: provider payload filter uses proven owner keys only");
+  console.log("TEST 19: live owner keys are derived from the source transcript, not rendered ids");
 
-  const renderedMessages: any[] = [
-    { role: "user", content: [{ type: "text", text: "current head\n<dcp-id>m001</dcp-id>" }] },
-    { role: "assistant", content: [{ type: "text", text: "current reply\n<dcp-id>m002</dcp-id>" }] },
-    { role: "user", content: [{ type: "text", text: "[Compressed section: archived]\n\nsummary\n\n<dcp-block-id>b1</dcp-block-id>" }] },
-    { role: "user", content: [{ type: "text", text: "latest ask\n<dcp-id>m003</dcp-id>" }] },
-    { role: "assistant", content: [{ type: "text", text: "latest reply\n<dcp-id>m004</dcp-id>" }] },
-  ];
+  const block = {
+    id: 1,
+    topic: "tool exchange",
+    summary: "compressed",
+    startTimestamp: 2000,
+    endTimestamp: 3000,
+    anchorTimestamp: 4000,
+    active: true,
+    summaryTokenEstimate: 1,
+    createdAt: 1,
+  };
+
+  const liveOwners = buildLiveOwnerKeys(makeMessages(), [block]);
+
+  assert.ok(liveOwners.has(buildSourceOwnerKey(0)), "FAIL — head user source owner should stay live");
+  assert.ok(!liveOwners.has(buildSourceOwnerKey(1)), "FAIL — compressed assistant source owner should not stay live");
+  assert.ok(!liveOwners.has(buildSourceOwnerKey(2)), "FAIL — compressed tool result source owner should not stay live");
+  assert.ok(liveOwners.has(buildSourceOwnerKey(3)), "FAIL — tail user source owner should stay live");
+  assert.ok(liveOwners.has(buildBlockOwnerKey(1)), "FAIL — active compressed block owner should stay live");
+
+  console.log("  PASS: live owner keys come from canonical source coverage");
+  console.log("TEST 19 PASSED\n");
+}
+
+// ---------------------------------------------------------------------------
+// Test 20 — PROVIDER PAYLOAD FILTER PRUNES BY CANONICAL OWNER, NOT mNNN
+// ---------------------------------------------------------------------------
+{
+  console.log("TEST 20: provider payload filter uses canonical owners instead of visible ids");
+
+  const liveOwners = new Set([
+    buildSourceOwnerKey(0),
+    buildSourceOwnerKey(1),
+    buildBlockOwnerKey(1),
+    buildSourceOwnerKey(3),
+    buildSourceOwnerKey(4),
+  ]);
 
   const payloadInput: any[] = [
-    { role: "user", content: [{ type: "input_text", text: "current head\n<dcp-id>m001</dcp-id>" }] },
+    { role: "user", content: [{ type: "input_text", text: "current head\n<dcp-id>m001</dcp-id>\n<dcp-owner>s0</dcp-owner>" }] },
     { type: "reasoning", encrypted_content: "keep-current" },
     { role: "assistant", content: [{ type: "output_text", text: "current reply" }] },
-    { role: "assistant", content: [{ type: "output_text", text: "\n<dcp-id>m002</dcp-id>" }] },
-    { role: "user", content: [{ type: "input_text", text: "stale raw turn\n<dcp-id>m005</dcp-id>" }] },
+    { role: "assistant", content: [{ type: "output_text", text: "\n<dcp-id>m002</dcp-id>\n<dcp-owner>s1</dcp-owner>" }] },
+    { role: "user", content: [{ type: "input_text", text: "stale raw turn\n<dcp-id>m001</dcp-id>\n<dcp-owner>s20</dcp-owner>" }] },
     { type: "reasoning", encrypted_content: "drop-stale" },
     { role: "assistant", content: [{ type: "output_text", text: "stale reply" }] },
-    { role: "assistant", content: [{ type: "output_text", text: "\n<dcp-id>m006</dcp-id>" }] },
+    { role: "assistant", content: [{ type: "output_text", text: "\n<dcp-id>m002</dcp-id>\n<dcp-owner>s21</dcp-owner>" }] },
     { type: "function_call", name: "bash", call_id: "toolu_old" },
     { type: "function_call_output", call_id: "toolu_old", output: "ok" },
     { role: "user", content: [{ type: "input_text", text: "The conversation history before this point was compacted into the following summary:\n\n<summary>still canonical</summary>" }] },
     { role: "user", content: [{ type: "input_text", text: "[Compressed section: archived]\n\nsummary\n\n<dcp-block-id>b1</dcp-block-id>" }] },
-    { role: "user", content: [{ type: "input_text", text: "latest ask\n<dcp-id>m003</dcp-id>" }] },
+    { role: "user", content: [{ type: "input_text", text: "latest ask\n<dcp-id>m003</dcp-id>\n<dcp-owner>s3</dcp-owner>" }] },
     { type: "reasoning", encrypted_content: "keep-latest" },
     { role: "assistant", content: [{ type: "output_text", text: "latest reply" }] },
-    { role: "assistant", content: [{ type: "output_text", text: "\n<dcp-id>m004</dcp-id>" }] },
+    { role: "assistant", content: [{ type: "output_text", text: "\n<dcp-id>m004</dcp-id>\n<dcp-owner>s4</dcp-owner>" }] },
   ];
 
-  const filtered = filterProviderPayloadInput(payloadInput, renderedMessages);
+  const filtered = filterProviderPayloadInput(payloadInput, liveOwners);
   const serialized = JSON.stringify(filtered);
 
-  assert.ok(serialized.includes("keep-current"), "FAIL — reasoning owned by a rendered assistant should stay");
-  assert.ok(serialized.includes("keep-latest"), "FAIL — later reasoning owned by a rendered assistant should stay");
-  assert.ok(!serialized.includes("drop-stale"), "FAIL — reasoning owned by a stale assistant should be pruned");
-  assert.ok(!serialized.includes("m005"), "FAIL — stale raw user turn should be pruned");
-  assert.ok(!serialized.includes("m006"), "FAIL — stale assistant owner tag should be pruned");
+  assert.ok(serialized.includes("keep-current"), "FAIL — reasoning owned by a live assistant should stay");
+  assert.ok(serialized.includes("keep-latest"), "FAIL — later reasoning owned by a live assistant should stay");
+  assert.ok(!serialized.includes("drop-stale"), "FAIL — reasoning owned by a stale canonical owner should be pruned");
+  assert.ok(!serialized.includes("s20"), "FAIL — stale raw user turn should be pruned by canonical owner");
+  assert.ok(!serialized.includes("s21"), "FAIL — stale assistant owner tag should be pruned by canonical owner");
   assert.ok(!serialized.includes("toolu_old"), "FAIL — function_call/function_call_output owned by a stale assistant should be pruned");
   assert.ok(serialized.includes("still canonical"), "FAIL — compaction should stay when no removable owner is proven");
   assert.ok(serialized.includes("b1"), "FAIL — current compressed block should stay in the provider payload");
 
-  console.log("  PASS: provider payload filtering prunes only items with proven stale owners");
-  console.log("TEST 19 PASSED\n");
+  console.log("  PASS: provider payload filtering prunes by canonical owner, not visible ids");
+  console.log("TEST 20 PASSED\n");
 }
 
 console.log("All tests passed.");

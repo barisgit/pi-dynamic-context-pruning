@@ -7,6 +7,8 @@
 // without changing the active runtime behavior. The current runtime still uses
 // `pruner.ts` for message transformation.
 
+import type { CompressionBlock } from "./state.js"
+
 /** One source item in the canonical transcript snapshot. */
 export interface TranscriptSourceItem {
   /** Stable-ish internal key derived from source order and message metadata */
@@ -59,6 +61,7 @@ function getTimestamp(message: any): number | null {
 }
 
 const PASSTHROUGH_ROLES = new Set(["compaction", "branch_summary", "custom_message"])
+const LIVE_OWNER_ELIGIBLE_ROLES = new Set(["user", "assistant", "toolResult", "bashExecution"])
 
 function getAssistantToolCallIds(message: any): Set<string> {
   const ids = new Set<string>()
@@ -110,6 +113,63 @@ export function buildSourceItemKey(message: any, ordinal: number): string {
   }
 
   return `msg:${timestamp ?? "na"}:${role}:${ordinal}`
+}
+
+export function buildSourceOwnerKey(ordinal: number): string {
+  return `s${ordinal}`
+}
+
+export function buildBlockOwnerKey(blockId: number): string {
+  return `block:b${blockId}`
+}
+
+function resolveLegacyCoveredOrdinals(
+  snapshot: TranscriptSnapshot,
+  compressionBlocks: CompressionBlock[],
+): { coveredOrdinals: Set<number>; activeBlockOwnerKeys: Set<string> } {
+  const coveredOrdinals = new Set<number>()
+  const activeBlockOwnerKeys = new Set<string>()
+
+  for (const block of compressionBlocks) {
+    if (!block.active) continue
+    if (!Number.isFinite(block.startTimestamp) || !Number.isFinite(block.endTimestamp)) continue
+
+    const coveredItems = snapshot.sourceItems.filter(
+      (item) =>
+        item.timestamp !== null &&
+        item.timestamp >= block.startTimestamp &&
+        item.timestamp <= block.endTimestamp,
+    )
+
+    if (coveredItems.length === 0) continue
+
+    activeBlockOwnerKeys.add(buildBlockOwnerKey(block.id))
+    for (const item of coveredItems) {
+      coveredOrdinals.add(item.ordinal)
+    }
+  }
+
+  return { coveredOrdinals, activeBlockOwnerKeys }
+}
+
+export function buildLiveOwnerKeys(
+  messages: any[],
+  compressionBlocks: CompressionBlock[],
+): Set<string> {
+  const snapshot = buildTranscriptSnapshot(messages)
+  const { coveredOrdinals, activeBlockOwnerKeys } = resolveLegacyCoveredOrdinals(
+    snapshot,
+    compressionBlocks,
+  )
+  const liveOwnerKeys = new Set<string>(activeBlockOwnerKeys)
+
+  for (const item of snapshot.sourceItems) {
+    if (!LIVE_OWNER_ELIGIBLE_ROLES.has(item.role)) continue
+    if (coveredOrdinals.has(item.ordinal)) continue
+    liveOwnerKeys.add(buildSourceOwnerKey(item.ordinal))
+  }
+
+  return liveOwnerKeys
 }
 
 /**

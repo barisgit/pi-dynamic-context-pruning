@@ -1,6 +1,7 @@
 import type { DcpState } from "./state.js";
 import type { DcpConfig } from "./config.js";
 import { renderCompressedBlockMessage } from "./materialize.js";
+import { buildSourceOwnerKey } from "./transcript.js";
 
 // Always-protected tool names for deduplication
 const ALWAYS_PROTECTED_DEDUP = new Set(["compress", "write", "edit"]);
@@ -10,6 +11,7 @@ const ID_ELIGIBLE_ROLES = new Set(["user", "assistant", "toolResult", "bashExecu
 
 // Roles that are PI-internal and should pass through unchanged
 const PASSTHROUGH_ROLES = new Set(["compaction", "branch_summary", "custom_message"]);
+const INTERNAL_OWNER_KEY = "__dcpOwnerKey";
 
 /**
  * Simple token estimator: chars / 4, rounded.
@@ -374,19 +376,22 @@ function injectMessageIds(messages: any[], state: DcpState): void {
     const id = "m" + String(counter).padStart(3, "0");
     counter++;
 
+    const ownerKey = typeof msg[INTERNAL_OWNER_KEY] === "string" ? msg[INTERNAL_OWNER_KEY] : null;
     const idTag = `\n<dcp-id>${id}</dcp-id>`;
+    const ownerTag = ownerKey ? `\n<dcp-owner>${ownerKey}</dcp-owner>` : "";
+    const metadataTag = `${idTag}${ownerTag}`;
 
     if (role === "user") {
       if (typeof msg.content === "string") {
-        msg.content = msg.content + `\n\n<dcp-id>${id}</dcp-id>`;
+        msg.content = msg.content + `\n\n<dcp-id>${id}</dcp-id>${ownerTag}`;
       } else if (Array.isArray(msg.content)) {
-        msg.content = [...msg.content, { type: "text", text: idTag }];
+        msg.content = [...msg.content, { type: "text", text: metadataTag }];
       }
     } else if (role === "toolResult" || role === "bashExecution") {
       if (Array.isArray(msg.content)) {
-        msg.content = [...msg.content, { type: "text", text: idTag }];
+        msg.content = [...msg.content, { type: "text", text: metadataTag }];
       } else if (typeof msg.content === "string") {
-        msg.content = msg.content + idTag;
+        msg.content = msg.content + metadataTag;
       }
     } else if (role === "assistant") {
       if (Array.isArray(msg.content)) {
@@ -396,7 +401,7 @@ function injectMessageIds(messages: any[], state: DcpState): void {
         const firstToolCallIdx = msg.content.findIndex(
           (b: any) => b.type === "toolCall",
         );
-        const idBlock = { type: "text", text: idTag };
+        const idBlock = { type: "text", text: metadataTag };
         if (firstToolCallIdx === -1) {
           // No tool_use blocks — append as usual
           msg.content = [...msg.content, idBlock];
@@ -409,7 +414,7 @@ function injectMessageIds(messages: any[], state: DcpState): void {
           ];
         }
       } else if (typeof msg.content === "string") {
-        msg.content = msg.content + idTag;
+        msg.content = msg.content + metadataTag;
       }
     }
 
@@ -430,13 +435,18 @@ export function applyPruning(
 ): any[] {
   // Deep-clone each message and its content to prevent mutations from
   // affecting the original objects across context events.
-  const msgs: any[] = messages.map((m: any) => {
+  const msgs: any[] = messages.map((m: any, ordinal: number) => {
     const clone = { ...m };
     if (Array.isArray(clone.content)) {
       clone.content = clone.content.map((block: any) =>
         typeof block === "object" && block !== null ? { ...block } : block
       );
     }
+    Object.defineProperty(clone, INTERNAL_OWNER_KEY, {
+      value: buildSourceOwnerKey(ordinal),
+      enumerable: false,
+      configurable: true,
+    });
     return clone;
   });
 

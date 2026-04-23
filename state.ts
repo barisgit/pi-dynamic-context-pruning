@@ -209,6 +209,8 @@ export interface DcpState {
   nextBlockId: number
   /** Latest rendered visible transcript returned from the `context` hook. */
   lastRenderedMessages: any[]
+  /** Canonical owner keys live in the latest materialized transcript. */
+  lastLiveOwnerKeys: string[]
 
   // ── Message ID snapshot ────────────────────────────────────────────────────
   /**
@@ -272,6 +274,7 @@ export function createState(): DcpState {
     compressionBlocksV2: [],
     nextBlockId: 1,
     lastRenderedMessages: [],
+    lastLiveOwnerKeys: [],
     messageIdSnapshot: new Map(),
     currentTurn: 0,
     tokensSaved: 0,
@@ -295,6 +298,7 @@ export function resetState(state: DcpState): void {
   state.compressionBlocksV2 = []
   state.nextBlockId = 1
   state.lastRenderedMessages = []
+  state.lastLiveOwnerKeys = []
   state.messageIdSnapshot.clear()
   state.currentTurn = 0
   state.tokensSaved = 0

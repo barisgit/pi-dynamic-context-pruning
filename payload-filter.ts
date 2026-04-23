@@ -17,15 +17,15 @@ function normalizeInlineWhitespace(text: string): string {
   return text.replace(/\s+/g, " ").trim()
 }
 
-export function extractVisibleOwnerKeyFromMessageLike(message: any): string | null {
+export function extractCanonicalOwnerKeyFromMessageLike(message: any): string | null {
   const normalized = normalizeInlineWhitespace(extractMessageLikeText(message))
   if (!normalized) return null
 
+  const ownerMatch = normalized.match(/<dcp-owner>([^<]+)<\/dcp-owner>/)
+  if (ownerMatch) return ownerMatch[1] ?? null
+
   const blockMatch = normalized.match(/<dcp-block-id>(b\d+)<\/dcp-block-id>/)
   if (blockMatch) return `block:${blockMatch[1]}`
-
-  const messageMatch = normalized.match(/<dcp-id>(m\d+)<\/dcp-id>/)
-  if (messageMatch) return `msg:${messageMatch[1]}`
 
   return null
 }
@@ -34,25 +34,21 @@ function isMessageLike(item: any): boolean {
   return typeof item?.role === "string"
 }
 
-function isIdOnlyMessageLike(item: any): boolean {
+function isMetadataOnlyMessageLike(item: any): boolean {
   const normalized = normalizeInlineWhitespace(extractMessageLikeText(item))
   if (!normalized) return false
 
-  return /^<dcp-id>m\d+<\/dcp-id>$/.test(normalized)
-}
+  const stripped = normalized
+    .replace(/<dcp-id>m\d+<\/dcp-id>/g, "")
+    .replace(/<dcp-owner>[^<]+<\/dcp-owner>/g, "")
+    .trim()
 
-function buildRenderedOwnerSet(messages: any[]): Set<string> {
-  const keys = new Set<string>()
-  for (const message of messages) {
-    const key = extractVisibleOwnerKeyFromMessageLike(message)
-    if (key) keys.add(key)
-  }
-  return keys
+  return stripped === "" && /<dcp-id>|<dcp-owner>/.test(normalized)
 }
 
 function buildDirectOwnerKeys(input: any[]): Array<string | null> {
   const owners = input.map((item) =>
-    isMessageLike(item) ? extractVisibleOwnerKeyFromMessageLike(item) : null,
+    isMessageLike(item) ? extractCanonicalOwnerKeyFromMessageLike(item) : null,
   )
 
   for (let i = 0; i + 1 < input.length; i++) {
@@ -61,7 +57,7 @@ function buildDirectOwnerKeys(input: any[]): Array<string | null> {
     if (!isMessageLike(current) || !isMessageLike(next)) continue
     if (owners[i] !== null || owners[i + 1] === null) continue
     if (current.role !== next.role) continue
-    if (!isIdOnlyMessageLike(next)) continue
+    if (!isMetadataOnlyMessageLike(next)) continue
 
     owners[i] = owners[i + 1]
   }
@@ -117,11 +113,11 @@ function buildNextAssistantOwners(
   return owners
 }
 
-export function filterProviderPayloadInput(input: any[], renderedMessages: any[]): any[] {
-  if (!Array.isArray(input) || renderedMessages.length === 0) return input
+export function filterProviderPayloadInput(input: any[], liveOwnerKeys: Iterable<string>): any[] {
+  if (!Array.isArray(input)) return input
 
-  const renderedOwners = buildRenderedOwnerSet(renderedMessages)
-  if (renderedOwners.size === 0) return input
+  const liveOwners = liveOwnerKeys instanceof Set ? liveOwnerKeys : new Set(liveOwnerKeys)
+  if (liveOwners.size === 0) return input
 
   const directOwners = buildDirectOwnerKeys(input)
   const previousAssistantOwners = buildPreviousAssistantOwners(input, directOwners)
@@ -130,17 +126,17 @@ export function filterProviderPayloadInput(input: any[], renderedMessages: any[]
   return input.filter((item, index) => {
     if (isMessageLike(item)) {
       const owner = directOwners[index]
-      return owner === null ? true : renderedOwners.has(owner)
+      return owner === null ? true : liveOwners.has(owner)
     }
 
     if (item?.type === "reasoning") {
       const owner = nextAssistantOwners[index] ?? previousAssistantOwners[index]
-      return owner === null ? true : renderedOwners.has(owner)
+      return owner === null ? true : liveOwners.has(owner)
     }
 
     if (item?.type === "function_call" || item?.type === "function_call_output") {
       const owner = previousAssistantOwners[index] ?? nextAssistantOwners[index]
-      return owner === null ? true : renderedOwners.has(owner)
+      return owner === null ? true : liveOwners.has(owner)
     }
 
     return true
