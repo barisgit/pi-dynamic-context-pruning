@@ -25,12 +25,12 @@
 
 ## 4. Type Boundary Extraction
 
-- [ ] 4.1 Create `src/types/config.ts` and move or re-export DCP config interfaces from the current config module.
-- [ ] 4.2 Create `src/types/state.ts` and move DCP state, compression block, metadata, tool record, persisted-state, and alias/snapshot interfaces.
-- [ ] 4.3 Create `src/types/message.ts` with minimal internal DCP message, content part, tool call, and tool result contracts.
-- [ ] 4.4 Create `src/types/api.ts` for pi/provider boundary shapes that are known enough to type safely.
-- [ ] 4.5 Update domain-facing function signatures to prefer internal types over unconstrained `any[]`, while keeping unknown host payload handling at application boundaries.
-- [ ] 4.6 Run typecheck and tests after type extraction to catch import and narrowing regressions.
+- [x] 4.1 Create `src/types/config.ts` and move or re-export DCP config interfaces from the current config module.
+- [x] 4.2 Create `src/types/state.ts` and move DCP state, compression block, metadata, tool record, persisted-state, and alias/snapshot interfaces.
+- [x] 4.3 Create `src/types/message.ts` with minimal internal DCP message, content part, tool call, and tool result contracts.
+- [x] 4.4 Create `src/types/api.ts` for pi/provider boundary shapes that are known enough to type safely.
+- [x] 4.5 Update domain-facing function signatures to prefer internal types over unconstrained `any[]`, while keeping unknown host payload handling at application boundaries.
+- [x] 4.6 Run typecheck and tests after type extraction to catch import and narrowing regressions.
 
 ## 5. Domain Module Split
 

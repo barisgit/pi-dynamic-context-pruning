@@ -4,12 +4,13 @@
 
 import { stripDcpMetadataTags } from "./dcp-metadata.js"
 import type { CompressionBlockV2, CompressionLogEntry } from "./state.js"
+import type { DcpMessage } from "./types/message.js"
 import type { TranscriptSnapshot } from "./transcript.js"
 
 /** Result of v2 transcript materialization. */
 export interface MaterializedTranscript {
   /** Outbound message list to send to the provider */
-  messages: any[]
+  messages: DcpMessage[]
   /** Active v2 block IDs rendered into the transcript */
   renderedBlockIds: number[]
 }
@@ -101,7 +102,7 @@ export function renderCompressedBlockText(block: CompressionBlockRenderData): st
  * Shared by the legacy v1 runtime path and the draft v2 materializer so the
  * visible block shape can evolve in one place.
  */
-export function renderCompressedBlockMessage(block: CompressionBlockRenderData): any {
+export function renderCompressedBlockMessage(block: CompressionBlockRenderData): DcpMessage {
   return {
     role: "user",
     content: [

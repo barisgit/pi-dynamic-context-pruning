@@ -1,4 +1,6 @@
 import type { CompressionBlock } from "./state.js"
+import type { DcpMessage } from "./types/message.js"
+import type { DcpProviderPayloadItem } from "./types/api.js"
 
 function getTextParts(content: unknown): string[] {
   if (typeof content === "string") return [content]
@@ -11,7 +13,7 @@ function getTextParts(content: unknown): string[] {
   })
 }
 
-export function extractMessageLikeText(message: any): string {
+export function extractMessageLikeText(message: DcpMessage): string {
   return getTextParts(message?.content).join("\n")
 }
 
@@ -36,7 +38,7 @@ function findLastBlockOwnerKey(text: string): string | null {
 }
 
 export function extractCanonicalOwnerKeyFromMessageLike(
-  message: any,
+  message: DcpMessage,
   ownerByMessageRef: ReadonlyMap<string, string> = new Map(),
 ): string | null {
   const normalized = normalizeInlineWhitespace(extractMessageLikeText(message))
@@ -166,11 +168,11 @@ function isRedundantCompressArtifact(item: any, representedCompressCallIds: Set<
 }
 
 export function filterProviderPayloadInput(
-  input: any[],
+  input: DcpProviderPayloadItem[],
   liveOwnerKeys: Iterable<string>,
   compressionBlocks: readonly CompressArtifactBlock[] = [],
   ownerByMessageRef: ReadonlyMap<string, string> = new Map(),
-): any[] {
+): DcpProviderPayloadItem[] {
   if (!Array.isArray(input)) return input
 
   const liveOwners = liveOwnerKeys instanceof Set ? liveOwnerKeys : new Set(liveOwnerKeys)

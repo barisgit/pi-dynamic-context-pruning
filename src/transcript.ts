@@ -8,6 +8,7 @@
 // `pruner.ts` for message transformation.
 
 import type { CompressionBlock } from "./state.js"
+import type { DcpMessage } from "./types/message.js"
 
 /** One source item in the canonical transcript snapshot. */
 export interface TranscriptSourceItem {
@@ -18,7 +19,7 @@ export interface TranscriptSourceItem {
   /** Raw role from the source message */
   role: string
   /** Original source message */
-  message: any
+  message: DcpMessage
   /** Numeric timestamp when available */
   timestamp: number | null
 }
@@ -50,11 +51,11 @@ export interface TranscriptSnapshot {
   spans: TranscriptSpan[]
 }
 
-function getRole(message: any): string {
+function getRole(message: DcpMessage): string {
   return typeof message?.role === "string" ? message.role : "unknown"
 }
 
-function getTimestamp(message: any): number | null {
+function getTimestamp(message: DcpMessage): number | null {
   return typeof message?.timestamp === "number" && Number.isFinite(message.timestamp)
     ? message.timestamp
     : null
@@ -104,7 +105,7 @@ function createSpan(kind: TranscriptSpanKind, items: TranscriptSourceItem[]): Tr
  * This is only a Phase 1 fallback key scheme. If pi later exposes durable
  * session-entry IDs, v2 should switch to those.
  */
-export function buildSourceItemKey(message: any, ordinal: number): string {
+export function buildSourceItemKey(message: DcpMessage, ordinal: number): string {
   const rawId = typeof message?.id === "string" && message.id.length > 0
     ? message.id
     : typeof message?.messageId === "string" && message.messageId.length > 0
@@ -170,12 +171,12 @@ export function resolveCompressionBlockCoveredSourceKeys(
   return coveredSourceKeys
 }
 
-export function countLogicalTurns(messages: any[]): number {
+export function countLogicalTurns(messages: DcpMessage[]): number {
   return buildTranscriptSnapshot(messages).spans.filter((span) => LOGICAL_TURN_ELIGIBLE_ROLES.has(span.role)).length
 }
 
 export function resolveLogicalTurnTailStartTimestamp(
-  messages: any[],
+  messages: DcpMessage[],
   protectRecentTurns: number,
 ): number | null {
   const protectedTurns = Math.max(0, Math.floor(protectRecentTurns))
@@ -241,7 +242,7 @@ function resolveCoveredOrdinals(
 }
 
 export function buildLiveOwnerKeys(
-  messages: any[],
+  messages: DcpMessage[],
   compressionBlocks: CompressionBlock[],
 ): Set<string> {
   const snapshot = buildTranscriptSnapshot(messages)
@@ -268,7 +269,7 @@ export function buildLiveOwnerKeys(
  * matching `toolResult` / `bashExecution` messages plus intervening passthrough
  * roles into a single `tool-exchange` span.
  */
-export function buildTranscriptSnapshot(messages: any[]): TranscriptSnapshot {
+export function buildTranscriptSnapshot(messages: DcpMessage[]): TranscriptSnapshot {
   const sourceItems: TranscriptSourceItem[] = messages.map((message, ordinal) => {
     const key = buildSourceItemKey(message, ordinal)
     return {

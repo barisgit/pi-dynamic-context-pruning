@@ -1,5 +1,6 @@
 import type { DcpState } from "./state.js";
 import type { DcpConfig } from "./config.js";
+import type { DcpMessage } from "./types/message.js";
 import { stripDcpHallucinationsFromString } from "./dcp-metadata.js";
 import { renderCompressedBlockMessage } from "./materialize.js";
 import { allocateMessageRef } from "./message-refs.js";
@@ -122,7 +123,7 @@ function expandCompressionIndexRange(messages: any[], initialLo: number, initial
 }
 
 export function resolveCompressionRangeIndices(
-  messages: any[],
+  messages: DcpMessage[],
   startTimestamp: number,
   endTimestamp: number,
 ): { lo: number; hi: number } | null {
@@ -535,13 +536,13 @@ function injectMessageIds(messages: any[], state: DcpState): void {
  * Called from the `context` event handler.
  */
 export function applyPruning(
-  messages: any[],
+  messages: DcpMessage[],
   state: DcpState,
   config: DcpConfig
 ): any[] {
   // Deep-clone each message and its content to prevent mutations from
   // affecting the original objects across context events.
-  const msgs: any[] = messages.map((m: any, ordinal: number) => {
+  const msgs: DcpMessage[] = messages.map((m: DcpMessage, ordinal: number) => {
     const clone = { ...m };
     if (Array.isArray(clone.content)) {
       clone.content = clone.content.map((block: any) =>
@@ -631,7 +632,7 @@ function appendNudgeToMessage(message: any, nudgeText: string): boolean {
  * Inject a nudge into the latest visible user/assistant message.
  * Falls back to a synthetic user message only if no suitable anchor exists.
  */
-export function injectNudge(messages: any[], nudgeText: string): void {
+export function injectNudge(messages: DcpMessage[], nudgeText: string): void {
   for (let i = messages.length - 1; i >= 0; i--) {
     const message = messages[i];
     const role = message?.role ?? "";
