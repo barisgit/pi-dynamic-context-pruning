@@ -9,8 +9,17 @@ Reference for coding agents operating in this repository.
 A **pi coding agent extension** (TypeScript/ESM) that implements Dynamic Context Pruning (DCP).
 Pi loads extension `.ts` files directly — there is no build step and no compiled output.
 
-**Runtime:** Bun  
+**Host runtime:** Node.js inside pi  
+**Dev/test toolchain:** Bun  
 **Package type:** `"type": "module"`
+
+Important runtime constraint:
+- Do **not** assume Bun-specific runtime APIs such as `bun:ffi` are available when this extension is loaded by pi.
+- If DCP ever needs a Rust performance core, keep the extension entrypoint/hooks/UI/session integration in TypeScript and move only coarse-grained compute into Rust.
+- Preferred Rust integration order:
+  1. long-lived Rust sidecar (default)
+  2. Node native addon (`napi-rs` / N-API) when in-process latency matters
+- Avoid per-event process spawning and Bun-only FFI designs.
 
 ---
 

@@ -1,7 +1,7 @@
 {
   "metadata": {
     "version": "1.0.0",
-    "last_run": "2026-04-23T10:20:30.131636Z",
+    "last_run": "2026-04-23T10:35:47.438190Z",
     "root": "/Users/blaz/Programming_local/Projects/pi-extensions/pi-dynamic-context-pruning",
     "include_patterns": [
       "*.ts"
@@ -18,7 +18,7 @@
     "compress-tool.ts": "f97332959a545de15c97d7198b9dce4d",
     "config.ts": "5d6550cdca4a5813757b7ed4b67e1e73",
     "debug-log.ts": "a1dc64caf1978f5b044fd66aa23da928",
-    "index.ts": "b538802cc2b46785ad1b55ab9381cf77",
+    "index.ts": "a724e3fee3523ea4ddb8fe5bf5d78e9a",
     "materialize.ts": "ff1a161edf5f589947ca74a5c2a92fa0",
     "migration.ts": "09878be070fdec29fbaac7bcb967c750",
     "payload-filter.ts": "07c99ddc71dc069883dfc8d9deece5b1",
@@ -28,6 +28,6 @@
     "transcript.ts": "72a8e40297d3e6f5f803ad6feea16b7f"
   },
   "folder_hashes": {
-    ".": "6660a6a9521a851dc57397296eb85184"
+    ".": "896584d54a016b5741c96857f805e8ce"
   }
 }

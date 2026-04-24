@@ -169,10 +169,13 @@ tsc --noEmit --module esnext --moduleResolution bundler --target es2022 --skipLi
 ```
 
 Pi loads the extension TypeScript directly — there is no build step for normal development.
+For normal installs, that extension code runs inside pi's **Node.js** process even though this repo uses **Bun** for local test/dev commands.
+
+Do not assume Bun-only runtime APIs such as `bun:ffi` are available inside the extension. If DCP ever needs a Rust performance core, keep the extension shell in TypeScript and integrate Rust via a long-lived sidecar process or a Node native addon.
 
 ## Contributors
 
 [![complexthings](https://github.com/complexthings.png?size=50)](https://github.com/complexthings)
-[![wassname](https://github.com/wassname.png?size=50)](https://github.com/wassname) 
+[![wassname](https://github.com/wassname.png?size=50)](https://github.com/wassname)
 
 Full contributor list: https://github.com/complexthings/pi-dynamic-context-pruning/graphs/contributors

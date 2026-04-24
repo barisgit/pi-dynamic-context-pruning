@@ -9,7 +9,7 @@ A **pi coding agent extension** implementing Dynamic Context Pruning (DCP). DCP 
 3. **Error purging** — Remove stale error outputs after N logical turns
 4. **Nudge injection** — Prompt the agent to compress when context fills up
 
-Runtime: Bun, ESM, TypeScript (no build step — pi loads `.ts` directly).
+Host runtime: Node.js inside pi. Dev/test toolchain: Bun. ESM TypeScript, no build step — pi loads `.ts` directly.
 
 ## System Entry Points
 
