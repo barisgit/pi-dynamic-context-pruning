@@ -17,6 +17,7 @@ import {
   type PersistedDcpStateV1,
   type PersistedDcpStateV2,
 } from "./state.js"
+import { normalizeMessageAliasState, serializeMessageAliasState } from "./message-refs.js"
 import type { TranscriptSnapshot } from "./transcript.js"
 
 // ---------------------------------------------------------------------------
@@ -154,6 +155,9 @@ function normalizeLegacyBlock(value: unknown): CompressionBlock | null {
     anchorTimestamp: isFiniteNumber(block.anchorTimestamp)
       ? block.anchorTimestamp
       : Infinity,
+    startSourceKey: typeof block.startSourceKey === "string" ? block.startSourceKey : undefined,
+    endSourceKey: typeof block.endSourceKey === "string" ? block.endSourceKey : undefined,
+    anchorSourceKey: typeof block.anchorSourceKey === "string" ? block.anchorSourceKey : undefined,
     active: typeof block.active === "boolean" ? block.active : true,
     summaryTokenEstimate: isFiniteNumber(block.summaryTokenEstimate)
       ? block.summaryTokenEstimate
@@ -272,6 +276,7 @@ export function serializePersistedState(state: DcpState): PersistedDcpState {
       schemaVersion: 2,
       blocks: state.compressionBlocksV2,
       nextBlockId: state.nextBlockId,
+      messageAliases: serializeMessageAliasState(state.messageAliases),
       manualMode: state.manualMode,
       lastNudgeTurn: state.lastNudgeTurn,
       lastCompressTurn: state.lastCompressTurn,
@@ -283,6 +288,7 @@ export function serializePersistedState(state: DcpState): PersistedDcpState {
     schemaVersion: 1,
     compressionBlocks: state.compressionBlocks,
     nextBlockId: state.nextBlockId,
+    messageAliases: serializeMessageAliasState(state.messageAliases),
     prunedToolIds: Array.from(state.prunedToolIds),
     tokensSaved: state.tokensSaved,
     totalPruneCount: state.totalPruneCount,
@@ -316,6 +322,7 @@ export function restorePersistedState(data: unknown, state: DcpState): void {
       : blocks.length > 0
         ? Math.max(0, ...blocks.map((b) => b.id)) + 1
         : 1
+    state.messageAliases = normalizeMessageAliasState(persisted.messageAliases)
 
     if (typeof persisted.manualMode === "boolean") {
       state.manualMode = persisted.manualMode
@@ -344,6 +351,7 @@ export function restorePersistedState(data: unknown, state: DcpState): void {
     : blocks.length > 0
       ? Math.max(0, ...blocks.map((b) => b.id)) + 1
       : 1
+  state.messageAliases = normalizeMessageAliasState(persisted.messageAliases)
   state.tokensSaved = isFiniteNumber(persisted.tokensSaved) ? persisted.tokensSaved : 0
   state.totalPruneCount = isFiniteNumber(persisted.totalPruneCount)
     ? persisted.totalPruneCount

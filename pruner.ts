@@ -1,7 +1,9 @@
 import type { DcpState } from "./state.js";
 import type { DcpConfig } from "./config.js";
+import { stripDcpHallucinationsFromString } from "./dcp-metadata.js";
 import { renderCompressedBlockMessage } from "./materialize.js";
-import { buildSourceOwnerKey, countLogicalTurns } from "./transcript.js";
+import { allocateMessageRef } from "./message-refs.js";
+import { buildSourceItemKey, buildSourceOwnerKey, countLogicalTurns } from "./transcript.js";
 
 // Always-protected tool names for deduplication
 const ALWAYS_PROTECTED_DEDUP = new Set(["compress", "write", "edit"]);
@@ -12,6 +14,7 @@ const ID_ELIGIBLE_ROLES = new Set(["user", "assistant", "toolResult", "bashExecu
 // Roles that are PI-internal and should pass through unchanged
 const PASSTHROUGH_ROLES = new Set(["compaction", "branch_summary", "custom_message"]);
 const INTERNAL_OWNER_KEY = "__dcpOwnerKey";
+const INTERNAL_SOURCE_KEY = "__dcpSourceKey";
 
 /**
  * Simple token estimator: chars / 4, rounded.
@@ -47,18 +50,9 @@ function estimateMessageTokens(msg: any): number {
  * compression block, including the same assistant/tool-result expansion rules
  * used by the live pruning path.
  */
-export function resolveCompressionRangeIndices(
-  messages: any[],
-  startTimestamp: number,
-  endTimestamp: number,
-): { lo: number; hi: number } | null {
-  const startIdx = messages.findIndex((m) => m.timestamp === startTimestamp);
-  const endIdx = messages.findIndex((m) => m.timestamp === endTimestamp);
-
-  if (startIdx === -1 || endIdx === -1) return null;
-
-  let lo = Math.min(startIdx, endIdx);
-  let hi = Math.max(startIdx, endIdx);
+function expandCompressionIndexRange(messages: any[], initialLo: number, initialHi: number): { lo: number; hi: number } {
+  let lo = initialLo;
+  let hi = initialHi;
 
   // Expand lo backward: if there is an assistant before lo whose tool_use
   // blocks have matching tool_results inside [lo..hi], pull the entire
@@ -127,10 +121,63 @@ export function resolveCompressionRangeIndices(
   return { lo, hi };
 }
 
+export function resolveCompressionRangeIndices(
+  messages: any[],
+  startTimestamp: number,
+  endTimestamp: number,
+): { lo: number; hi: number } | null {
+  const startIdx = messages.findIndex((m) => m.timestamp === startTimestamp);
+  const endIdx = messages.findIndex((m) => m.timestamp === endTimestamp);
+
+  if (startIdx === -1 || endIdx === -1) return null;
+
+  return expandCompressionIndexRange(
+    messages,
+    Math.min(startIdx, endIdx),
+    Math.max(startIdx, endIdx),
+  );
+}
+
 /**
  * Apply active compression blocks to the message array.
  * Mutates messages in place (via splice/sort) and returns it.
  */
+function getMessageSourceKey(message: any, ordinal: number): string {
+  return typeof message?.[INTERNAL_SOURCE_KEY] === "string"
+    ? message[INTERNAL_SOURCE_KEY]
+    : buildSourceItemKey(message, ordinal)
+}
+
+function resolveCompressionRangeForBlock(messages: any[], block: DcpState["compressionBlocks"][number]): { lo: number; hi: number } | null {
+  if (block.startSourceKey && block.endSourceKey) {
+    const sourceKeys = messages.map((message, ordinal) => getMessageSourceKey(message, ordinal))
+    const startIdx = sourceKeys.indexOf(block.startSourceKey)
+    const endIdx = sourceKeys.indexOf(block.endSourceKey)
+    if (startIdx !== -1 && endIdx !== -1) {
+      return expandCompressionIndexRange(
+        messages,
+        Math.min(startIdx, endIdx),
+        Math.max(startIdx, endIdx),
+      )
+    }
+  }
+
+  if (!Number.isFinite(block.startTimestamp) || !Number.isFinite(block.endTimestamp)) return null
+  return resolveCompressionRangeIndices(messages, block.startTimestamp, block.endTimestamp)
+}
+
+function resolveAnchorIndex(messages: any[], block: DcpState["compressionBlocks"][number]): number | null {
+  if (!block.anchorSourceKey) return null
+  if (block.anchorSourceKey.startsWith("tail:")) return messages.length
+
+  for (let index = 0; index < messages.length; index++) {
+    if (getMessageSourceKey(messages[index], index) === block.anchorSourceKey) {
+      return index
+    }
+  }
+  return null
+}
+
 function applyCompressionBlocks(messages: any[], state: DcpState, config: DcpConfig): any[] {
   const activeBlocks = state.compressionBlocks.filter((b) => b.active);
   if (activeBlocks.length === 0) {
@@ -154,10 +201,7 @@ function applyCompressionBlocks(messages: any[], state: DcpState, config: DcpCon
   let totalSaved = 0;
 
   for (const block of activeBlocks) {
-    // Skip blocks with corrupted timestamps (from pre-fix sessions)
-    if (!Number.isFinite(block.startTimestamp) || !Number.isFinite(block.endTimestamp)) continue;
-
-    const range = resolveCompressionRangeIndices(messages, block.startTimestamp, block.endTimestamp);
+    const range = resolveCompressionRangeForBlock(messages, block);
     if (!range) continue;
 
     const { lo, hi } = range;
@@ -190,11 +234,15 @@ function applyCompressionBlocks(messages: any[], state: DcpState, config: DcpCon
     // Estimate tokens added by the summary
     const addedTokens = estimateMessageTokens(syntheticMsg);
 
-    // Insert the synthetic message
-    messages.push(syntheticMsg);
-
-    // Re-sort by timestamp
-    messages.sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
+    // Insert the synthetic message at its source-key anchor when available,
+    // falling back to legacy timestamp sorting for restored timestamp-only blocks.
+    const anchorIndex = resolveAnchorIndex(messages, block);
+    if (anchorIndex !== null) {
+      messages.splice(anchorIndex, 0, syntheticMsg);
+    } else {
+      messages.push(syntheticMsg);
+      messages.sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
+    }
 
     // Update the block's current saved-token estimate without double-counting
     // across repeated `context` passes.
@@ -367,13 +415,45 @@ function applyToolOutputPruning(messages: any[], state: DcpState): void {
  * Inject sequential message IDs into eligible messages.
  * Updates state.messageIdSnapshot.
  */
-function injectMessageIds(messages: any[], state: DcpState): void {
-  // Clear the snapshot and rebuild
-  state.messageIdSnapshot.clear();
+function extractBlockOwnerKey(message: any): string | null {
+  const content = message?.content
+  const text = typeof content === "string"
+    ? content
+    : Array.isArray(content)
+      ? content.map((part: any) => typeof part?.text === "string" ? part.text : "").join("\n")
+      : ""
+  const match = text.match(/<dcp-block-id>(b\d+)<\/dcp-block-id>/)
+  return match?.[1] ? `block:${match[1]}` : null
+}
 
-  let counter = 1;
-
+function stripGeneratedDcpHallucinations(messages: any[]): void {
   for (const msg of messages) {
+    const role = msg?.role
+    if (role !== "assistant" && role !== "toolResult" && role !== "bashExecution") continue
+
+    if (typeof msg.content === "string") {
+      msg.content = stripDcpHallucinationsFromString(msg.content)
+      continue
+    }
+
+    if (!Array.isArray(msg.content)) continue
+    msg.content = msg.content.map((part: any) => {
+      if (!part || typeof part !== "object") return part
+      const clone = { ...part }
+      if (typeof clone.text === "string") clone.text = stripDcpHallucinationsFromString(clone.text)
+      if (typeof clone.input === "string") clone.input = stripDcpHallucinationsFromString(clone.input)
+      return clone
+    })
+  }
+}
+
+function injectMessageIds(messages: any[], state: DcpState): void {
+  state.messageRefSnapshot.clear();
+  state.messageIdSnapshot.clear();
+  state.messageOwnerSnapshot.clear();
+
+  for (let ordinal = 0; ordinal < messages.length; ordinal++) {
+    const msg = messages[ordinal];
     const role: string = msg.role ?? "";
 
     // Skip PI-internal passthrough messages
@@ -381,17 +461,17 @@ function injectMessageIds(messages: any[], state: DcpState): void {
     // Skip non-eligible roles
     if (!ID_ELIGIBLE_ROLES.has(role)) continue;
 
-    const id = "m" + String(counter).padStart(3, "0");
-    counter++;
-
-    const ownerKey = typeof msg[INTERNAL_OWNER_KEY] === "string" ? msg[INTERNAL_OWNER_KEY] : null;
-    const idTag = `\n<dcp-id>${id}</dcp-id>`;
-    const ownerTag = ownerKey ? `\n<dcp-owner>${ownerKey}</dcp-owner>` : "";
-    const metadataTag = `${idTag}${ownerTag}`;
+    const sourceKey = typeof msg[INTERNAL_SOURCE_KEY] === "string"
+      ? msg[INTERNAL_SOURCE_KEY]
+      : buildSourceItemKey(msg, ordinal);
+    const id = allocateMessageRef(state.messageAliases, sourceKey);
+    const ownerKey = extractBlockOwnerKey(msg)
+      ?? (typeof msg[INTERNAL_OWNER_KEY] === "string" ? msg[INTERNAL_OWNER_KEY] : buildSourceOwnerKey(ordinal));
+    const metadataTag = `\n<dcp-id>${id}</dcp-id>`;
 
     if (role === "user") {
       if (typeof msg.content === "string") {
-        msg.content = msg.content + `\n\n<dcp-id>${id}</dcp-id>${ownerTag}`;
+        msg.content = msg.content + `\n\n<dcp-id>${id}</dcp-id>`;
       } else if (Array.isArray(msg.content)) {
         msg.content = [...msg.content, { type: "text", text: metadataTag }];
       }
@@ -426,8 +506,26 @@ function injectMessageIds(messages: any[], state: DcpState): void {
       }
     }
 
-    if (msg.timestamp !== undefined) {
-      state.messageIdSnapshot.set(id, msg.timestamp);
+    const timestamp = typeof msg.timestamp === "number" && Number.isFinite(msg.timestamp)
+      ? msg.timestamp
+      : null;
+    state.messageRefSnapshot.set(id, { ref: id, sourceKey, timestamp, ownerKey });
+    state.messageOwnerSnapshot.set(id, ownerKey);
+    if (timestamp !== null) {
+      state.messageIdSnapshot.set(id, timestamp);
+    }
+  }
+
+  // Transitional compatibility: old prompt examples/tests may still use m001.
+  for (const [ref, entry] of state.messageRefSnapshot.entries()) {
+    const numeric = Number.parseInt(ref.slice(1), 10);
+    if (!Number.isInteger(numeric) || numeric < 1 || numeric > 999) continue;
+    const legacyRef = `m${String(numeric).padStart(3, "0")}`;
+    if (state.messageRefSnapshot.has(legacyRef)) continue;
+    state.messageRefSnapshot.set(legacyRef, { ...entry, ref: legacyRef });
+    state.messageOwnerSnapshot.set(legacyRef, entry.ownerKey);
+    if (entry.timestamp !== null) {
+      state.messageIdSnapshot.set(legacyRef, entry.timestamp);
     }
   }
 }
@@ -455,8 +553,16 @@ export function applyPruning(
       enumerable: false,
       configurable: true,
     });
+    Object.defineProperty(clone, INTERNAL_SOURCE_KEY, {
+      value: buildSourceItemKey(m, ordinal),
+      enumerable: false,
+      configurable: true,
+    });
     return clone;
   });
+
+  // 0. Strip generated DCP/protocol hallucinations before they can affect metadata.
+  stripGeneratedDcpHallucinations(msgs);
 
   // 1. Count logical turns → update state.currentTurn.
   // A standalone visible message counts as one turn; an assistant tool batch

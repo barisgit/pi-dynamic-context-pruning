@@ -1,3 +1,5 @@
+import { createMessageAliasState, type MessageAliasState, type MessageRefSnapshotEntry } from "./message-refs.js"
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -48,11 +50,16 @@ export interface CompressionBlock {
   /** Timestamp of the last message in the compressed range */
   endTimestamp: number
   /**
-   * Timestamp of the first message *after* the range — the summary is injected
-   * immediately before this message.  Set to `Infinity` when the range extends
-   * to the end of the conversation.
+   * Timestamp of the first message *after* the range — legacy insertion
+   * fallback for timestamp-only blocks.
    */
   anchorTimestamp: number
+  /** Canonical source key of the first covered source item, when known. */
+  startSourceKey?: string
+  /** Canonical source key of the last covered source item, when known. */
+  endSourceKey?: string
+  /** Canonical source key before which this block should render, or a trailing anchor. */
+  anchorSourceKey?: string
   /** Whether this block is still being applied (false = soft-deleted) */
   active: boolean
   /** Token estimate for the summary text itself */
@@ -174,6 +181,11 @@ export interface PersistedDcpStateV1 {
   schemaVersion?: 1
   compressionBlocks: CompressionBlock[]
   nextBlockId: number
+  messageAliases?: {
+    bySourceKey: Record<string, string>
+    byRef: Record<string, string>
+    nextRef: number
+  }
   prunedToolIds: string[]
   tokensSaved: number
   totalPruneCount: number
@@ -187,6 +199,11 @@ export interface PersistedDcpStateV2 {
   schemaVersion: 2
   blocks: CompressionBlockV2[]
   nextBlockId: number
+  messageAliases?: {
+    bySourceKey: Record<string, string>
+    byRef: Record<string, string>
+    nextRef: number
+  }
   manualMode: boolean
   lastNudgeTurn?: number
   lastCompressTurn?: number
@@ -220,15 +237,14 @@ export interface DcpState {
   lastLiveOwnerKeys: string[]
 
   // ── Message ID snapshot ────────────────────────────────────────────────────
-  /**
-   * Maps the short LLM-visible message IDs (e.g. "m001") to the actual
-   * `timestamp` of that message as seen in the last `context` event.
-   *
-   * The `compress` tool receives ID strings from the LLM; this map lets us
-   * translate them back to real timestamps so compression blocks can reference
-   * message positions by timestamp (which is stable across pruning passes).
-   */
+  /** Persisted source-key → visible-ref aliases for model-facing compression refs. */
+  messageAliases: MessageAliasState
+  /** Latest visible-ref snapshot with canonical source, timestamp, and owner metadata. */
+  messageRefSnapshot: Map<string, MessageRefSnapshotEntry>
+  /** Compatibility map from visible message refs to timestamps for legacy code paths. */
   messageIdSnapshot: Map<string, number>
+  /** Latest visible-ref → internal owner-key mapping for provider payload filtering. */
+  messageOwnerSnapshot: Map<string, string>
 
   // ── Turn tracking ──────────────────────────────────────────────────────────
   /**
@@ -285,7 +301,10 @@ export function createState(): DcpState {
     nextBlockId: 1,
     lastRenderedMessages: [],
     lastLiveOwnerKeys: [],
+    messageAliases: createMessageAliasState(),
+    messageRefSnapshot: new Map(),
     messageIdSnapshot: new Map(),
+    messageOwnerSnapshot: new Map(),
     currentTurn: 0,
     tokensSaved: 0,
     totalPruneCount: 0,
@@ -309,7 +328,10 @@ export function resetState(state: DcpState): void {
   state.nextBlockId = 1
   state.lastRenderedMessages = []
   state.lastLiveOwnerKeys = []
+  state.messageAliases = createMessageAliasState()
+  state.messageRefSnapshot.clear()
   state.messageIdSnapshot.clear()
+  state.messageOwnerSnapshot.clear()
   state.currentTurn = 0
   state.tokensSaved = 0
   state.totalPruneCount = 0

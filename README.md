@@ -125,16 +125,17 @@ All commands are available in the pi TUI via `/dcp <subcommand>`:
 
 When the LLM calls the `compress` tool it provides one or more `{startId, endId, summary}` ranges. DCP:
 
-1. Records the range as a `CompressionBlock` with start/end timestamps
-2. On every `context` event, splices out the raw messages in that range
-3. Injects a synthetic `[Compressed section: …]` user message containing the summary and, for newer blocks, a deterministic activity log
-4. Keeps the block state in the session so it survives restarts
+1. Resolves visible message refs (`m0001`, `m0042`, etc.) and block refs (`b1`, `b3`) through stable internal source/span keys
+2. Records the range as a `CompressionBlock` with legacy timestamps plus canonical source-key coverage/anchor metadata when available
+3. On every `context` event, splices out the raw messages in that range and prefers source-key placement for anchored blocks, with timestamp fallback for legacy blocks
+4. Injects a synthetic `[Compressed section: …]` user message containing the summary and, for newer blocks, a deterministic activity log
+5. Keeps the block state in the session so it survives restarts
 
 When a new compression exactly covers an older exact-coverage block, DCP now supersedes the older block instead of accumulating both summaries. Ambiguous partial overlap still rejects conservatively.
 
-By default, DCP also protects the hot tail of the conversation: ranges that end inside the last `protectRecentTurns` logical turns/tool batches are rejected unless the session is already above the hard emergency threshold (`maxContextPercent`). When a range is rejected, DCP now includes planning hints that surface the hot-tail start, protected `mNNN` / `bN` IDs, and the largest visible safe candidate ranges; the same guidance is appended to live compression nudges.
+By default, DCP also protects the hot tail of the conversation: ranges that end inside the last `protectRecentTurns` logical turns/tool batches are rejected unless the session is already above the hard emergency threshold (`maxContextPercent`). When a range is rejected, DCP now includes planning hints that surface the hot-tail start, protected `m0001` / `bN` IDs, and the largest visible safe candidate ranges; the same guidance is appended to live compression nudges.
 
-Message IDs (`m001`, `m042`, etc.) and block IDs (`b1`, `b3`) are injected into every message in the context so the LLM can reference exact boundaries.
+Message IDs (`m0001`, `m0042`, etc.) and block IDs (`b1`, `b3`) are injected into context so the LLM can reference exact compression boundaries. Internal owner keys are not rendered as model-visible metadata; provider-payload filtering uses canonical source/span/block ownership tracked in state.
 
 ### Atomic tool pair removal
 

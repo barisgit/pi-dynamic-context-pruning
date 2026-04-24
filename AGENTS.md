@@ -63,10 +63,10 @@ Notes:
 
 This repo is in a **hybrid state**:
 
-1. **Active runtime path = legacy timestamp-based blocks**
+1. **Active runtime path = legacy blocks with source-key anchors**
    - `state.compressionBlocks` is still the live block log used by the extension.
-   - `compress-tool.ts` still resolves visible IDs to timestamps.
-   - `pruner.ts` still applies active legacy blocks on each `context` pass.
+   - `compress-tool.ts` resolves stable visible refs through canonical source keys and keeps timestamp fallback for legacy blocks.
+   - `pruner.ts` still applies active legacy blocks on each `context` pass, preferring source-key placement when available.
 
 2. **Exact canonical metadata is already partially live**
    - new blocks persist exact `metadata.coveredSourceKeys` and `metadata.coveredSpanKeys`
@@ -90,8 +90,8 @@ This repo is in a **hybrid state**:
 
 ### 1. Compression blocks
 
-- New `compress` calls still create legacy `CompressionBlock`s with timestamp boundaries.
-- New blocks also persist exact canonical metadata when possible.
+- New `compress` calls still create legacy `CompressionBlock`s with timestamp boundaries for fallback.
+- New blocks also persist exact canonical metadata and source-key anchors when possible.
 - Successful `compress` blocks also persist `compressCallId` so provider-payload filtering can recognize when a rendered block already represents that tool call.
 - Fully covered older exact-coverage blocks are **superseded**.
 - Partial ambiguous overlap still rejects conservatively.
@@ -100,10 +100,10 @@ This repo is in a **hybrid state**:
 
 ### 2. Ownership / hidden-provider pruning
 
-- Visible `mNNN` IDs are **agent-facing boundaries only**.
-- Hidden/provider artifact ownership is **not** derived from rendered visibility.
-- `dcp-owner` is an internal canonical owner marker used to associate hidden payload artifacts with canonical source entities.
-- `payload-filter.ts` prunes stale `reasoning`, `function_call`, and `function_call_output` using canonical live owner keys derived from the source transcript plus active blocks.
+- Visible `mNNNN` IDs and `bN` block IDs are **agent-facing boundaries only**.
+- Hidden/provider artifact ownership is **not** derived from arbitrary rendered text.
+- Do not render source owner markers into model-visible transcript content.
+- `payload-filter.ts` prunes stale `reasoning`, `function_call`, and `function_call_output` using canonical live owner keys plus the latest internal visible-ref → owner map.
 - Successful `compress` `function_call` / `function_call_output` artifacts are suppressed only when a live rendered block with the matching `CompressionBlock.compressCallId` already represents them.
 - Failed or otherwise unrepresented `compress` attempts must stay visible.
 - Do **not** reintroduce visibility-based ownership heuristics.
@@ -207,8 +207,8 @@ Touch at least:
    - Recompute liveness from the current source transcript plus active blocks.
 
 4. **Visible IDs and internal ownership are different layers.**
-   - `mNNN` / `bN` are for the agent/tool contract.
-   - canonical owner keys are internal runtime bookkeeping.
+   - `mNNNN` / `bN` are for the agent/tool contract.
+   - canonical owner keys are internal runtime bookkeeping and must not be rendered as visible owner tags.
 
 5. **Supersession is allowed only for exact full coverage.**
    - Full containment of an older exact block is absorbable.

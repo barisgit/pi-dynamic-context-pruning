@@ -105,6 +105,15 @@ function createSpan(kind: TranscriptSpanKind, items: TranscriptSourceItem[]): Tr
  * session-entry IDs, v2 should switch to those.
  */
 export function buildSourceItemKey(message: any, ordinal: number): string {
+  const rawId = typeof message?.id === "string" && message.id.length > 0
+    ? message.id
+    : typeof message?.messageId === "string" && message.messageId.length > 0
+      ? message.messageId
+      : typeof message?.entryId === "string" && message.entryId.length > 0
+        ? message.entryId
+        : null
+  if (rawId) return `raw:${rawId}`
+
   const role = getRole(message)
   const timestamp = getTimestamp(message)
   const toolCallId = typeof message?.toolCallId === "string" ? message.toolCallId : null

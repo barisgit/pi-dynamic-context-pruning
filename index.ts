@@ -323,6 +323,7 @@ export default function (pi: ExtensionAPI) {
       payload.input,
       state.lastLiveOwnerKeys,
       state.compressionBlocks,
+      state.messageOwnerSnapshot,
     )
     if (filteredInput.length === payload.input.length) {
       return

@@ -62,8 +62,8 @@ It is your responsibility to keep a sharp, high-quality context window for optim
  *   {
  *     topic:  string           // 3-5 word label for this compression
  *     ranges: Array<{
- *       startId: string        // mNNN or bN
- *       endId:   string        // mNNN or bN
+ *       startId: string        // mNNNN or bN
+ *       endId:   string        // mNNNN or bN
  *       summary: string        // detailed technical handoff summary
  *     }>
  *   }
@@ -88,7 +88,7 @@ Compressed block sections in context are clearly marked with a header:
 
 - \`[Compressed conversation section]\`
 
-Compressed block IDs always use the \`bN\` form (never \`mNNN\`) and are represented in the same XML metadata tag format.
+Compressed block IDs always use the \`bN\` form (never message refs) and are represented in the same XML metadata tag format.
 
 Rules:
 
@@ -111,7 +111,7 @@ When you use compressed block placeholders, write the surrounding summary text s
 BOUNDARY IDS
 You specify boundaries by ID using the injected IDs visible in the conversation:
 
-- \`mNNN\` IDs identify raw messages (3 digits, zero-padded, e.g. \`m001\`, \`m042\`)
+- \`mNNNN\` IDs identify raw messages (4 digits, zero-padded, e.g. \`m0001\`, \`m0042\`)
 - \`bN\` IDs identify previously compressed blocks
 
 Each message has an ID inside XML metadata tags like \`<dcp-id>...</dcp-id>\`.
@@ -150,7 +150,7 @@ Only split into multiple compressions if one large range would reduce summary qu
 RANGE SELECTION
 Start from older, resolved history and capture as much stale context as safely possible in one pass.
 Avoid the newest active working slice unless it is clearly closed.
-Use visible injected boundary IDs for compression (\`mNNN\` for messages, \`bN\` for compressed blocks), and ensure \`startId\` appears before \`endId\`.
+Use visible injected boundary IDs for compression (\`mNNNN\` for messages, \`bN\` for compressed blocks), and ensure \`startId\` appears before \`endId\`.
 
 SUMMARY REQUIREMENTS
 Your summary must cover all essential details from the selected range so work can continue without reopening raw messages.
@@ -210,7 +210,7 @@ Apply the same quality standards as always:
 
 - Summaries must be explicit and high-fidelity — file paths, decisions, findings, exact constraints
 - Preserve user intent precisely; prefer direct quotes for short user messages
-- Use only boundary IDs visible in context (\`mNNN\` for messages, \`bN\` for compressed blocks)
+- Use only boundary IDs visible in context (\`mNNNN\` for messages, \`bN\` for compressed blocks)
 - Batch independent ranges in a single \`compress\` call when possible
 
 Do not compress active, still-needed context. Only compress ranges that are genuinely closed and whose raw form is no longer required.

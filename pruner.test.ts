@@ -13,12 +13,16 @@ import {
   buildCompressionArtifactsForRange,
   buildCompressionPlanningHints,
   renderCompressionPlanningHints,
+  resolveAnchorSourceKey,
+  resolveAnchorTimestamp,
   resolveProtectedTailStartTimestamp,
   resolveSupersededBlockIdsForRange,
+  validateCompressionRangeBoundaryIds,
 } from "./compress-tool.js";
 import { appendDebugLogLine, buildSessionDebugPayload } from "./debug-log.js";
 import { restorePersistedState, mapLegacyBlockToSpanRange } from "./migration.js";
 import { renderCompressedBlockMessage } from "./materialize.js";
+import { createMessageAliasState } from "./message-refs.js";
 import { extractCanonicalOwnerKeyFromMessageLike, filterProviderPayloadInput } from "./payload-filter.js";
 import { applyPruning, getNudgeType, injectNudge } from "./pruner.js";
 import { buildBlockOwnerKey, buildLiveOwnerKeys, buildSourceOwnerKey, buildTranscriptSnapshot } from "./transcript.js";
@@ -66,7 +70,10 @@ function makeState(compressionBlocks: DcpState["compressionBlocks"] = []): DcpSt
     nextBlockId: 1,
     lastRenderedMessages: [],
     lastLiveOwnerKeys: [],
+    messageAliases: createMessageAliasState(),
+    messageRefSnapshot: new Map(),
     messageIdSnapshot: new Map(),
+    messageOwnerSnapshot: new Map(),
     currentTurn: 0,
     tokensSaved: 0,
     totalPruneCount: 0,
@@ -426,6 +433,61 @@ function findOrphanedToolUse(result: any[]): string | null {
 }
 
 // ---------------------------------------------------------------------------
+// Test 3b — SOURCE-KEY RANGE STILL EXPANDS TOOL EXCHANGES
+// ---------------------------------------------------------------------------
+{
+  console.log("TEST 3b: source-key anchored range removes tool exchange atomically");
+
+  const messages: any[] = [
+    { role: "user", content: [{ type: "text", text: "do two things" }], timestamp: 1000 },
+    {
+      role: "assistant",
+      content: [
+        { type: "toolCall", id: "toolu_A", name: "read", arguments: {} },
+        { type: "toolCall", id: "toolu_B", name: "write", arguments: {} },
+      ],
+      timestamp: 2000,
+    },
+    { role: "toolResult", toolCallId: "toolu_A", toolName: "read", isError: false, content: [{ type: "text", text: "A result" }], timestamp: 3000 },
+    { role: "toolResult", toolCallId: "toolu_B", toolName: "write", isError: false, content: [{ type: "text", text: "B result" }], timestamp: 4000 },
+    { role: "user", content: [{ type: "text", text: "thanks" }], timestamp: 5000 },
+  ];
+
+  const state = makeState([
+    {
+      id: 1,
+      topic: "source-key tool work",
+      summary: "Both tools were called successfully.",
+      startTimestamp: 4000,
+      endTimestamp: 4000,
+      anchorTimestamp: 5000,
+      startSourceKey: "msg:4000:toolResult:toolu_B:3",
+      endSourceKey: "msg:4000:toolResult:toolu_B:3",
+      anchorSourceKey: "msg:5000:user:4",
+      active: true,
+      summaryTokenEstimate: 10,
+      createdAt: Date.now(),
+    },
+  ]);
+
+  const result = applyPruning(messages, state, makeConfig());
+  const assistantPresent = result.some((m: any) => m.role === "assistant" && m.timestamp === 2000);
+  const toolResultAPresent = result.some((m: any) => m.role === "toolResult" && m.toolCallId === "toolu_A");
+  const toolResultBPresent = result.some((m: any) => m.role === "toolResult" && m.toolCallId === "toolu_B");
+
+  assert.ok(!assistantPresent, "FAIL — source-key range left assistant tool calls behind");
+  assert.ok(!toolResultAPresent, "FAIL — source-key range left sibling toolResult behind");
+  assert.ok(!toolResultBPresent, "FAIL — source-key range left selected toolResult behind");
+  assert.ok(
+    result.some((m: any) => typeof m.content?.[0]?.text === "string" && m.content[0].text.includes("Both tools were called successfully.")),
+    "FAIL — compressed summary should be rendered",
+  );
+
+  console.log("  PASS: source-key ranges reuse tool-exchange expansion");
+  console.log("TEST 3b PASSED\n");
+}
+
+// ---------------------------------------------------------------------------
 // Test 4 — BASHEXECUTION FORWARD GAP
 //
 // An assistant calls a tool whose result is stored as role="bashExecution".
@@ -654,6 +716,79 @@ function findOrphanedToolUse(result: any[]): string | null {
   console.log("  PASS: original message content unchanged after applyPruning");
 
   console.log("TEST 7 PASSED\n");
+}
+
+// ---------------------------------------------------------------------------
+// Test 7b — STABLE VISIBLE REFS + NO VISIBLE OWNER METADATA
+// ---------------------------------------------------------------------------
+{
+  console.log("TEST 7b: stable visible refs persist and owner metadata is hidden");
+
+  const messages = [
+    { id: "raw_user_1", role: "user", content: [{ type: "text", text: "start" }], timestamp: 1000 },
+    { id: "raw_assistant_1", role: "assistant", content: [{ type: "text", text: "middle" }], timestamp: 2000 },
+    { id: "raw_user_2", role: "user", content: [{ type: "text", text: "end" }], timestamp: 3000 },
+  ];
+  const state = makeState();
+  const config = makeConfig();
+
+  const first = applyPruning(messages, state, config);
+  const firstSerialized = JSON.stringify(first);
+  assert.ok(firstSerialized.includes("<dcp-id>m0001</dcp-id>"), "FAIL — first stable message ref should render as m0001");
+  assert.ok(firstSerialized.includes("<dcp-id>m0002</dcp-id>"), "FAIL — second stable message ref should render as m0002");
+  assert.ok(!firstSerialized.includes("<dcp-owner>"), "FAIL — visible owner metadata should not render");
+
+  state.compressionBlocks.push({
+    id: 99,
+    topic: "middle",
+    summary: "middle was compressed",
+    startTimestamp: 2000,
+    endTimestamp: 2000,
+    anchorTimestamp: 3000,
+    startSourceKey: "raw:raw_assistant_1",
+    endSourceKey: "raw:raw_assistant_1",
+    anchorSourceKey: "raw:raw_user_2",
+    active: true,
+    summaryTokenEstimate: 4,
+    createdAt: Date.now(),
+  });
+
+  const second = applyPruning(messages, state, config);
+  const secondSerialized = JSON.stringify(second);
+  assert.ok(secondSerialized.includes("start"), "FAIL — first raw message should remain visible");
+  assert.ok(secondSerialized.includes("<dcp-id>m0001</dcp-id>"), "FAIL — first raw message should keep stable ref m0001");
+  assert.ok(secondSerialized.includes("end"), "FAIL — trailing raw message should remain visible");
+  assert.ok(secondSerialized.includes("<dcp-id>m0003</dcp-id>"), "FAIL — trailing raw message should keep stable ref m0003 after compression changes");
+  assert.ok(
+    secondSerialized.indexOf("middle was compressed") < secondSerialized.indexOf("end"),
+    "FAIL — source-key anchored block should render before its anchor source message",
+  );
+  assert.ok(!secondSerialized.includes("<dcp-owner>"), "FAIL — owner metadata should remain hidden after compression");
+
+  console.log("  PASS: stable refs persist and owner metadata is not model-visible");
+  console.log("TEST 7b PASSED\n");
+}
+
+// ---------------------------------------------------------------------------
+// Test 7c — GENERATED DCP/OWNER-LIKE HALLUCINATIONS ARE STRIPPED
+// ---------------------------------------------------------------------------
+{
+  console.log("TEST 7c: generated DCP and owner-like hallucinations are stripped");
+
+  const repeatedOwnerParameter = '<parameter name="owner">s47</parameter>'.repeat(12);
+  const messages = [
+    { role: "user", content: [{ type: "text", text: "literal <parameter name=\"owner\">user text</parameter> stays" }], timestamp: 1000 },
+    { role: "assistant", content: [{ type: "text", text: `bad <dcp-owner>s47</dcp-owner> ${repeatedOwnerParameter} done` }], timestamp: 2000 },
+  ];
+  const result = applyPruning(messages, makeState(), makeConfig());
+  const serialized = JSON.stringify(result);
+
+  assert.ok(serialized.includes("literal <parameter"), "FAIL — user-authored literal text should be preserved");
+  assert.ok(!serialized.includes("<dcp-owner>s47</dcp-owner>"), "FAIL — generated DCP owner tags should be stripped");
+  assert.ok(!serialized.includes("<parameter name=\\\"owner\\\">s47</parameter>"), "FAIL — repeated generated owner parameters should be stripped");
+
+  console.log("  PASS: generated protocol leakage is stripped without editing user text");
+  console.log("TEST 7c PASSED\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -1498,15 +1633,24 @@ function findOrphanedToolUse(result: any[]): string | null {
     buildSourceOwnerKey(4),
   ]);
 
+  const ownerByMessageRef = new Map([
+    ["m001", buildSourceOwnerKey(0)],
+    ["m002", buildSourceOwnerKey(1)],
+    ["m003", buildSourceOwnerKey(3)],
+    ["m004", buildSourceOwnerKey(4)],
+    ["m020", buildSourceOwnerKey(20)],
+    ["m021", buildSourceOwnerKey(21)],
+  ]);
+
   const payloadInput: any[] = [
-    { role: "user", content: [{ type: "input_text", text: "current head\n<dcp-id>m001</dcp-id>\n<dcp-owner>s0</dcp-owner>" }] },
+    { role: "user", content: [{ type: "input_text", text: "current head\n<dcp-id>m001</dcp-id>" }] },
     { type: "reasoning", encrypted_content: "keep-current" },
     { role: "assistant", content: [{ type: "output_text", text: "current reply" }] },
     { role: "assistant", content: [{ type: "output_text", text: "\n<dcp-id>m002</dcp-id>\n<dcp-owner>s1</dcp-owner>" }] },
-    { role: "user", content: [{ type: "input_text", text: "stale raw turn\n<dcp-id>m001</dcp-id>\n<dcp-owner>s20</dcp-owner>" }] },
+    { role: "user", content: [{ type: "input_text", text: "stale raw turn\n<dcp-id>m020</dcp-id>\n<dcp-owner>s20</dcp-owner>" }] },
     { type: "reasoning", encrypted_content: "drop-stale" },
     { role: "assistant", content: [{ type: "output_text", text: "stale reply" }] },
-    { role: "assistant", content: [{ type: "output_text", text: "\n<dcp-id>m002</dcp-id>\n<dcp-owner>s21</dcp-owner>" }] },
+    { role: "assistant", content: [{ type: "output_text", text: "\n<dcp-id>m021</dcp-id>\n<dcp-owner>s21</dcp-owner>" }] },
     { type: "function_call", name: "bash", call_id: "toolu_old" },
     { type: "function_call_output", call_id: "toolu_old", output: "ok" },
     { role: "user", content: [{ type: "input_text", text: "The conversation history before this point was compacted into the following summary:\n\n<summary>still canonical</summary>" }] },
@@ -1527,12 +1671,12 @@ function findOrphanedToolUse(result: any[]): string | null {
   ];
 
   assert.strictEqual(
-    extractCanonicalOwnerKeyFromMessageLike(payloadInput[11]),
+    extractCanonicalOwnerKeyFromMessageLike(payloadInput[11], ownerByMessageRef),
     buildBlockOwnerKey(1),
     "FAIL — compressed block ownership should not be stolen by quoted stale dcp-owner tags inside the summary body",
   );
 
-  const filtered = filterProviderPayloadInput(payloadInput, liveOwners);
+  const filtered = filterProviderPayloadInput(payloadInput, liveOwners, [], ownerByMessageRef);
   const serialized = JSON.stringify(filtered);
 
   assert.ok(serialized.includes("keep-current"), "FAIL — reasoning owned by a live assistant should stay");
@@ -1562,8 +1706,17 @@ function findOrphanedToolUse(result: any[]): string | null {
     buildSourceOwnerKey(4),
   ]);
 
+  const ownerByMessageRef = new Map([
+    ["m001", buildSourceOwnerKey(0)],
+    ["m002", buildSourceOwnerKey(1)],
+    ["m003", buildSourceOwnerKey(3)],
+    ["m004", buildSourceOwnerKey(4)],
+    ["m020", buildSourceOwnerKey(20)],
+    ["m021", buildSourceOwnerKey(21)],
+  ]);
+
   const payloadInput: any[] = [
-    { role: "user", content: [{ type: "input_text", text: "current ask\n<dcp-id>m001</dcp-id>\n<dcp-owner>s0</dcp-owner>" }] },
+    { role: "user", content: [{ type: "input_text", text: "current ask\n<dcp-id>m001</dcp-id>" }] },
     { type: "reasoning", encrypted_content: "keep-current" },
     { role: "assistant", content: [{ type: "output_text", text: "compressing now" }] },
     { role: "assistant", content: [{ type: "output_text", text: "\n<dcp-id>m002</dcp-id>\n<dcp-owner>s1</dcp-owner>" }] },
@@ -1588,7 +1741,7 @@ function findOrphanedToolUse(result: any[]): string | null {
     },
   ];
 
-  const filtered = filterProviderPayloadInput(payloadInput, liveOwners, compressionBlocks);
+  const filtered = filterProviderPayloadInput(payloadInput, liveOwners, compressionBlocks, ownerByMessageRef);
   const serialized = JSON.stringify(filtered);
 
   assert.ok(!serialized.includes("call_compress"), "FAIL — compress function call/output should be dropped only when represented by a live block");
@@ -1613,8 +1766,14 @@ function findOrphanedToolUse(result: any[]): string | null {
     buildSourceOwnerKey(2),
   ]);
 
+  const ownerByMessageRef = new Map([
+    ["m001", buildSourceOwnerKey(0)],
+    ["m002", buildSourceOwnerKey(1)],
+    ["m003", buildSourceOwnerKey(2)],
+  ]);
+
   const payloadInput: any[] = [
-    { role: "user", content: [{ type: "input_text", text: "current ask\n<dcp-id>m001</dcp-id>\n<dcp-owner>s0</dcp-owner>" }] },
+    { role: "user", content: [{ type: "input_text", text: "current ask\n<dcp-id>m001</dcp-id>" }] },
     { role: "assistant", content: [{ type: "output_text", text: "trying compress" }] },
     { role: "assistant", content: [{ type: "output_text", text: "\n<dcp-id>m002</dcp-id>\n<dcp-owner>s1</dcp-owner>" }] },
     { type: "function_call", name: "compress", call_id: "call_failed_compress", arguments: "{\"topic\":\"cleanup\"}" },
@@ -1626,7 +1785,7 @@ function findOrphanedToolUse(result: any[]): string | null {
     { role: "user", content: [{ type: "input_text", text: "latest ask\n<dcp-id>m003</dcp-id>\n<dcp-owner>s2</dcp-owner>" }] },
   ];
 
-  const filtered = filterProviderPayloadInput(payloadInput, liveOwners, []);
+  const filtered = filterProviderPayloadInput(payloadInput, liveOwners, [], ownerByMessageRef);
   const serialized = JSON.stringify(filtered);
 
   assert.ok(serialized.includes("call_failed_compress"), "FAIL — failed compress function_call should remain visible when no live block represents it");
@@ -1765,6 +1924,67 @@ function findOrphanedToolUse(result: any[]): string | null {
 
   console.log("  PASS: timestamp-only legacy overlap stays conservative");
   console.log("TEST 23 PASSED\n");
+}
+
+// ---------------------------------------------------------------------------
+// Test 23b — BOUNDARY VALIDATION REJECTS STALE IDS AND SELF-BLOCK RANGES
+// ---------------------------------------------------------------------------
+{
+  console.log("TEST 23b: boundary validation rejects stale ids and self-block ranges");
+
+  const state = makeState([
+    {
+      id: 3,
+      topic: "old",
+      summary: "old summary",
+      startTimestamp: 1000,
+      endTimestamp: 2000,
+      anchorTimestamp: 3000,
+      active: true,
+      summaryTokenEstimate: 2,
+      createdAt: Date.now(),
+    },
+  ]);
+  state.messageIdSnapshot.set("m0001", 1000);
+  state.messageIdSnapshot.set("m0002", 2000);
+
+  assert.throws(
+    () => validateCompressionRangeBoundaryIds("m9999", "m0002", state),
+    /Unknown message ID: m9999/,
+    "FAIL — stale message refs should reject",
+  );
+  assert.throws(
+    () => validateCompressionRangeBoundaryIds("b3", "b3", state),
+    /contains only compressed block b3/,
+    "FAIL — bN..bN self-compression should reject",
+  );
+  validateCompressionRangeBoundaryIds("m0001", "b3", state);
+
+  state.messageRefSnapshot.set("m0001", {
+    ref: "m0001",
+    sourceKey: "msg:1000:user:0",
+    timestamp: 1000,
+    ownerKey: "s0",
+  });
+  state.messageRefSnapshot.set("m0002", {
+    ref: "m0002",
+    sourceKey: "msg:2000:user:1",
+    timestamp: 2000,
+    ownerKey: "s1",
+  });
+  assert.strictEqual(
+    resolveAnchorTimestamp(2000, state),
+    Infinity,
+    "FAIL — trailing ranges should not invent a finite numeric anchor timestamp",
+  );
+  assert.strictEqual(
+    resolveAnchorSourceKey(2000, "msg:2000:user:1", state),
+    "tail:msg:2000:user:1",
+    "FAIL — trailing ranges should use a canonical tail source-key anchor",
+  );
+
+  console.log("  PASS: stale refs, self-block ranges, and trailing anchors validate clearly");
+  console.log("TEST 23b PASSED\n");
 }
 
 // ---------------------------------------------------------------------------

@@ -14,6 +14,7 @@ import {
 import type { DcpConfig } from "./config.js"
 import { appendDebugLog, buildSessionDebugPayload } from "./debug-log.js"
 import { stripDcpMetadataTags } from "./dcp-metadata.js"
+import { parseVisibleRef } from "./message-refs.js"
 import { COMPRESS_RANGE_DESCRIPTION } from "./prompts.js"
 import { estimateTokens, resolveCompressionRangeIndices } from "./pruner.js"
 import {
@@ -71,8 +72,8 @@ function expandBlockPlaceholders(summary: string, state: DcpState): string {
 }
 
 /**
- * Resolve a user-supplied ID string (e.g. "m001" or "b3") to an actual
- * message timestamp.
+ * Resolve a user-supplied ID string (e.g. "m0001", transitional "m001", or "b3")
+ * to an actual message timestamp.
  */
 function resolveIdToTimestamp(
   rawId: string,
@@ -80,32 +81,98 @@ function resolveIdToTimestamp(
   state: DcpState,
 ): number {
   const id = rawId.trim()
+  const parsed = parseVisibleRef(id)
 
-  const blockMatch = id.match(/^b(\d+)$/i)
-  if (blockMatch) {
-    const blockId = parseInt(blockMatch[1]!, 10)
-    const block = state.compressionBlocks.find((b) => b.id === blockId && b.active)
+  if (parsed?.kind === "block") {
+    const block = state.compressionBlocks.find((b) => b.id === parsed.blockId && b.active)
     if (!block) throw new Error(`Unknown message ID: ${id}`)
     return block[field]
   }
 
-  const ts = state.messageIdSnapshot.get(id)
+  if (parsed?.kind !== "message") {
+    throw new Error(`Invalid message ID: ${id}. Expected a stable message ref like m0001 or a block ref like b3.`)
+  }
+
+  const ts = state.messageIdSnapshot.get(parsed.ref) ?? state.messageIdSnapshot.get(id)
   if (ts === undefined) throw new Error(`Unknown message ID: ${id}`)
   return ts
+}
+
+function resolveIdToSourceKey(rawId: string, state: DcpState, blockField: "startSourceKey" | "endSourceKey"): string | null {
+  const id = rawId.trim()
+  const parsed = parseVisibleRef(id)
+
+  if (parsed?.kind === "block") {
+    const block = state.compressionBlocks.find((b) => b.id === parsed.blockId && b.active)
+    return block?.[blockField] ?? null
+  }
+
+  if (parsed?.kind !== "message") return null
+  return state.messageRefSnapshot.get(parsed.ref)?.sourceKey
+    ?? state.messageRefSnapshot.get(id)?.sourceKey
+    ?? null
 }
 
 /**
  * Determine the anchor timestamp for a compression block — the timestamp of
  * the first raw message that appears strictly after `endTimestamp`.
  */
-function resolveAnchorTimestamp(endTimestamp: number, state: DcpState): number {
+export function resolveAnchorTimestamp(endTimestamp: number, state: DcpState): number {
   let anchor: number | null = null
   for (const ts of state.messageIdSnapshot.values()) {
     if (ts > endTimestamp && (anchor === null || ts < anchor)) {
       anchor = ts
     }
   }
-  return anchor ?? endTimestamp + 1
+  return anchor ?? Infinity
+}
+
+export function resolveAnchorSourceKey(endTimestamp: number, endSourceKey: string | null, state: DcpState): string | undefined {
+  let anchor: { timestamp: number; sourceKey: string } | null = null
+  for (const entry of state.messageRefSnapshot.values()) {
+    if (entry.timestamp === null) continue
+    if (entry.timestamp > endTimestamp && (anchor === null || entry.timestamp < anchor.timestamp)) {
+      anchor = { timestamp: entry.timestamp, sourceKey: entry.sourceKey }
+    }
+  }
+  return anchor?.sourceKey ?? (endSourceKey ? `tail:${endSourceKey}` : undefined)
+}
+
+export function validateCompressionRangeBoundaryIds(startId: string, endId: string, state: DcpState): void {
+  const parsedStartId = parseVisibleRef(startId)
+  const parsedEndId = parseVisibleRef(endId)
+
+  if (!parsedStartId) {
+    throw new Error(`Invalid message ID: ${startId}. Expected a stable message ref like m0001 or a block ref like b3.`)
+  }
+  if (!parsedEndId) {
+    throw new Error(`Invalid message ID: ${endId}. Expected a stable message ref like m0001 or a block ref like b3.`)
+  }
+
+  if (parsedStartId.kind === "message" && !state.messageIdSnapshot.has(parsedStartId.ref) && !state.messageIdSnapshot.has(startId.trim())) {
+    throw new Error(`Unknown message ID: ${startId}`)
+  }
+  if (parsedEndId.kind === "message" && !state.messageIdSnapshot.has(parsedEndId.ref) && !state.messageIdSnapshot.has(endId.trim())) {
+    throw new Error(`Unknown message ID: ${endId}`)
+  }
+
+  if (parsedStartId.kind === "block" && !state.compressionBlocks.some((block) => block.id === parsedStartId.blockId && block.active)) {
+    throw new Error(`Unknown message ID: ${startId}`)
+  }
+  if (parsedEndId.kind === "block" && !state.compressionBlocks.some((block) => block.id === parsedEndId.blockId && block.active)) {
+    throw new Error(`Unknown message ID: ${endId}`)
+  }
+
+  if (
+    parsedStartId.kind === "block" &&
+    parsedEndId.kind === "block" &&
+    parsedStartId.blockId === parsedEndId.blockId
+  ) {
+    throw new Error(
+      `Range ${startId}..${endId} contains only compressed block b${parsedStartId.blockId}. ` +
+        `Choose raw message boundaries around the block or include additional uncompressed messages.`,
+    )
+  }
 }
 
 function resolveVisibleIdForTimestamp(timestamp: number, state: DcpState): string | null {
@@ -797,11 +864,11 @@ export function registerCompressTool(
         Type.Object({
           startId: Type.String({
             description:
-              "Message ID marking start of range (e.g. m001, b2)",
+              "Message ID marking start of range (e.g. m0001, b2)",
           }),
           endId: Type.String({
             description:
-              "Message ID marking end of range (e.g. m042, b5)",
+              "Message ID marking end of range (e.g. m0042, b5)",
           }),
           summary: Type.String({
             description:
@@ -849,6 +916,8 @@ export function registerCompressTool(
           const { startId, endId, summary } = range
           activeRange = { startId, endId }
 
+          validateCompressionRangeBoundaryIds(startId, endId, state)
+
           const startTimestamp = resolveIdToTimestamp(startId, "startTimestamp", state)
           const endTimestamp = resolveIdToTimestamp(endId, "endTimestamp", state)
 
@@ -890,6 +959,8 @@ export function registerCompressTool(
           }
 
           const anchorTimestamp = resolveAnchorTimestamp(endTimestamp, state)
+          const boundaryStartSourceKey = resolveIdToSourceKey(startId, state, "startSourceKey")
+          const boundaryEndSourceKey = resolveIdToSourceKey(endId, state, "endSourceKey")
           const expandedSummary = expandBlockPlaceholders(summary, state)
           const artifacts = buildCompressionArtifactsForRange(
             currentMessages,
@@ -897,6 +968,9 @@ export function registerCompressTool(
             startTimestamp,
             endTimestamp,
           )
+          const expandedStartSourceKey = artifacts.metadata.coveredSourceKeys[0] ?? boundaryStartSourceKey
+          const expandedEndSourceKey = artifacts.metadata.coveredSourceKeys.at(-1) ?? boundaryEndSourceKey
+          const anchorSourceKey = resolveAnchorSourceKey(endTimestamp, expandedEndSourceKey ?? null, state)
           const supersededBlockIds = resolveSupersededBlockIdsForRange(
             currentMessages,
             [...state.compressionBlocks, ...plannedBlocks],
@@ -919,6 +993,9 @@ export function registerCompressTool(
             startTimestamp,
             endTimestamp,
             anchorTimestamp,
+            startSourceKey: expandedStartSourceKey,
+            endSourceKey: expandedEndSourceKey,
+            anchorSourceKey,
             active: true,
             summaryTokenEstimate: estimateTokens(expandedSummary),
             savedTokenEstimate: 0,

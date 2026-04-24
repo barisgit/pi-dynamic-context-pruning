@@ -19,40 +19,34 @@ function normalizeInlineWhitespace(text: string): string {
   return text.replace(/\s+/g, " ").trim()
 }
 
-type CanonicalOwnerMarker = {
-  ownerKey: string
-  index: number
+function findLastVisibleMessageRef(text: string): string | null {
+  let lastRef: string | null = null
+  for (const match of text.matchAll(/<dcp-id>(m\d{3,4})<\/dcp-id>/gi)) {
+    if (typeof match[1] === "string") lastRef = match[1].toLowerCase()
+  }
+  return lastRef
 }
 
-function findLastCanonicalOwnerMarker(text: string): CanonicalOwnerMarker | null {
-  let lastOwnerMarker: CanonicalOwnerMarker | null = null
-  for (const match of text.matchAll(/<dcp-owner>([^<]+)<\/dcp-owner>/g)) {
-    const ownerKey = match[1]
-    const index = match.index
-    if (typeof ownerKey === "string" && typeof index === "number") {
-      lastOwnerMarker = { ownerKey, index }
-    }
+function findLastBlockOwnerKey(text: string): string | null {
+  let lastOwner: string | null = null
+  for (const match of text.matchAll(/<dcp-block-id>(b\d+)<\/dcp-block-id>/gi)) {
+    if (typeof match[1] === "string") lastOwner = `block:${match[1].toLowerCase()}`
   }
-
-  let lastBlockMarker: CanonicalOwnerMarker | null = null
-  for (const match of text.matchAll(/<dcp-block-id>(b\d+)<\/dcp-block-id>/g)) {
-    const blockId = match[1]
-    const index = match.index
-    if (typeof blockId === "string" && typeof index === "number") {
-      lastBlockMarker = { ownerKey: `block:${blockId}`, index }
-    }
-  }
-
-  if (!lastOwnerMarker) return lastBlockMarker
-  if (!lastBlockMarker) return lastOwnerMarker
-  return lastBlockMarker.index > lastOwnerMarker.index ? lastBlockMarker : lastOwnerMarker
+  return lastOwner
 }
 
-export function extractCanonicalOwnerKeyFromMessageLike(message: any): string | null {
+export function extractCanonicalOwnerKeyFromMessageLike(
+  message: any,
+  ownerByMessageRef: ReadonlyMap<string, string> = new Map(),
+): string | null {
   const normalized = normalizeInlineWhitespace(extractMessageLikeText(message))
   if (!normalized) return null
 
-  return findLastCanonicalOwnerMarker(normalized)?.ownerKey ?? null
+  const blockOwner = findLastBlockOwnerKey(normalized)
+  if (blockOwner) return blockOwner
+
+  const messageRef = findLastVisibleMessageRef(normalized)
+  return messageRef ? ownerByMessageRef.get(messageRef) ?? null : null
 }
 
 function isMessageLike(item: any): boolean {
@@ -64,16 +58,17 @@ function isMetadataOnlyMessageLike(item: any): boolean {
   if (!normalized) return false
 
   const stripped = normalized
-    .replace(/<dcp-id>m\d+<\/dcp-id>/g, "")
-    .replace(/<dcp-owner>[^<]+<\/dcp-owner>/g, "")
+    .replace(/<dcp-id>m\d{3,4}<\/dcp-id>/gi, "")
+    .replace(/<dcp-owner>[^<]+<\/dcp-owner>/gi, "")
+    .replace(/<dcp-block-id>b\d+<\/dcp-block-id>/gi, "")
     .trim()
 
-  return stripped === "" && /<dcp-id>|<dcp-owner>/.test(normalized)
+  return stripped === "" && /<dcp-id>|<dcp-owner>|<dcp-block-id>/i.test(normalized)
 }
 
-function buildDirectOwnerKeys(input: any[]): Array<string | null> {
+function buildDirectOwnerKeys(input: any[], ownerByMessageRef: ReadonlyMap<string, string>): Array<string | null> {
   const owners = input.map((item) =>
-    isMessageLike(item) ? extractCanonicalOwnerKeyFromMessageLike(item) : null,
+    isMessageLike(item) ? extractCanonicalOwnerKeyFromMessageLike(item, ownerByMessageRef) : null,
   )
 
   for (let i = 0; i + 1 < input.length; i++) {
@@ -174,13 +169,14 @@ export function filterProviderPayloadInput(
   input: any[],
   liveOwnerKeys: Iterable<string>,
   compressionBlocks: readonly CompressArtifactBlock[] = [],
+  ownerByMessageRef: ReadonlyMap<string, string> = new Map(),
 ): any[] {
   if (!Array.isArray(input)) return input
 
   const liveOwners = liveOwnerKeys instanceof Set ? liveOwnerKeys : new Set(liveOwnerKeys)
   if (liveOwners.size === 0) return input
 
-  const directOwners = buildDirectOwnerKeys(input)
+  const directOwners = buildDirectOwnerKeys(input, ownerByMessageRef)
   const previousAssistantOwners = buildPreviousAssistantOwners(input, directOwners)
   const nextAssistantOwners = buildNextAssistantOwners(input, directOwners)
   const representedCompressCallIds = buildRepresentedCompressCallIds(liveOwners, compressionBlocks)
