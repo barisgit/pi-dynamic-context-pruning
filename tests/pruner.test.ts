@@ -18,16 +18,16 @@ import {
   resolveProtectedTailStartTimestamp,
   resolveSupersededBlockIdsForRange,
   validateCompressionRangeBoundaryIds,
-} from "./compress-tool.js";
-import { appendDebugLogLine, buildSessionDebugPayload } from "./debug-log.js";
-import { restorePersistedState, mapLegacyBlockToSpanRange } from "./migration.js";
-import { renderCompressedBlockMessage } from "./materialize.js";
-import { createMessageAliasState } from "./message-refs.js";
-import { extractCanonicalOwnerKeyFromMessageLike, filterProviderPayloadInput } from "./payload-filter.js";
-import { applyPruning, getNudgeType, injectNudge } from "./pruner.js";
-import { buildBlockOwnerKey, buildLiveOwnerKeys, buildSourceOwnerKey, buildTranscriptSnapshot } from "./transcript.js";
-import type { DcpState } from "./state.js";
-import type { DcpConfig } from "./config.js";
+} from "../src/compress-tool.js";
+import { appendDebugLogLine, buildSessionDebugPayload } from "../src/debug-log.js";
+import { restorePersistedState, mapLegacyBlockToSpanRange } from "../src/migration.js";
+import { renderCompressedBlockMessage } from "../src/materialize.js";
+import { createMessageAliasState } from "../src/message-refs.js";
+import { extractCanonicalOwnerKeyFromMessageLike, filterProviderPayloadInput } from "../src/payload-filter.js";
+import { applyPruning, getNudgeType, injectNudge } from "../src/pruner.js";
+import { buildBlockOwnerKey, buildLiveOwnerKeys, buildSourceOwnerKey, buildTranscriptSnapshot } from "../src/transcript.js";
+import type { DcpState } from "../src/state.js";
+import type { DcpConfig } from "../src/config.js";
 
 // ---------------------------------------------------------------------------
 // Minimal factories

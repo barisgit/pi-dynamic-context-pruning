@@ -1,20 +1,20 @@
 ## 1. Tooling Baseline
 
-- [ ] 1.1 Add `tsconfig.json` that typechecks `src/**/*.ts` and `tests/**/*.ts` without emitting build output.
-- [ ] 1.2 Add package scripts for `test`, `test:watch`, `check-types`, `lint`, `format`, and `ci`.
-- [ ] 1.3 Add development dependencies for Bun test types, TypeScript, ESLint, Prettier, Husky, lint-staged, and related TypeScript ESLint config.
-- [ ] 1.4 Add ESLint configuration for standalone TypeScript source/tests with practical initial rules.
-- [ ] 1.5 Add Prettier configuration and ignore rules for generated or dependency directories.
-- [ ] 1.6 Add Husky/lint-staged pre-commit configuration that formats staged files and runs staged TypeScript checks.
-- [ ] 1.7 Add `.gitignore` hygiene for local temp/build/tooling artifacts such as `tmp/`, `dist/`, `.turbo/`, and TypeScript build info.
+- [x] 1.1 Add `tsconfig.json` that typechecks `src/**/*.ts` and `tests/**/*.ts` without emitting build output.
+- [x] 1.2 Add package scripts for `test`, `test:watch`, `check-types`, `lint`, `format`, and `ci`.
+- [x] 1.3 Add development dependencies for Bun test types, TypeScript, ESLint, Prettier, Husky, lint-staged, and related TypeScript ESLint config.
+- [x] 1.4 Add ESLint configuration for standalone TypeScript source/tests with practical initial rules.
+- [x] 1.5 Add Prettier configuration and ignore rules for generated or dependency directories.
+- [x] 1.6 Add Husky/lint-staged pre-commit configuration that formats staged files and runs staged TypeScript checks.
+- [x] 1.7 Add `.gitignore` hygiene for local temp/build/tooling artifacts such as `tmp/`, `dist/`, `.turbo/`, and TypeScript build info.
 
 ## 2. Mechanical Layout Migration
 
-- [ ] 2.1 Create `src/` and move production TypeScript files from the repository root into `src/` without behavior changes.
-- [ ] 2.2 Create `tests/` and move `pruner.test.ts` under the test tree.
-- [ ] 2.3 Update `package.json` pi extension entry from the root entrypoint to the new `src/` entrypoint.
-- [ ] 2.4 Update source/test imports after the move while preserving local `.js` specifiers for runtime-compatible ESM imports.
-- [ ] 2.5 Run the existing test command and typecheck after the mechanical move to verify behavior is unchanged.
+- [x] 2.1 Create `src/` and move production TypeScript files from the repository root into `src/` without behavior changes.
+- [x] 2.2 Create `tests/` and move `pruner.test.ts` under the test tree.
+- [x] 2.3 Update `package.json` pi extension entry from the root entrypoint to the new `src/` entrypoint.
+- [x] 2.4 Update source/test imports after the move while preserving local `.js` specifiers for runtime-compatible ESM imports.
+- [x] 2.5 Run the existing test command and typecheck after the mechanical move to verify behavior is unchanged.
 
 ## 3. Bun Test Conversion
 

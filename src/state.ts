@@ -55,11 +55,11 @@ export interface CompressionBlock {
    */
   anchorTimestamp: number
   /** Canonical source key of the first covered source item, when known. */
-  startSourceKey?: string
+  startSourceKey?: string | null
   /** Canonical source key of the last covered source item, when known. */
-  endSourceKey?: string
+  endSourceKey?: string | null
   /** Canonical source key before which this block should render, or a trailing anchor. */
-  anchorSourceKey?: string
+  anchorSourceKey?: string | null
   /** Whether this block is still being applied (false = soft-deleted) */
   active: boolean
   /** Token estimate for the summary text itself */
