@@ -1,5 +1,7 @@
 # Issue: stop rendering `dcp-owner` tags into the agent-facing transcript
 
+> Maintainability note (2026-04-24): file paths in this historical research may reference the pre-refactor flat layout; runtime source now lives under `src/` and tests under `tests/`.
+
 ## Summary
 
 DCP currently renders both visible boundary IDs and canonical owner tags into ordinary message content:
@@ -32,6 +34,7 @@ Today, however, `pruner.ts` injects both into rendered message text in `injectMe
 ### Rendering
 
 `pruner.ts`:
+
 - `applyPruning(...)` attaches a non-enumerable internal owner key per source message via `buildSourceOwnerKey(ordinal)`
 - `injectMessageIds(...)` then renders both:
   - `<dcp-id>...</dcp-id>`
@@ -40,10 +43,12 @@ Today, however, `pruner.ts` injects both into rendered message text in `injectMe
 ### Consumption
 
 `payload-filter.ts` currently extracts canonical ownership from rendered message-like text via:
+
 - `<dcp-owner>...</dcp-owner>` for live source messages
 - `<dcp-block-id>...</dcp-block-id>` for compressed blocks
 
 That ownership is used to prune stale hidden/provider artifacts:
+
 - `reasoning`
 - `function_call`
 - `function_call_output`
@@ -55,10 +60,12 @@ That ownership is used to prune stale hidden/provider artifacts:
 Keep canonical ownership semantics, but stop exposing `dcp-owner` to the agent by default.
 
 The agent should still see:
+
 - `dcp-id` for raw visible message boundaries
 - `dcp-block-id` / block markers as needed for compressed-block references
 
 The agent should not need to see:
+
 - `dcp-owner`
 - source owner keys like `s0`, `s1`, etc.
 
@@ -67,6 +74,7 @@ The agent should not need to see:
 Do **not** regress hidden-artifact liveness/filtering.
 
 The internal requirement remains valid:
+
 - stale provider payload artifacts must still be pruned deterministically according to canonical source/block ownership
 - we must not fall back to naive visibility heuristics
 
@@ -89,6 +97,7 @@ Do **not** remove arbitrary user-authored text that merely contains the literal 
 If we strip rendered tags, the removal must be narrowly targeted to DCP-injected metadata only.
 
 A safe rule would be something like:
+
 - only strip exact DCP metadata segments
 - only when they appear in the injected trailing metadata position
 - only for roles/shapes DCP itself annotates
@@ -116,7 +125,7 @@ That said, any implementation should treat this as an invariant that needs tests
 - `index.ts`
 - `transcript.ts`
 - `prompts.ts`
-- `pruner.test.ts`
+- `tests/` Bun suites
 - possibly `AGENTS.md` / `README.md` / `codemap.md` if user-visible semantics change
 
 ## Notes

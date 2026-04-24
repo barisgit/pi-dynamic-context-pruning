@@ -57,17 +57,17 @@
 
 ## 7. Focused Test Suite Split
 
-- [ ] 7.1 Split transcript and logical-turn tests into `tests/unit/transcript.test.ts`.
-- [ ] 7.2 Split compression range, artifact, and supersession tests into `tests/unit/compression.test.ts`.
-- [ ] 7.3 Split pruning repair, dedup, purge, and nudge tests into focused pruning/nudge unit suites.
-- [ ] 7.4 Split provider payload filtering tests into `tests/unit/provider-payload-filter.test.ts`.
-- [ ] 7.5 Keep end-to-end `applyPruning` and compress-tool behavior coverage under `tests/integration/`.
-- [ ] 7.6 Add or preserve tests proving runtime behavior remains unchanged after module splitting.
+- [x] 7.1 Split transcript and logical-turn tests into `tests/unit/transcript.test.ts`.
+- [x] 7.2 Split compression range, artifact, and supersession tests into `tests/unit/compression.test.ts`.
+- [x] 7.3 Split pruning repair, dedup, purge, and nudge tests into focused pruning/nudge unit suites.
+- [x] 7.4 Split provider payload filtering tests into `tests/unit/provider-payload-filter.test.ts`.
+- [x] 7.5 Keep end-to-end `applyPruning` and compress-tool behavior coverage under `tests/integration/`.
+- [x] 7.6 Add or preserve tests proving runtime behavior remains unchanged after module splitting.
 
 ## 8. Documentation and Verification
 
-- [ ] 8.1 Update `README.md` with current development commands and the direct TypeScript pi extension entrypoint.
-- [ ] 8.2 Update `AGENTS.md` with the new module map, layer rules, command list, and common edit targets.
-- [ ] 8.3 Update or archive stale research notes that conflict with the new authoritative architecture documentation.
-- [ ] 8.4 Run `bun run ci` and confirm typecheck, lint, and Bun tests pass.
-- [ ] 8.5 Verify pi can still load the extension from the configured `src/` entrypoint.
+- [x] 8.1 Update `README.md` with current development commands and the direct TypeScript pi extension entrypoint.
+- [x] 8.2 Update `AGENTS.md` with the new module map, layer rules, command list, and common edit targets.
+- [x] 8.3 Update or archive stale research notes that conflict with the new authoritative architecture documentation.
+- [x] 8.4 Run `bun run ci` and confirm typecheck, lint, and Bun tests pass.
+- [x] 8.5 Verify pi can still load the extension from the configured `src/` entrypoint.

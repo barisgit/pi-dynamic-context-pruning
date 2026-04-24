@@ -3,6 +3,8 @@
 Date: 2026-04-23
 Purpose: break the roadmap into parallelizable work lanes with concrete files, symbols, risks, and exit criteria.
 
+> Maintainability note (2026-04-24): file paths in this historical research may reference the pre-refactor flat layout; runtime source now lives under `src/` and tests under `tests/`.
+
 ## Lane A — Owner leakage and provider payload filtering
 
 ### Goal
@@ -27,7 +29,7 @@ Stop exposing internal source owner keys to the model while preserving determini
 - `index.ts`
   - `context` hook live-owner computation
   - `before_provider_request` hook
-- `pruner.test.ts`
+- `tests/` Bun suites
   - owner extraction and provider payload filtering tests around ~1500+
 - `research/DCP_OWNER_AGENT_VISIBILITY_ISSUE_2026-04-23.md`
 
@@ -119,11 +121,11 @@ Expected return shape:
 
 ```ts
 type MaterializedTranscript = {
-  messages: any[]
-  renderedBlockIds: number[]
-  liveOwnerKeys: Set<string>
-  coveredSourceKeys: Set<string>
-}
+  messages: any[];
+  renderedBlockIds: number[];
+  liveOwnerKeys: Set<string>;
+  coveredSourceKeys: Set<string>;
+};
 ```
 
 Keep this internal at first; exact type can evolve.
@@ -131,6 +133,7 @@ Keep this internal at first; exact type can evolve.
 #### Phase B2 — parity tests
 
 Create fixtures where v1 blocks and equivalent v2 blocks produce the same visible transcript. Include:
+
 - standalone message range
 - assistant tool-call + tool results
 - compressed block supersession
@@ -148,6 +151,7 @@ Change `index.ts` context hook to use canonical materialization for enabled sess
 #### Phase B5 — retire v1 splice path
 
 After parity and migration tests pass, remove or quarantine:
+
 - `applyCompressionBlocks()`
 - timestamp anchor reinsertion
 - orphan repair safety net that becomes unnecessary with span closure
@@ -185,7 +189,7 @@ Close the blocking correctness bugs before broad architecture work.
   - `tokensSaved`
   - `totalPruneCount`
   - `prunedToolIds`
-- `pruner.test.ts`
+- `tests/` Bun suites
 
 ### Patch sequence
 
@@ -242,6 +246,7 @@ DCP debug event timestamps + proxy usage captures -> CSV/Markdown report
 ```
 
 Minimum report columns:
+
 - request timestamp
 - provider/model
 - input tokens
@@ -256,12 +261,14 @@ Minimum report columns:
 ### Provider-native edit prototype
 
 Anthropic experiment gates:
+
 - config flag disabled by default
 - provider/model detection
 - beta headers only when enabled
 - safe fallback to current behavior
 
 Candidate edits:
+
 - clear stale tool uses/results covered by active blocks
 - clear stale thinking/reasoning artifacts
 - optionally use server-side compaction only for known-safe thresholds
@@ -299,7 +306,7 @@ Prevent avoidable token mass from entering durable session history.
   - activity logs should point to artifact previews/hashes
 - `README.md`
   - user-facing behavior
-- `pruner.test.ts`
+- `tests/` Bun suites
   - unit fixtures for offload/truncation helpers
 
 ### Implementation shape

@@ -14,6 +14,7 @@ Pi loads extension `.ts` files directly — there is no build step and no compil
 **Package type:** `"type": "module"`
 
 Important runtime constraint:
+
 - Do **not** assume Bun-specific runtime APIs such as `bun:ffi` are available when this extension is loaded by pi.
 - If DCP ever needs a Rust performance core, keep the extension entrypoint/hooks/UI/session integration in TypeScript and move only coarse-grained compute into Rust.
 - Preferred Rust integration order:
@@ -36,26 +37,29 @@ Use the docs intentionally:
 - `DCP_V2_DESIGN.md`
   - target architecture / design direction
   - contains valuable invariants and future-state reasoning, but parts are still aspirational
-- `pruner.test.ts`
-  - executable specification for the current runtime behavior
+- `tests/`
+  - Bun test suites split by behavior area for current runtime behavior
   - if docs and tests disagree, treat the tests plus live code as truth and update the docs
 
 ---
 
 ## Commands
 
-| Task | Command |
-|------|---------|
-| Run tests | `bun run pruner.test.ts` |
-| Type-check | `tsc --noEmit --module esnext --moduleResolution bundler --target es2022 --skipLibCheck *.ts` |
-| Build | _(none — pi loads `.ts` directly)_ |
-| Lint | _(no lint config present)_ |
-| Format | _(no formatter config present)_ |
+| Task            | Command                            |
+| --------------- | ---------------------------------- |
+| Run tests       | `bun run test`                     |
+| Watch tests     | `bun run test:watch`               |
+| Type-check      | `bun run check-types`              |
+| Lint            | `bun run lint`                     |
+| Format          | `bun run format`                   |
+| Full local gate | `bun run ci`                       |
+| Build           | _(none — pi loads `.ts` directly)_ |
 
 Notes:
-- Tests are plain `assert` + `console.log`; there is no test framework.
-- `pruner.test.ts` is the main regression suite for pruning/compression behavior.
-- When changing semantics, update both docs and tests together.
+
+- Tests use `bun:test` and live under `tests/unit/` and `tests/integration/`.
+- `tests/helpers/dcp-test-utils.ts` contains shared fixtures/factories.
+- When changing semantics, update both docs and the focused behavior tests together.
 
 ---
 
@@ -65,8 +69,8 @@ This repo is in a **hybrid state**:
 
 1. **Active runtime path = legacy blocks with source-key anchors**
    - `state.compressionBlocks` is still the live block log used by the extension.
-   - `compress-tool.ts` resolves stable visible refs through canonical source keys and keeps timestamp fallback for legacy blocks.
-   - `pruner.ts` still applies active legacy blocks on each `context` pass, preferring source-key placement when available.
+   - `src/application/compress-tool/` resolves stable visible refs through canonical source keys and keeps timestamp fallback for legacy blocks.
+   - `src/domain/pruning/` still applies active legacy blocks on each `context` pass, preferring source-key placement when available.
 
 2. **Exact canonical metadata is already partially live**
    - new blocks persist exact `metadata.coveredSourceKeys` and `metadata.coveredSpanKeys`
@@ -76,12 +80,12 @@ This repo is in a **hybrid state**:
      - exact supersession of older fully covered blocks
 
 3. **Canonical transcript scaffolding already exists**
-   - `transcript.ts` builds `TranscriptSnapshot`
+   - `src/domain/transcript/` builds `TranscriptSnapshot`
    - assistant tool-call messages plus matching `toolResult` / `bashExecution` are grouped into one `tool-exchange` span
    - this span model now drives several current semantics, not just future v2 work
 
 4. **Full v2 materialization is not active yet**
-   - `compressionBlocksV2` and `materialize.ts` are scaffolding / shared renderer support
+   - `compressionBlocksV2` and `src/domain/compression/materialize.ts` are scaffolding / shared renderer support
    - the runtime still materializes legacy blocks, not full v2 span-key blocks
 
 ---
@@ -103,7 +107,7 @@ This repo is in a **hybrid state**:
 - Visible `mNNNN` IDs and `bN` block IDs are **agent-facing boundaries only**.
 - Hidden/provider artifact ownership is **not** derived from arbitrary rendered text.
 - Do not render source owner markers into model-visible transcript content.
-- `payload-filter.ts` prunes stale `reasoning`, `function_call`, and `function_call_output` using canonical live owner keys plus the latest internal visible-ref → owner map.
+- `src/domain/provider/payload-filter.ts` prunes stale `reasoning`, `function_call`, and `function_call_output` using canonical live owner keys plus the latest internal visible-ref → owner map.
 - Successful `compress` `function_call` / `function_call_output` artifacts are suppressed only when a live rendered block with the matching `CompressionBlock.compressCallId` already represents them.
 - Failed or otherwise unrepresented `compress` attempts must stay visible.
 - Do **not** reintroduce visibility-based ownership heuristics.
@@ -113,10 +117,12 @@ This repo is in a **hybrid state**:
 DCP no longer treats “turn” as user-message count.
 
 Current rule:
+
 - one standalone visible message = one logical turn
 - one assistant tool-call message plus its matching tool results = one logical turn
 
 This logical-turn model is used by:
+
 - `state.currentTurn`
 - nudge debounce / cool-down semantics
 - error-purging age (`ToolRecord.turnIndex`)
@@ -139,56 +145,74 @@ This logical-turn model is used by:
 
 ## Module map
 
-| File | Purpose |
-|------|---------|
-| `index.ts` | Extension entry point; registers hooks and wires pruning/filtering/nudges |
-| `config.ts` | JSONC config loading + default schema/comments |
-| `state.ts` | Runtime/persisted state types, compression block shapes, metadata helpers |
-| `transcript.ts` | Canonical source-item/span snapshot building, logical-turn helpers, exact coverage resolution |
-| `pruner.ts` | Active runtime pruning path: block application, dedup, purge, nudge injection, ID injection |
-| `compress-tool.ts` | `compress` tool registration, range validation, exact metadata generation, supersession planning |
-| `payload-filter.ts` | Provider-payload stale artifact filtering using canonical owner keys |
-| `migration.ts` | Persisted state restoration/normalization across schema versions |
-| `materialize.ts` | Shared compressed-block renderer + v2 materialization scaffolding |
-| `commands.ts` | `/dcp` slash commands |
-| `prompts.ts` | system prompt additions, compress tool contract text, nudge text |
-| `debug-log.ts` | best-effort JSONL debug logging helpers |
-| `pruner.test.ts` | Executable regression suite for current semantics |
-| `DCP_V2_DESIGN.md` | future-state design and invariants |
+| Path                              | Purpose                                                                                             |
+| --------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `src/index.ts`                    | Thin pi extension entrypoint; wires config, state, tools, commands, and hook handlers               |
+| `src/types/`                      | DCP config, state, message, and provider/boundary contracts                                         |
+| `src/domain/transcript/`          | Canonical source-item/span snapshots, logical turns, exact coverage, owner-key derivation           |
+| `src/domain/refs/`                | Visible ref parsing/formatting/allocation and DCP metadata stripping                                |
+| `src/domain/compression/`         | Compression range helpers, materialization, exact metadata, planning, supersession helpers          |
+| `src/domain/pruning/`             | Active runtime pruning path: block application, repair, dedup, purge, nudge injection, ID injection |
+| `src/domain/nudge/`               | Nudge decision helpers re-exported from pruning/domain behavior                                     |
+| `src/domain/provider/`            | Provider-payload stale artifact filtering using canonical owner keys                                |
+| `src/application/`                | Pi hook/tool/command orchestration and host payload adaptation                                      |
+| `src/application/compress-tool/`  | `compress` registration plus validation/artifact helper exports                                     |
+| `src/application/commands/dcp.ts` | `/dcp` slash command registration                                                                   |
+| `src/infrastructure/`             | JSONC config loading, debug logging, persisted-state migration/serialization                        |
+| `src/prompts/`                    | System prompt additions, compress tool contract text, nudge text                                    |
+| `src/*.ts` shims                  | Compatibility re-exports for older local import paths                                               |
+| `tests/unit/`                     | Focused Bun unit suites for transcript, compression, pruning, nudges, provider filtering            |
+| `tests/integration/`              | End-to-end applyPruning/compress-tool/debug behavior coverage                                       |
+| `DCP_V2_DESIGN.md`                | future-state design and invariants                                                                  |
+
+### Layer rules
+
+- Domain modules must not import `@mariozechner/pi-coding-agent`, filesystem utilities, config loading, debug logging, or application handlers.
+- Application modules adapt pi/provider payloads and delegate pure decisions to domain modules.
+- Infrastructure modules own side effects such as config files, persisted-state migration, and JSONL debug logging.
+- Compatibility shims in `src/*.ts` should stay thin; new code should prefer the layered paths.
 
 ---
 
 ## Common edit targets
 
 ### If you change compression range semantics
+
 Touch at least:
-- `compress-tool.ts`
-- `pruner.ts`
-- `pruner.test.ts`
+
+- `src/application/compress-tool/` and `src/domain/compression/`
+- `src/domain/pruning/`
+- `tests/unit/compression.test.ts` and relevant `tests/integration/*`
 - `README.md` / `AGENTS.md` if user-visible behavior changes
 
 ### If you change ownership / hidden artifact filtering
+
 Touch at least:
-- `payload-filter.ts`
-- `transcript.ts`
-- `index.ts`
-- `pruner.test.ts`
+
+- `src/domain/provider/payload-filter.ts`
+- `src/domain/transcript/`
+- `src/application/provider-handler.ts`
+- `tests/unit/provider-payload-filter.test.ts`
 
 ### If you change turn semantics
+
 Touch at least:
-- `transcript.ts`
-- `pruner.ts`
-- `compress-tool.ts`
-- `state.ts`
-- `config.ts` / `README.md`
-- `pruner.test.ts`
+
+- `src/domain/transcript/`
+- `src/domain/pruning/`
+- `src/domain/compression/`
+- `src/state.ts` / `src/types/state.ts`
+- `src/types/config.ts` / `README.md`
+- `tests/unit/transcript.test.ts` and `tests/unit/nudge.test.ts`
 
 ### If you change persisted block metadata
+
 Touch at least:
-- `state.ts`
-- `migration.ts`
-- `compress-tool.ts`
-- `pruner.test.ts`
+
+- `src/state.ts` / `src/types/state.ts`
+- `src/infrastructure/persistence.ts`
+- `src/domain/compression/` and `src/application/compress-tool/`
+- `tests/unit/compression.test.ts`
 
 ---
 
@@ -196,7 +220,7 @@ Touch at least:
 
 1. **Assistant + tool-result pairs must be removed atomically.**
    - If a compression range touches a tool result, the matching assistant/tool-call message must come with it.
-   - `pruner.ts` contains both expansion logic and a repair safety net.
+   - `src/domain/pruning/` contains both expansion logic and a repair safety net.
 
 2. **Prefer exact coverage metadata over timestamps.**
    - `coveredSourceKeys` / `coveredSpanKeys` are the best available truth.
@@ -226,7 +250,7 @@ Touch at least:
 
 - Always use `.js` extension for local imports:
   ```ts
-  import { loadConfig } from "./config.js"
+  import { loadConfig } from "./config.js";
   ```
 - Use `import type` for type-only imports.
 - Named imports preferred; default export only for the extension entry point (`index.ts`).
@@ -236,16 +260,19 @@ Touch at least:
 ## Code style
 
 ### Naming
-| Kind | Convention | Examples |
-|------|-----------|---------|
-| Files | kebab-case or camelCase | `compress-tool.ts`, `pruner.ts` |
-| Interfaces / Types | PascalCase | `DcpState`, `CompressionBlock`, `ToolRecord` |
-| Functions | camelCase | `applyPruning`, `buildTranscriptSnapshot` |
-| Constants (module-level) | UPPER_SNAKE_CASE | `DEFAULT_CONFIG`, `ALWAYS_PROTECTED_DEDUP` |
-| Variables / parameters | camelCase | `contextPercent`, `activeBlocks`, `toolCallId` |
+
+| Kind                     | Convention              | Examples                                       |
+| ------------------------ | ----------------------- | ---------------------------------------------- |
+| Files                    | kebab-case or camelCase | `compress-tool.ts`, `pruner.ts`                |
+| Interfaces / Types       | PascalCase              | `DcpState`, `CompressionBlock`, `ToolRecord`   |
+| Functions                | camelCase               | `applyPruning`, `buildTranscriptSnapshot`      |
+| Constants (module-level) | UPPER_SNAKE_CASE        | `DEFAULT_CONFIG`, `ALWAYS_PROTECTED_DEDUP`     |
+| Variables / parameters   | camelCase               | `contextPercent`, `activeBlocks`, `toolCallId` |
 
 ### Sections
+
 Use the established separators:
+
 ```ts
 // ---------------------------------------------------------------------------
 // Section Name
@@ -253,10 +280,12 @@ Use the established separators:
 ```
 
 ### JSDoc
+
 - Add concise JSDoc to exported functions and non-trivial interfaces.
 - Keep comments factual and current; stale comments are actively harmful in this repo.
 
 ### Types
+
 - Explicit return types on exported functions.
 - `any` is acceptable at message-shape boundaries where provider/pi payloads are heterogeneous.
 - Prefer stronger internal typing when adding new helpers.
@@ -283,12 +312,12 @@ Do not silently swallow programming mistakes.
 
 ## Dependencies
 
-| Package | Role |
-|---------|------|
-| `jsonc-parser` | Parse JSONC config files |
+| Package                         | Role                               |
+| ------------------------------- | ---------------------------------- |
+| `jsonc-parser`                  | Parse JSONC config files           |
 | `@mariozechner/pi-coding-agent` | Peer — `ExtensionAPI`, event types |
-| `@mariozechner/pi-tui` | Peer — UI types |
-| `@sinclair/typebox` | Peer — tool input schemas |
+| `@mariozechner/pi-tui`          | Peer — UI types                    |
+| `@sinclair/typebox`             | Peer — tool input schemas          |
 
 ---
 
@@ -298,7 +327,5 @@ Do not silently swallow programming mistakes.
 2. Read the matching `pruner.test.ts` section before editing semantics.
 3. Make the smallest coherent change.
 4. Update docs/comments if user-visible or architectural semantics changed.
-5. Run:
-   - `bun run pruner.test.ts`
-   - `tsc --noEmit --module esnext --moduleResolution bundler --target es2022 --skipLibCheck *.ts`
+5. Run `bun run ci` before committing.
 6. Commit in small logical slices when the repo is green.

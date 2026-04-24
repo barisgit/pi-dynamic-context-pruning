@@ -38,7 +38,7 @@ pi -e https://github.com/complexthings/pi-dynamic-context-pruning
 - `README.md` — user-facing install, config, commands, and current shipped behavior
 - `AGENTS.md` — contributor/agent-oriented architecture guide for editing this repo
 - `DCP_V2_DESIGN.md` — target architecture and future-state design notes; parts are intentionally aspirational
-- `pruner.test.ts` — executable specification for current runtime semantics
+- `tests/` — Bun test suites for current runtime semantics, split by behavior area
 
 If you are modifying DCP behavior rather than just using it, read `AGENTS.md` first.
 
@@ -80,25 +80,25 @@ DCP uses a layered configuration system (later layers override earlier ones):
     // "strong" = emergency tone, "soft" = housekeeping tone
     "nudgeForce": "soft",
     // These tool outputs are never auto-pruned
-    "protectedTools": ["compress", "write", "edit"]
+    "protectedTools": ["compress", "write", "edit"],
   },
   "strategies": {
     "deduplication": {
       "enabled": true,
       // Additional tools to exclude from dedup
-      "protectedTools": []
+      "protectedTools": [],
     },
     "purgeErrors": {
       "enabled": true,
       // Purge failed tool inputs after N logical turns
       "turns": 4,
-      "protectedTools": []
-    }
+      "protectedTools": [],
+    },
   },
   // Glob patterns — matching file paths are never pruned
   "protectedFilePatterns": [],
   // "off" | "minimal" | "detailed"
-  "pruneNotification": "detailed"
+  "pruneNotification": "detailed",
 }
 ```
 
@@ -106,18 +106,18 @@ DCP uses a layered configuration system (later layers override earlier ones):
 
 All commands are available in the pi TUI via `/dcp <subcommand>`:
 
-| Command | Description |
-|---|---|
-| `/dcp` or `/dcp help` | Show command reference |
-| `/dcp context` | Show context window usage and session stats |
-| `/dcp stats` | Show pruning statistics (tokens saved, blocks, operations) |
-| `/dcp sweep [N]` | Mark last N tool outputs for pruning (default: all since last user message) |
-| `/dcp manual` | Show current manual mode status |
-| `/dcp manual on` | Enable manual mode — autonomous nudges disabled |
-| `/dcp manual off` | Disable manual mode — autonomous nudges re-enabled |
-| `/dcp compress` | Trigger LLM compression immediately (sends a followUp message) |
-| `/dcp decompress` | List all active compression blocks |
-| `/dcp decompress N` | Restore compression block `bN` (re-expands it in context) |
+| Command               | Description                                                                 |
+| --------------------- | --------------------------------------------------------------------------- |
+| `/dcp` or `/dcp help` | Show command reference                                                      |
+| `/dcp context`        | Show context window usage and session stats                                 |
+| `/dcp stats`          | Show pruning statistics (tokens saved, blocks, operations)                  |
+| `/dcp sweep [N]`      | Mark last N tool outputs for pruning (default: all since last user message) |
+| `/dcp manual`         | Show current manual mode status                                             |
+| `/dcp manual on`      | Enable manual mode — autonomous nudges disabled                             |
+| `/dcp manual off`     | Disable manual mode — autonomous nudges re-enabled                          |
+| `/dcp compress`       | Trigger LLM compression immediately (sends a followUp message)              |
+| `/dcp decompress`     | List all active compression blocks                                          |
+| `/dcp decompress N`   | Restore compression block `bN` (re-expands it in context)                   |
 
 ## How It Works
 
@@ -143,12 +143,12 @@ When a compression range touches any part of an assistant→toolResult group, DC
 
 ### Nudge types
 
-| Nudge | Condition |
-|---|---|
-| **context-strong** | Above `maxContextPercent`, after logical-turn debounce / post-compress cool-down, `nudgeForce = "strong"` |
-| **context-soft** | Same as above with `nudgeForce = "soft"` |
-| **iteration** | Between min/max percent, after logical-turn debounce / post-compress cool-down, AND ≥ `iterationNudgeThreshold` tool calls since last user message |
-| **turn** | Between min/max percent, after logical-turn debounce / post-compress cool-down |
+| Nudge              | Condition                                                                                                                                          |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **context-strong** | Above `maxContextPercent`, after logical-turn debounce / post-compress cool-down, `nudgeForce = "strong"`                                          |
+| **context-soft**   | Same as above with `nudgeForce = "soft"`                                                                                                           |
+| **iteration**      | Between min/max percent, after logical-turn debounce / post-compress cool-down, AND ≥ `iterationNudgeThreshold` tool calls since last user message |
+| **turn**           | Between min/max percent, after logical-turn debounce / post-compress cool-down                                                                     |
 
 ### Deduplication
 
@@ -165,12 +165,34 @@ A `DCP` badge is shown in the pi status bar. In manual mode it displays `DCP [ma
 ## Development
 
 ```bash
-bun run pruner.test.ts
-tsc --noEmit --module esnext --moduleResolution bundler --target es2022 --skipLibCheck *.ts
+bun run test         # Bun test suites under tests/
+bun run check-types  # tsc --noEmit
+bun run lint         # ESLint
+bun run format       # Prettier
+bun run ci           # typecheck + lint + tests
 ```
 
-Pi loads the extension TypeScript directly — there is no build step for normal development.
-For normal installs, that extension code runs inside pi's **Node.js** process even though this repo uses **Bun** for local test/dev commands.
+Pi loads the extension TypeScript directly from `./src/index.ts` — there is no build step for normal development. For normal installs, that extension code runs inside pi's **Node.js** process even though this repo uses **Bun** for local test/dev commands.
+
+### Source layout
+
+```text
+src/
+  index.ts                 # thin pi extension entrypoint
+  types/                   # internal config/state/message/provider contracts
+  domain/                  # pure DCP logic: transcript, refs, compression, pruning, nudges, provider filtering
+  application/             # pi hook/tool/command orchestration and host payload adaptation
+  infrastructure/          # config loading, persistence migration, debug logging
+  prompts/                 # system, nudge, and compress-tool prompt text
+  *.ts                     # compatibility re-export shims for older local imports
+
+tests/
+  helpers/                 # shared test factories/utilities
+  unit/                    # transcript, compression, pruning, nudge, provider-filter tests
+  integration/             # applyPruning, compress-tool/debug end-to-end behavior coverage
+```
+
+Domain modules should stay pure: no pi API imports, no filesystem/config loading/debug logging side effects, and no application-layer dependencies. Boundary payload narrowing belongs in `src/application/`; durable state/config/message contracts live in `src/types/`.
 
 Do not assume Bun-only runtime APIs such as `bun:ffi` are available inside the extension. If DCP ever needs a Rust performance core, keep the extension shell in TypeScript and integrate Rust via a long-lived sidecar process or a Node native addon.
 
