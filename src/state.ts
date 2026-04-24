@@ -1,5 +1,6 @@
 import { createMessageAliasState } from "./message-refs.js"
-import type { CompressionBlockMetadata, DcpState } from "./types/state.js"
+import { createEmptyCompressionBlockMetadata } from "./domain/compression/metadata.js"
+import type { DcpState } from "./types/state.js"
 
 export type {
   CompressionBlock,
@@ -17,23 +18,7 @@ export type {
   ToolRecord,
 } from "./types/state.js"
 
-// ---------------------------------------------------------------------------
-// Metadata factories
-// ---------------------------------------------------------------------------
-
-/** Create empty hidden metadata for a v2 compressed block. */
-export function createEmptyCompressionBlockMetadata(): CompressionBlockMetadata {
-  return {
-    coveredSourceKeys: [],
-    coveredSpanKeys: [],
-    coveredArtifactRefs: [],
-    coveredToolIds: [],
-    supersededBlockIds: [],
-    fileReadStats: [],
-    fileWriteStats: [],
-    commandStats: [],
-  }
-}
+export { createEmptyCompressionBlockMetadata } from "./domain/compression/metadata.js"
 
 // ---------------------------------------------------------------------------
 // Factory functions

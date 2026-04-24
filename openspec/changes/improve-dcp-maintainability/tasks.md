@@ -34,14 +34,14 @@
 
 ## 5. Domain Module Split
 
-- [ ] 5.1 Create `src/domain/transcript/` and move transcript snapshot, logical-turn, span coverage, and owner-key derivation helpers into focused modules.
-- [ ] 5.2 Create `src/domain/refs/` and move visible ref parsing, formatting, allocation, alias normalization, and message ID injection logic.
-- [ ] 5.3 Create `src/domain/compression/` and move block factories, materialization, range resolution/expansion, exact coverage helpers, and supersession planning.
-- [ ] 5.4 Create `src/domain/pruning/` and split pruning orchestration, compression block application, tool-exchange repair, deduplication, error purging, and tool-output pruning.
-- [ ] 5.5 Create `src/domain/nudge/` and split nudge policy/debounce decisions from nudge rendering/injection.
-- [ ] 5.6 Move provider payload filtering into an appropriate pure domain owner/provider module while keeping provider event adaptation outside domain.
-- [ ] 5.7 Ensure domain modules do not import pi API types, filesystem utilities, config loading, debug logging, or application handlers.
-- [ ] 5.8 Run tests after each major domain split and preserve current compression/pruning/provider semantics.
+- [x] 5.1 Create `src/domain/transcript/` and move transcript snapshot, logical-turn, span coverage, and owner-key derivation helpers into focused modules.
+- [x] 5.2 Create `src/domain/refs/` and move visible ref parsing, formatting, allocation, alias normalization, and message ID injection logic.
+- [x] 5.3 Create `src/domain/compression/` and move block factories, materialization, range resolution/expansion, exact coverage helpers, and supersession planning.
+- [x] 5.4 Create `src/domain/pruning/` and split pruning orchestration, compression block application, tool-exchange repair, deduplication, error purging, and tool-output pruning.
+- [x] 5.5 Create `src/domain/nudge/` and split nudge policy/debounce decisions from nudge rendering/injection.
+- [x] 5.6 Move provider payload filtering into an appropriate pure domain owner/provider module while keeping provider event adaptation outside domain.
+- [x] 5.7 Ensure domain modules do not import pi API types, filesystem utilities, config loading, debug logging, or application handlers.
+- [x] 5.8 Run tests after each major domain split and preserve current compression/pruning/provider semantics.
 
 ## 6. Application and Infrastructure Split
 

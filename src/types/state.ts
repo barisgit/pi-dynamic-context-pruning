@@ -2,7 +2,7 @@
 // Dynamic Context Pruning (DCP) — state types
 // ---------------------------------------------------------------------------
 
-import type { MessageAliasState, MessageRefSnapshotEntry } from "../message-refs.js"
+import type { MessageAliasState, MessageRefSnapshotEntry } from "../domain/refs/index.js"
 import type { DcpMessage } from "./message.js"
 
 /**
