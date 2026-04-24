@@ -29,7 +29,7 @@ Stop exposing internal source owner keys to the model while preserving determini
   - `before_provider_request` hook
 - `pruner.test.ts`
   - owner extraction and provider payload filtering tests around ~1500+
-- `ISSUE_dcp-owner-agent-visibility.md`
+- `research/DCP_OWNER_AGENT_VISIBILITY_ISSUE_2026-04-23.md`
 
 ### Current failure modes
 
