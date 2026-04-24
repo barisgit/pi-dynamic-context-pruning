@@ -10,6 +10,7 @@ export { fs, os, path };
 export {
   buildCompressionArtifactsForRange,
   buildCompressionPlanningHints,
+  registerCompressTool,
   renderCompressionPlanningHints,
   resolveAnchorSourceKey,
   resolveAnchorTimestamp,

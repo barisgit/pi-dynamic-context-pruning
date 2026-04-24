@@ -60,11 +60,12 @@ It is your responsibility to keep a sharp, high-quality context window for optim
  *
  * Tool signature:
  *   {
- *     topic:  string           // 3-5 word label for this compression
+ *     topic?: string           // optional default 3-5 word label
  *     ranges: Array<{
  *       startId: string        // mNNNN or bN
  *       endId:   string        // mNNNN or bN
  *       summary: string        // detailed technical handoff summary
+ *       topic?: string         // per-block label; falls back to top-level topic
  *     }>
  *   }
  */
@@ -127,7 +128,7 @@ Rules:
 - Avoid selecting ranges that end inside the newest protected hot tail of the conversation. DCP may reject compressions that touch the most recent conversational turns unless context is already in a hard emergency band.
 
 BATCHING
-When multiple independent ranges are ready and their boundaries do not overlap, include all of them as separate entries in the \`ranges\` array of a single tool call. Each entry must have its own \`startId\`, \`endId\`, and \`summary\`.`
+When multiple independent ranges are ready and their boundaries do not overlap, include all of them as separate entries in the \`ranges\` array of a single tool call. Each entry creates one compressed block and must have its own \`startId\`, \`endId\`, \`summary\`, and effective topic. Prefer \`ranges[].topic\` for per-block labels; use top-level \`topic\` only as a default when all ranges share the same label.`
 
 /**
  * Injected into messages when context usage exceeds maxContextPercent.

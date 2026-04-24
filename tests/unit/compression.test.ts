@@ -22,6 +22,7 @@ import {
   mapLegacyBlockToSpanRange,
   os,
   path,
+  registerCompressTool,
   renderCompressedBlockMessage,
   renderCompressionPlanningHints,
   resolveAnchorSourceKey,
@@ -654,5 +655,103 @@ describe("DCP compression.test", () => {
 
     console.log("  PASS: stale refs, self-block ranges, and trailing anchors validate clearly");
     console.log("TEST 23b PASSED\n");
+  });
+
+  // ---------------------------------------------------------------------------
+  // Test 23c — COMPRESS TOOL SUPPORTS PER-RANGE TOPICS
+  // ---------------------------------------------------------------------------
+  test("Test 23c — COMPRESS TOOL SUPPORTS PER-RANGE TOPICS", async () => {
+    console.log("TEST 23c: compress tool creates one block per range with per-range topics");
+
+    const messages: any[] = [
+      { role: "user", content: [{ type: "text", text: "first topic" }], timestamp: 1000 },
+      { role: "user", content: [{ type: "text", text: "second topic" }], timestamp: 2000 },
+      { role: "user", content: [{ type: "text", text: "anchor" }], timestamp: 3000 },
+    ];
+    const state = makeState();
+    for (const [ref, timestamp] of [
+      ["m0001", 1000],
+      ["m0002", 2000],
+      ["m0003", 3000],
+    ] as const) {
+      state.messageIdSnapshot.set(ref, timestamp);
+      state.messageRefSnapshot.set(ref, {
+        ref,
+        sourceKey: `msg:${timestamp}:user:${Number(ref.slice(1)) - 1}`,
+        timestamp,
+        ownerKey: `source:${ref}`,
+      });
+    }
+
+    const config = makeConfig();
+    config.compress.protectRecentTurns = 0;
+    let registeredTool: any = null;
+    const pi = {
+      registerTool(tool: any) {
+        registeredTool = tool;
+      },
+    };
+    const ctx = {
+      sessionManager: {
+        getSessionId: () => "session-1",
+        getCwd: () => "/tmp/dcp-test",
+        getSessionDir: () => "/tmp/dcp-test/session",
+        getSessionFile: () => "/tmp/dcp-test/session.jsonl",
+        getLeafId: () => null,
+        getBranch: () => messages.map((message) => ({ type: "message", message })),
+      },
+      getContextUsage: () => ({ tokens: 0, contextWindow: 100_000 }),
+      ui: { notify: () => undefined },
+    };
+
+    registerCompressTool(pi as any, state, config);
+
+    const result = await registeredTool.execute(
+      "compress-call-1",
+      {
+        topic: "Default topic",
+        ranges: [
+          { startId: "m0001", endId: "m0001", summary: "First summary", topic: "First block" },
+          { startId: "m0002", endId: "m0002", summary: "Second summary" },
+        ],
+      },
+      undefined,
+      undefined,
+      ctx
+    );
+
+    assert.deepStrictEqual(
+      state.compressionBlocks.map((block) => block.topic),
+      ["First block", "Default topic"],
+      "FAIL — range.topic should override the top-level default per created block"
+    );
+    assert.deepStrictEqual(
+      result.details.blocks,
+      [
+        { id: 1, topic: "First block" },
+        { id: 2, topic: "Default topic" },
+      ],
+      "FAIL — tool result details should identify each created block topic"
+    );
+    assert.ok(
+      result.content[0].text.includes("First block, Default topic"),
+      "FAIL — tool result text should summarize all block topics"
+    );
+
+    await assert.rejects(
+      () =>
+        registeredTool.execute(
+          "compress-call-2",
+          { ranges: [{ startId: "m0003", endId: "m0003", summary: "Missing topic" }] },
+          undefined,
+          undefined,
+          ctx
+        ),
+      /requires a non-empty topic/,
+      "FAIL — each range should require an effective range or default topic"
+    );
+
+    console.log("  PASS: per-range topics create correctly labelled compression blocks");
+    console.log("TEST 23c PASSED\n");
   });
 });

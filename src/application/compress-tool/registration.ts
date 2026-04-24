@@ -75,6 +75,17 @@ function buildCurrentBranchMessages(ctx: any): any[] {
   return messages
 }
 
+function resolveEffectiveRangeTopic(range: { topic?: string }, defaultTopic?: string): string | null {
+  const topic = range.topic ?? defaultTopic
+  const trimmedTopic = topic?.trim()
+  return trimmedTopic && trimmedTopic.length > 0 ? trimmedTopic : null
+}
+
+function formatTopicList(topics: string[]): string {
+  const uniqueTopics = [...new Set(topics)]
+  return uniqueTopics.length === 1 ? uniqueTopics[0] : uniqueTopics.join(", ")
+}
+
 // ---------------------------------------------------------------------------
 // Tool registration
 // ---------------------------------------------------------------------------
@@ -90,10 +101,12 @@ export function registerCompressTool(
     description: COMPRESS_RANGE_DESCRIPTION,
     promptSnippet: "Compress ranges of conversation into summaries to manage context",
     parameters: Type.Object({
-      topic: Type.String({
-        description:
-          "Short label (3-5 words) for display - e.g., 'Auth System Exploration'",
-      }),
+      topic: Type.Optional(
+        Type.String({
+          description:
+            "Optional default short label (3-5 words) used for ranges that omit ranges[].topic",
+        }),
+      ),
       ranges: Type.Array(
         Type.Object({
           startId: Type.String({
@@ -108,8 +121,14 @@ export function registerCompressTool(
             description:
               "Complete technical summary replacing all content in range",
           }),
+          topic: Type.Optional(
+            Type.String({
+              description:
+                "Short label (3-5 words) for this compressed block; falls back to top-level topic",
+            }),
+          ),
         }),
-        { description: "One or more ranges to compress" },
+        { description: "One or more ranges to compress; each range creates one compressed block" },
       ),
     }),
 
@@ -129,6 +148,7 @@ export function registerCompressTool(
       )
       const plannedBlocks: CompressionBlock[] = []
       const pendingSupersededBlockIds = new Set<number>()
+      const plannedTopics: string[] = []
       let nextBlockId = state.nextBlockId
       let activeRange: { startId: string; endId: string } | null = null
 
@@ -139,6 +159,8 @@ export function registerCompressTool(
         ranges: params.ranges.map((range) => ({
           startId: range.startId,
           endId: range.endId,
+          topic: range.topic,
+          effectiveTopic: resolveEffectiveRangeTopic(range, params.topic),
           summaryLength: range.summary.length,
         })),
         contextPercent,
@@ -148,7 +170,15 @@ export function registerCompressTool(
       try {
         for (const range of params.ranges) {
           const { startId, endId, summary } = range
+          const blockTopic = resolveEffectiveRangeTopic(range, params.topic)
           activeRange = { startId, endId }
+
+          if (!blockTopic) {
+            throw new Error(
+              `Compression range ${startId}..${endId} requires a non-empty topic. ` +
+                `Provide ranges[].topic for this block or a top-level topic default.`,
+            )
+          }
 
           validateCompressionRangeBoundaryIds(startId, endId, state)
 
@@ -222,7 +252,7 @@ export function registerCompressTool(
 
           const block: CompressionBlock = {
             id: nextBlockId++,
-            topic: params.topic,
+            topic: blockTopic,
             summary: expandedSummary,
             startTimestamp,
             endTimestamp,
@@ -242,6 +272,7 @@ export function registerCompressTool(
 
           plannedBlocks.push(block)
           newBlockIds.push(block.id)
+          plannedTopics.push(blockTopic)
         }
 
         if (plannedBlocks.length > 0) {
@@ -266,17 +297,18 @@ export function registerCompressTool(
               return sum + (b?.summaryTokenEstimate ?? 0)
             }, 0)
             ctx.ui.notify(
-              `Compressed: ${params.topic} (${count} ${rangeWord}, ~${totalTokens} tokens in summaries)`,
+              `Compressed: ${formatTopicList(plannedTopics)} (${count} ${rangeWord}, ~${totalTokens} tokens in summaries)`,
               "info",
             )
           } else {
-            ctx.ui.notify(`Compressed: ${params.topic}`, "info")
+            ctx.ui.notify(`Compressed: ${formatTopicList(plannedTopics)}`, "info")
           }
         }
 
         appendDebugLog(config, "compress_succeeded", {
           ...buildSessionDebugPayload(ctx.sessionManager),
           topic: params.topic,
+          topics: plannedTopics,
           blockIds: newBlockIds,
           supersededBlockIds: Array.from(pendingSupersededBlockIds),
           planningHints,
@@ -287,18 +319,21 @@ export function registerCompressTool(
           content: [
             {
               type: "text",
-              text: `Compressed ${params.ranges.length} range(s): ${params.topic}`,
+              text: `Compressed ${params.ranges.length} range(s): ${formatTopicList(plannedTopics)}`,
             },
           ],
           details: {
             blockIds: newBlockIds,
             topic: params.topic,
+            topics: plannedTopics,
+            blocks: newBlockIds.map((id, index) => ({ id, topic: plannedTopics[index] })),
           },
         }
       } catch (error) {
         appendDebugLog(config, "compress_failed", {
           ...buildSessionDebugPayload(ctx.sessionManager),
           topic: params.topic,
+          topics: plannedTopics,
           activeRange,
           contextPercent,
           planningHints,
