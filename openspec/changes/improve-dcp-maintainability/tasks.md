@@ -45,15 +45,15 @@
 
 ## 6. Application and Infrastructure Split
 
-- [ ] 6.1 Create `src/infrastructure/` modules for config loading, debug logging, and persisted-state read/write helpers.
-- [ ] 6.2 Create `src/prompts/` modules for system prompt text, nudge prompt text, and compress tool description text.
-- [ ] 6.3 Create `src/application/context-handler.ts` for context-pass orchestration over typed domain functions.
-- [ ] 6.4 Create `src/application/provider-handler.ts` for before-provider-request payload adaptation and provider filtering.
-- [ ] 6.5 Create `src/application/session-handler.ts` and related lifecycle helpers for session start/shutdown/end state handling.
-- [ ] 6.6 Create `src/application/tool-recording.ts` for tool call/result tracking and error-purge bookkeeping.
-- [ ] 6.7 Split compress tool code into registration, validation, and artifact-construction modules under `src/application/compress-tool/`.
-- [ ] 6.8 Move slash command registration under `src/application/commands/dcp.ts`.
-- [ ] 6.9 Reduce the pi entrypoint to thin wiring that registers tools, commands, and hook handlers.
+- [x] 6.1 Create `src/infrastructure/` modules for config loading, debug logging, and persisted-state read/write helpers.
+- [x] 6.2 Create `src/prompts/` modules for system prompt text, nudge prompt text, and compress tool description text.
+- [x] 6.3 Create `src/application/context-handler.ts` for context-pass orchestration over typed domain functions.
+- [x] 6.4 Create `src/application/provider-handler.ts` for before-provider-request payload adaptation and provider filtering.
+- [x] 6.5 Create `src/application/session-handler.ts` and related lifecycle helpers for session start/shutdown/end state handling.
+- [x] 6.6 Create `src/application/tool-recording.ts` for tool call/result tracking and error-purge bookkeeping.
+- [x] 6.7 Split compress tool code into registration, validation, and artifact-construction modules under `src/application/compress-tool/`.
+- [x] 6.8 Move slash command registration under `src/application/commands/dcp.ts`.
+- [x] 6.9 Reduce the pi entrypoint to thin wiring that registers tools, commands, and hook handlers.
 
 ## 7. Focused Test Suite Split
 
