@@ -190,6 +190,17 @@ function compareBlockIds(a: string, b: string): number {
   return parseInt(a.slice(1), 10) - parseInt(b.slice(1), 10)
 }
 
+/** Deduplicate message IDs that refer to the same numeric index (e.g. m0087 vs m087). */
+function deduplicateMessageIds(ids: string[]): string[] {
+  const seen = new Set<number>()
+  return ids.filter((id) => {
+    const numeric = parseInt(id.slice(1), 10)
+    if (seen.has(numeric)) return false
+    seen.add(numeric)
+    return true
+  })
+}
+
 function summarizeIdList(ids: string[], limit: number): string {
   const visibleIds = ids.slice(0, limit)
   const hiddenCount = ids.length - visibleIds.length
@@ -276,10 +287,12 @@ export function buildCompressionPlanningHints(
   const protectedMessageIds =
     protectedTailStartTimestamp === null
       ? []
-      : Array.from(state.messageIdSnapshot.entries())
-          .filter(([, timestamp]) => timestamp >= protectedTailStartTimestamp)
-          .map(([messageId]) => messageId)
-          .sort(compareMessageIds)
+      : deduplicateMessageIds(
+          Array.from(state.messageIdSnapshot.entries())
+            .filter(([, timestamp]) => timestamp >= protectedTailStartTimestamp)
+            .map(([messageId]) => messageId)
+            .sort(compareMessageIds),
+        )
 
   const protectedBlockIds =
     protectedTailStartTimestamp === null
