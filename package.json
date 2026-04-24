@@ -47,8 +47,8 @@
     "typescript-eslint": "^8.59.0"
   },
   "scripts": {
-    "test": "bun run tests/pruner.test.ts",
-    "test:watch": "bun --watch tests/pruner.test.ts",
+    "test": "bun test",
+    "test:watch": "bun test --watch",
     "check-types": "tsc --noEmit",
     "lint": "eslint . --max-warnings 0",
     "format": "prettier --write \"**/*.{ts,md,json,jsonc,cjs,mjs}\"",

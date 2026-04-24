@@ -18,10 +18,10 @@
 
 ## 3. Bun Test Conversion
 
-- [ ] 3.1 Convert the current executable assert-based tests to `bun:test` suites using `describe`, `test`, and `expect`.
-- [ ] 3.2 Replace dead assertions such as empty-string inclusion checks with meaningful expectations.
-- [ ] 3.3 Split helper factories and fixtures out of test cases where doing so improves readability without changing covered behavior.
-- [ ] 3.4 Verify `bun test` passes and covers the same DCP behaviors as the previous `bun run pruner.test.ts` command.
+- [x] 3.1 Convert the current executable assert-based tests to `bun:test` suites using `describe`, `test`, and `expect`.
+- [x] 3.2 Replace dead assertions such as empty-string inclusion checks with meaningful expectations.
+- [x] 3.3 Split helper factories and fixtures out of test cases where doing so improves readability without changing covered behavior.
+- [x] 3.4 Verify `bun test` passes and covers the same DCP behaviors as the previous `bun run pruner.test.ts` command.
 
 ## 4. Type Boundary Extraction
 

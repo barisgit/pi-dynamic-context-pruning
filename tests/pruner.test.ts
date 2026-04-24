@@ -1,11 +1,12 @@
 /**
- * Minimal self-contained tests for the applyCompressionBlocks logic inside
- * applyPruning.  No test framework — just assert + console.log.
+ * Regression tests for Dynamic Context Pruning.
+ * Uses Bun test for named cases while preserving the original behavior coverage.
  *
- * Run with:  bun run pruner.test.ts
+ * Run with:  bun test
  */
 
 import assert from "assert";
+import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -146,6 +147,8 @@ function findOrphanedToolUse(result: any[]): string | null {
   return null; // no orphan found
 }
 
+describe("DCP regression suite", () => {
+
 // ---------------------------------------------------------------------------
 // Test 1 — BUG SCENARIO
 //
@@ -155,7 +158,7 @@ function findOrphanedToolUse(result: any[]): string | null {
 // orphaned tool_use.  With the fix the assistant is pulled into the range
 // and both messages are removed together.
 // ---------------------------------------------------------------------------
-{
+test('Test 1 — BUG SCENARIO', () => {
   console.log("TEST 1: compression block covers only the toolResult (bug scenario)");
 
   const messages = makeMessages();
@@ -225,7 +228,7 @@ function findOrphanedToolUse(result: any[]): string | null {
   }
 
   console.log("TEST 1 PASSED\n");
-}
+});
 
 // ---------------------------------------------------------------------------
 // Test 2 — PASSING SCENARIO
@@ -234,7 +237,7 @@ function findOrphanedToolUse(result: any[]): string | null {
 // (startTimestamp=2000, endTimestamp=3000).  Both messages must be removed
 // and no orphaned tool_use must remain.
 // ---------------------------------------------------------------------------
-{
+test('Test 2 — PASSING SCENARIO', () => {
   console.log("TEST 2: compression block covers both assistant and toolResult (passing scenario)");
 
   const messages = makeMessages();
@@ -309,12 +312,12 @@ function findOrphanedToolUse(result: any[]): string | null {
   console.log("  PASS: synthetic summary message present");
 
   console.log("TEST 2 PASSED\n");
-}
+});
 
 // ---------------------------------------------------------------------------
 // Test 2b — TOKENS SAVED SHOULD NOT DOUBLE-COUNT ACROSS CONTEXT PASSES
 // ---------------------------------------------------------------------------
-{
+test('Test 2b — TOKENS SAVED SHOULD NOT DOUBLE-COUNT ACROSS CONTEXT PASSES', () => {
   console.log("TEST 2b: tokensSaved remains stable across repeated context passes");
 
   const state = makeState([
@@ -351,7 +354,7 @@ function findOrphanedToolUse(result: any[]): string | null {
 
   console.log("  PASS: tokensSaved no longer ratchets upward across context passes");
   console.log("TEST 2b PASSED\n");
-}
+});
 
 // ---------------------------------------------------------------------------
 // Test 3 — MULTI-TOOLRESULT BACKWARD GAP
@@ -370,7 +373,7 @@ function findOrphanedToolUse(result: any[]): string | null {
 // Compression block: [4000..4000] (only toolResult_B)
 // Expected: assistant + toolResult_A + toolResult_B all removed together
 // ---------------------------------------------------------------------------
-{
+test('Test 3 — MULTI-TOOLRESULT BACKWARD GAP', () => {
   console.log("TEST 3: multi-toolResult backward gap (assistant has 2 tool_calls)");
 
   const messages: any[] = [
@@ -430,12 +433,12 @@ function findOrphanedToolUse(result: any[]): string | null {
   }
 
   console.log("TEST 3 PASSED\n");
-}
+});
 
 // ---------------------------------------------------------------------------
 // Test 3b — SOURCE-KEY RANGE STILL EXPANDS TOOL EXCHANGES
 // ---------------------------------------------------------------------------
-{
+test('Test 3b — SOURCE-KEY RANGE STILL EXPANDS TOOL EXCHANGES', () => {
   console.log("TEST 3b: source-key anchored range removes tool exchange atomically");
 
   const messages: any[] = [
@@ -485,7 +488,7 @@ function findOrphanedToolUse(result: any[]): string | null {
 
   console.log("  PASS: source-key ranges reuse tool-exchange expansion");
   console.log("TEST 3b PASSED\n");
-}
+});
 
 // ---------------------------------------------------------------------------
 // Test 4 — BASHEXECUTION FORWARD GAP
@@ -502,7 +505,7 @@ function findOrphanedToolUse(result: any[]): string | null {
 // Compression block: [2000..2000] (only the assistant)
 // Expected: assistant + bashExecution removed together
 // ---------------------------------------------------------------------------
-{
+test('Test 4 — BASHEXECUTION FORWARD GAP', () => {
   console.log("TEST 4: bashExecution forward gap");
 
   const messages: any[] = [
@@ -548,7 +551,7 @@ function findOrphanedToolUse(result: any[]): string | null {
   }
 
   console.log("TEST 4 PASSED\n");
-}
+});
 
 // ---------------------------------------------------------------------------
 // Test 5 — PASSTHROUGH ROLE BETWEEN ASSISTANT AND TOOLRESULT (BACKWARD)
@@ -563,7 +566,7 @@ function findOrphanedToolUse(result: any[]): string | null {
 // Compression block: [3000..3000]
 // Expected: assistant + toolResult removed together (no orphans)
 // ---------------------------------------------------------------------------
-{
+test('Test 5 — PASSTHROUGH ROLE BETWEEN ASSISTANT AND TOOLRESULT (BACKWARD)', () => {
   console.log("TEST 5: passthrough role between assistant and toolResult (backward expansion)");
 
   const messages: any[] = [
@@ -609,7 +612,7 @@ function findOrphanedToolUse(result: any[]): string | null {
   console.log("  PASS: assistant + toolResult removed atomically despite compaction in between");
 
   console.log("TEST 5 PASSED\n");
-}
+});
 
 // ---------------------------------------------------------------------------
 // Test 6 — PASSTHROUGH ROLE BETWEEN TOOLRESULTS (FORWARD EXPANSION)
@@ -625,7 +628,7 @@ function findOrphanedToolUse(result: any[]): string | null {
 // Compression block: [2000..2000]
 // Expected: assistant + both toolResults removed together (no orphans)
 // ---------------------------------------------------------------------------
-{
+test('Test 6 — PASSTHROUGH ROLE BETWEEN TOOLRESULTS (FORWARD EXPANSION)', () => {
   console.log("TEST 6: passthrough role between toolResults (forward expansion)");
 
   const messages: any[] = [
@@ -677,7 +680,7 @@ function findOrphanedToolUse(result: any[]): string | null {
   console.log("  PASS: assistant + both toolResults removed despite branch_summary in between");
 
   console.log("TEST 6 PASSED\n");
-}
+});
 
 // ---------------------------------------------------------------------------
 // Test 7 — CONTENT MUTATION ISOLATION
@@ -686,7 +689,7 @@ function findOrphanedToolUse(result: any[]): string | null {
 // After calling applyPruning, the original messages' content arrays should
 // remain unchanged (no injected dcp-id blocks).
 // ---------------------------------------------------------------------------
-{
+test('Test 7 — CONTENT MUTATION ISOLATION', () => {
   console.log("TEST 7: content mutation isolation");
 
   const messages = makeMessages();
@@ -716,12 +719,12 @@ function findOrphanedToolUse(result: any[]): string | null {
   console.log("  PASS: original message content unchanged after applyPruning");
 
   console.log("TEST 7 PASSED\n");
-}
+});
 
 // ---------------------------------------------------------------------------
 // Test 7b — STABLE VISIBLE REFS + NO VISIBLE OWNER METADATA
 // ---------------------------------------------------------------------------
-{
+test('Test 7b — STABLE VISIBLE REFS + NO VISIBLE OWNER METADATA', () => {
   console.log("TEST 7b: stable visible refs persist and owner metadata is hidden");
 
   const messages = [
@@ -767,12 +770,12 @@ function findOrphanedToolUse(result: any[]): string | null {
 
   console.log("  PASS: stable refs persist and owner metadata is not model-visible");
   console.log("TEST 7b PASSED\n");
-}
+});
 
 // ---------------------------------------------------------------------------
 // Test 7c — GENERATED DCP/OWNER-LIKE HALLUCINATIONS ARE STRIPPED
 // ---------------------------------------------------------------------------
-{
+test('Test 7c — GENERATED DCP/OWNER-LIKE HALLUCINATIONS ARE STRIPPED', () => {
   console.log("TEST 7c: generated DCP and owner-like hallucinations are stripped");
 
   const repeatedOwnerParameter = '<parameter name="owner">s47</parameter>'.repeat(12);
@@ -789,7 +792,7 @@ function findOrphanedToolUse(result: any[]): string | null {
 
   console.log("  PASS: generated protocol leakage is stripped without editing user text");
   console.log("TEST 7c PASSED\n");
-}
+});
 
 // ---------------------------------------------------------------------------
 // Test 8 — ORPHANED TOOLRESULT REPAIR
@@ -807,7 +810,7 @@ function findOrphanedToolUse(result: any[]): string | null {
 //   Forward expansion from assistant_2 should catch toolResult_Y, but if it
 //   doesn't (edge case), repair must clean it up.
 // ---------------------------------------------------------------------------
-{
+test('Test 8 — ORPHANED TOOLRESULT REPAIR', () => {
   console.log("TEST 8: orphaned toolResult repair (post-compression safety net)");
 
   const messages: any[] = [
@@ -871,7 +874,7 @@ function findOrphanedToolUse(result: any[]): string | null {
   console.log("  PASS: no orphaned tool_use or toolResult in result");
 
   console.log("TEST 8 PASSED\n");
-}
+});
 
 // ---------------------------------------------------------------------------
 // Test 9 — DIRECT ORPHAN REPAIR (pre-broken state)
@@ -879,7 +882,7 @@ function findOrphanedToolUse(result: any[]): string | null {
 // Directly construct a message array with an orphaned toolResult (no matching
 // assistant toolCall exists).  The repair function should remove it.
 // ---------------------------------------------------------------------------
-{
+test('Test 9 — DIRECT ORPHAN REPAIR (pre-broken state)', () => {
   console.log("TEST 9: direct orphan repair (pre-broken toolResult)");
 
   const messages: any[] = [
@@ -906,7 +909,7 @@ function findOrphanedToolUse(result: any[]): string | null {
   console.log("  PASS: orphaned toolResult removed by repair function");
 
   console.log("TEST 9 PASSED\n");
-}
+});
 
 // ---------------------------------------------------------------------------
 // Test 10 — CORRUPTED BLOCK WITH NULL/INFINITY TIMESTAMPS (resilience)
@@ -915,7 +918,7 @@ function findOrphanedToolUse(result: any[]): string | null {
 // round-trip corruption. These blocks should be skipped during compression
 // application and should not block new compress operations.
 // ---------------------------------------------------------------------------
-{
+test('Test 10 — CORRUPTED BLOCK WITH NULL/INFINITY TIMESTAMPS (resilience)', () => {
   console.log("TEST 10: corrupted block with null/Infinity timestamps is skipped");
 
   const messages: any[] = [
@@ -954,7 +957,7 @@ function findOrphanedToolUse(result: any[]): string | null {
   console.log("  PASS: corrupted block skipped, all original messages preserved");
 
   console.log("TEST 10 PASSED\n");
-}
+});
 
 // ---------------------------------------------------------------------------
 // Test 11 — NUDGE INJECTION SHOULD ANCHOR TO EXISTING MESSAGE
@@ -963,7 +966,7 @@ function findOrphanedToolUse(result: any[]): string | null {
 // that hijacks recency and focus. They should attach to the latest visible
 // user/assistant message when possible.
 // ---------------------------------------------------------------------------
-{
+test('Test 11 — NUDGE INJECTION SHOULD ANCHOR TO EXISTING MESSAGE', () => {
   console.log("TEST 11: nudge injection anchors to existing message");
 
   const messages: any[] = [
@@ -985,12 +988,12 @@ function findOrphanedToolUse(result: any[]): string | null {
   console.log("  PASS: reminder attached to existing assistant message");
 
   console.log("TEST 11 PASSED\n");
-}
+});
 
 // ---------------------------------------------------------------------------
 // Test 12 — LOGICAL TURN COUNTING GROUPS TOOL BATCHES INTO ONE TURN
 // ---------------------------------------------------------------------------
-{
+test('Test 12 — LOGICAL TURN COUNTING GROUPS TOOL BATCHES INTO ONE TURN', () => {
   console.log("TEST 12: logical turn counting treats one tool batch as one turn");
 
   const state = makeState();
@@ -1005,12 +1008,12 @@ function findOrphanedToolUse(result: any[]): string | null {
 
   console.log("  PASS: logical turn counting matches message/tool-batch semantics");
   console.log("TEST 12 PASSED\n");
-}
+});
 
 // ---------------------------------------------------------------------------
 // Test 13 — TURN NUDGES SHOULD RESPECT TURN DEBOUNCE AND COMPRESS COOL-DOWN
 // ---------------------------------------------------------------------------
-{
+test('Test 13 — TURN NUDGES SHOULD RESPECT TURN DEBOUNCE AND COMPRESS COOL-DOWN', () => {
   console.log("TEST 13: turn nudge debounce + post-compress suppression");
 
   const config = makeConfig();
@@ -1074,12 +1077,12 @@ function findOrphanedToolUse(result: any[]): string | null {
 
   console.log("  PASS: turn debounce and post-compress suppression work");
   console.log("TEST 13 PASSED\n");
-}
+});
 
 // ---------------------------------------------------------------------------
 // Test 14 — TRANSCRIPT SNAPSHOT GROUPS TOOL EXCHANGES
 // ---------------------------------------------------------------------------
-{
+test('Test 14 — TRANSCRIPT SNAPSHOT GROUPS TOOL EXCHANGES', () => {
   console.log("TEST 14: transcript snapshot groups tool exchanges");
 
   const messages: any[] = [
@@ -1136,12 +1139,12 @@ function findOrphanedToolUse(result: any[]): string | null {
 
   console.log("  PASS: transcript snapshot builds coherent tool-exchange spans");
   console.log("TEST 14 PASSED\n");
-}
+});
 
 // ---------------------------------------------------------------------------
 // Test 14b — LEGACY BLOCKS MAP TO ENCOMPASSING TOOL-EXCHANGE SPANS
 // ---------------------------------------------------------------------------
-{
+test('Test 14b — LEGACY BLOCKS MAP TO ENCOMPASSING TOOL-EXCHANGE SPANS', () => {
   console.log("TEST 14b: legacy block remap targets enclosing tool-exchange span");
 
   const messages: any[] = [
@@ -1197,12 +1200,12 @@ function findOrphanedToolUse(result: any[]): string | null {
 
   console.log("  PASS: legacy timestamp blocks remap to enclosing tool-exchange spans");
   console.log("TEST 14b PASSED\n");
-}
+});
 
 // ---------------------------------------------------------------------------
 // Test 15 — V2 BLOCK RENDERER EMITS A FACTUAL CHRONOLOGICAL LOG
 // ---------------------------------------------------------------------------
-{
+test('Test 15 — V2 BLOCK RENDERER EMITS A FACTUAL CHRONOLOGICAL LOG', () => {
   console.log("TEST 15: v2 block renderer emits summary + chronological log");
 
   const message = renderCompressedBlockMessage({
@@ -1253,12 +1256,12 @@ function findOrphanedToolUse(result: any[]): string | null {
 
   console.log("  PASS: v2 block renderer emits full, compact, and minimal deterministic forms");
   console.log("TEST 15 PASSED\n");
-}
+});
 
 // ---------------------------------------------------------------------------
 // Test 16 — LEGACY V2 STATE RESTORES INTO NEW METADATA SHAPE
 // ---------------------------------------------------------------------------
-{
+test('Test 16 — LEGACY V2 STATE RESTORES INTO NEW METADATA SHAPE', () => {
   console.log("TEST 16: legacy v2 state restores into new metadata shape");
 
   const state = makeState();
@@ -1296,12 +1299,12 @@ function findOrphanedToolUse(result: any[]): string | null {
 
   console.log("  PASS: legacy v2 scaffold state restores into the new metadata-rich shape");
   console.log("TEST 16 PASSED\n");
-}
+});
 
 // ---------------------------------------------------------------------------
 // Test 17 — LEGACY COMPRESS ARTIFACTS REUSE THE EXPANDED TOOL RANGE
 // ---------------------------------------------------------------------------
-{
+test('Test 17 — LEGACY COMPRESS ARTIFACTS REUSE THE EXPANDED TOOL RANGE', () => {
   console.log("TEST 17: legacy compress artifacts include expanded assistant + tool metadata");
 
   const messages: any[] = [
@@ -1365,12 +1368,12 @@ function findOrphanedToolUse(result: any[]): string | null {
 
   console.log("  PASS: legacy compress artifacts reuse expanded range coverage and tool metadata");
   console.log("TEST 17 PASSED\n");
-}
+});
 
 // ---------------------------------------------------------------------------
 // Test 17b — TOOL METADATA FALLS BACK TO COVERED ASSISTANT TOOLCALL BLOCKS
 // ---------------------------------------------------------------------------
-{
+test('Test 17b — TOOL METADATA FALLS BACK TO COVERED ASSISTANT TOOLCALL BLOCKS', () => {
   console.log("TEST 17b: tool metadata recovers from assistant toolCall blocks");
 
   const messages: any[] = [
@@ -1411,12 +1414,12 @@ function findOrphanedToolUse(result: any[]): string | null {
 
   console.log("  PASS: covered assistant toolCall blocks recover missing tool metadata");
   console.log("TEST 17b PASSED\n");
-}
+});
 
 // ---------------------------------------------------------------------------
 // Test 17c — EXCERPTS STRIP DCP METADATA WHILE KEEPING USEFUL TEXT
 // ---------------------------------------------------------------------------
-{
+test('Test 17c — EXCERPTS STRIP DCP METADATA WHILE KEEPING USEFUL TEXT', () => {
   console.log("TEST 17c: excerpts strip DCP metadata while keeping useful text");
 
   const messages: any[] = [
@@ -1444,12 +1447,12 @@ function findOrphanedToolUse(result: any[]): string | null {
 
   console.log("  PASS: excerpt capture strips DCP metadata and keeps useful context");
   console.log("TEST 17c PASSED\n");
-}
+});
 
 // ---------------------------------------------------------------------------
 // Test 18 — RECENT TURN PROTECTION STARTS AT THE NTH-MOST-RECENT LOGICAL TURN
 // ---------------------------------------------------------------------------
-{
+test('Test 18 — RECENT TURN PROTECTION STARTS AT THE NTH-MOST-RECENT LOGICAL TURN', () => {
   console.log("TEST 18: recent-turn protection guards the hot logical tail");
 
   const messages: any[] = [
@@ -1490,12 +1493,12 @@ function findOrphanedToolUse(result: any[]): string | null {
 
   console.log("  PASS: recent-turn protection is deterministic and tool batches count as one turn");
   console.log("TEST 18 PASSED\n");
-}
+});
 
 // ---------------------------------------------------------------------------
 // Test 18b — PLANNING HINTS SURFACE PROTECTED IDS + SAFE LARGE RANGES
 // ---------------------------------------------------------------------------
-{
+test('Test 18b — PLANNING HINTS SURFACE PROTECTED IDS + SAFE LARGE RANGES', () => {
   console.log("TEST 18b: compression planning hints surface protected ids and large safe ranges");
 
   const messages: any[] = [
@@ -1575,12 +1578,12 @@ function findOrphanedToolUse(result: any[]): string | null {
 
   console.log("  PASS: planning hints expose protected end ids and large safe ranges");
   console.log("TEST 18b PASSED\n");
-}
+});
 
 // ---------------------------------------------------------------------------
 // Test 19 — LIVE OWNER KEYS COME FROM SOURCE ORDINALS + ACTIVE BLOCKS
 // ---------------------------------------------------------------------------
-{
+test('Test 19 — LIVE OWNER KEYS COME FROM SOURCE ORDINALS + ACTIVE BLOCKS', () => {
   console.log("TEST 19: live owner keys are derived from the source transcript, not rendered ids");
 
   const messages = makeMessages();
@@ -1617,12 +1620,12 @@ function findOrphanedToolUse(result: any[]): string | null {
 
   console.log("  PASS: live owner keys come from canonical source coverage");
   console.log("TEST 19 PASSED\n");
-}
+});
 
 // ---------------------------------------------------------------------------
 // Test 20 — PROVIDER PAYLOAD FILTER PRUNES BY CANONICAL OWNER, NOT mNNN
 // ---------------------------------------------------------------------------
-{
+test('Test 20 — PROVIDER PAYLOAD FILTER PRUNES BY CANONICAL OWNER, NOT mNNN', () => {
   console.log("TEST 20: provider payload filter uses canonical owners instead of visible ids");
 
   const liveOwners = new Set([
@@ -1690,12 +1693,12 @@ function findOrphanedToolUse(result: any[]): string | null {
 
   console.log("  PASS: provider payload filtering prunes by canonical owner, not visible ids");
   console.log("TEST 20 PASSED\n");
-}
+});
 
 // ---------------------------------------------------------------------------
 // Test 20b — REDUNDANT COMPRESS TOOL ARTIFACTS ARE NOT SENT TO THE MODEL
 // ---------------------------------------------------------------------------
-{
+test('Test 20b — REDUNDANT COMPRESS TOOL ARTIFACTS ARE NOT SENT TO THE MODEL', () => {
   console.log("TEST 20b: provider payload filter drops redundant compress tool artifacts");
 
   const liveOwners = new Set([
@@ -1752,12 +1755,12 @@ function findOrphanedToolUse(result: any[]): string | null {
 
   console.log("  PASS: redundant compress tool artifacts are removed only when represented by a live block");
   console.log("TEST 20b PASSED\n");
-}
+});
 
 // ---------------------------------------------------------------------------
 // Test 20c — FAILED / UNREPRESENTED COMPRESS ATTEMPTS REMAIN VISIBLE
 // ---------------------------------------------------------------------------
-{
+test('Test 20c — FAILED / UNREPRESENTED COMPRESS ATTEMPTS REMAIN VISIBLE', () => {
   console.log("TEST 20c: provider payload filter preserves failed or unrepresented compress attempts");
 
   const liveOwners = new Set([
@@ -1793,12 +1796,12 @@ function findOrphanedToolUse(result: any[]): string | null {
 
   console.log("  PASS: failed or unrepresented compress attempts stay visible");
   console.log("TEST 20c PASSED\n");
-}
+});
 
 // ---------------------------------------------------------------------------
 // Test 21 — EXACT FULL COVERAGE SUPERCEDES OLDER ACTIVE BLOCKS
 // ---------------------------------------------------------------------------
-{
+test('Test 21 — EXACT FULL COVERAGE SUPERCEDES OLDER ACTIVE BLOCKS', () => {
   console.log("TEST 21: exact full coverage supersedes older active blocks");
 
   const messages = makeMessages();
@@ -1833,12 +1836,12 @@ function findOrphanedToolUse(result: any[]): string | null {
 
   console.log("  PASS: fully covered exact old blocks are superseded");
   console.log("TEST 21 PASSED\n");
-}
+});
 
 // ---------------------------------------------------------------------------
 // Test 22 — PARTIAL EXACT OVERLAP STILL REJECTS
 // ---------------------------------------------------------------------------
-{
+test('Test 22 — PARTIAL EXACT OVERLAP STILL REJECTS', () => {
   console.log("TEST 22: partial exact overlap still rejects");
 
   const messages: any[] = [
@@ -1886,12 +1889,12 @@ function findOrphanedToolUse(result: any[]): string | null {
 
   console.log("  PASS: partial exact overlap still rejects");
   console.log("TEST 22 PASSED\n");
-}
+});
 
 // ---------------------------------------------------------------------------
 // Test 23 — TIMESTAMP-ONLY LEGACY OVERLAP STAYS CONSERVATIVE
 // ---------------------------------------------------------------------------
-{
+test('Test 23 — TIMESTAMP-ONLY LEGACY OVERLAP STAYS CONSERVATIVE', () => {
   console.log("TEST 23: timestamp-only legacy overlap stays conservative");
 
   const messages = makeMessages();
@@ -1924,12 +1927,12 @@ function findOrphanedToolUse(result: any[]): string | null {
 
   console.log("  PASS: timestamp-only legacy overlap stays conservative");
   console.log("TEST 23 PASSED\n");
-}
+});
 
 // ---------------------------------------------------------------------------
 // Test 23b — BOUNDARY VALIDATION REJECTS STALE IDS AND SELF-BLOCK RANGES
 // ---------------------------------------------------------------------------
-{
+test('Test 23b — BOUNDARY VALIDATION REJECTS STALE IDS AND SELF-BLOCK RANGES', () => {
   console.log("TEST 23b: boundary validation rejects stale ids and self-block ranges");
 
   const state = makeState([
@@ -1985,12 +1988,12 @@ function findOrphanedToolUse(result: any[]): string | null {
 
   console.log("  PASS: stale refs, self-block ranges, and trailing anchors validate clearly");
   console.log("TEST 23b PASSED\n");
-}
+});
 
 // ---------------------------------------------------------------------------
 // Test 24 — SESSION DEBUG PAYLOAD EXPOSES SESSION IDS AND DIRECTORIES
 // ---------------------------------------------------------------------------
-{
+test('Test 24 — SESSION DEBUG PAYLOAD EXPOSES SESSION IDS AND DIRECTORIES', () => {
   console.log("TEST 24: session debug payload exposes session ids and directories");
 
   const payload = buildSessionDebugPayload({
@@ -2001,26 +2004,22 @@ function findOrphanedToolUse(result: any[]): string | null {
     getLeafId: () => "entry-9",
   });
 
-  assert.deepStrictEqual(
-    payload,
-    {
-      sessionId: "session-123",
-      cwd: "/repo",
-      sessionDir: "/sessions",
-      sessionFile: "/sessions/abc.jsonl",
-      leafId: "entry-9",
-    },
-    "FAIL — session debug payload should expose session id, cwd, session dir, session file, and leaf id",
-  );
+  expect(payload).toEqual({
+    sessionId: "session-123",
+    cwd: "/repo",
+    sessionDir: "/sessions",
+    sessionFile: "/sessions/abc.jsonl",
+    leafId: "entry-9",
+  });
 
   console.log("  PASS: session debug payload exposes session metadata");
   console.log("TEST 24 PASSED\n");
-}
+});
 
 // ---------------------------------------------------------------------------
 // Test 25 — DEBUG LOG APPENDS JSONL ENTRIES TO AN EXPLICIT FILE PATH
 // ---------------------------------------------------------------------------
-{
+test('Test 25 — DEBUG LOG APPENDS JSONL ENTRIES TO AN EXPLICIT FILE PATH', () => {
   console.log("TEST 25: debug log appends JSONL entries to an explicit file path");
 
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "dcp-debug-log-"));
@@ -2051,6 +2050,6 @@ function findOrphanedToolUse(result: any[]): string | null {
 
   console.log("  PASS: debug log writes normalized JSONL entries");
   console.log("TEST 25 PASSED\n");
-}
+});
 
-console.log("All tests passed.");
+});
