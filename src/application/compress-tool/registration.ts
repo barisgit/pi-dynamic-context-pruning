@@ -21,7 +21,9 @@ import {
   resolveSupersededBlockIdsForRange,
   validateCompressionRangeBoundaryIds,
 } from "../../domain/compression/tooling.js"
-import { estimateTokens } from "../../domain/compression/range.js"
+import { renderCompressedBlockMessage } from "../../domain/compression/materialize.js"
+import { estimateMessageTokens, estimateTokens } from "../../domain/compression/range.js"
+import { buildTranscriptSnapshot } from "../../domain/transcript/index.js"
 
 export type { CompressionCandidateRange, CompressionPlanningHints } from "../../domain/compression/tooling.js"
 export {
@@ -86,7 +88,34 @@ function formatTopicList(topics: string[]): string {
   return uniqueTopics.length === 1 ? uniqueTopics[0] : uniqueTopics.join(", ")
 }
 
-function buildBlockDebugMetrics(block: CompressionBlock): Record<string, unknown> {
+function estimateBlockSavingsAtCreation(
+  block: CompressionBlock,
+  currentMessages: readonly any[],
+): { removedTokenEstimate: number; addedTokenEstimate: number; netSavedTokenEstimate: number } {
+  const coveredSourceKeys = block.metadata?.coveredSourceKeys
+  if (!coveredSourceKeys || coveredSourceKeys.length === 0) {
+    return { removedTokenEstimate: 0, addedTokenEstimate: 0, netSavedTokenEstimate: 0 }
+  }
+
+  const covered = new Set(coveredSourceKeys)
+  const snapshot = buildTranscriptSnapshot([...currentMessages])
+  const removedTokenEstimate = snapshot.sourceItems.reduce(
+    (sum, item) => sum + (covered.has(item.key) ? estimateMessageTokens(item.message) : 0),
+    0,
+  )
+  const addedTokenEstimate = estimateMessageTokens(renderCompressedBlockMessage(block))
+
+  return {
+    removedTokenEstimate,
+    addedTokenEstimate,
+    netSavedTokenEstimate: Math.max(0, removedTokenEstimate - addedTokenEstimate),
+  }
+}
+
+function buildBlockDebugMetrics(
+  block: CompressionBlock,
+  creationSavings?: { removedTokenEstimate: number; addedTokenEstimate: number; netSavedTokenEstimate: number },
+): Record<string, unknown> {
   const metadata = block.metadata
   return {
     id: block.id,
@@ -94,6 +123,10 @@ function buildBlockDebugMetrics(block: CompressionBlock): Record<string, unknown
     summaryCharCount: block.summary.length,
     summaryTokenEstimate: block.summaryTokenEstimate,
     savedTokenEstimate: block.savedTokenEstimate ?? 0,
+    savedTokenEstimateScope: "current_render",
+    creationRemovedTokenEstimate: creationSavings?.removedTokenEstimate,
+    creationAddedTokenEstimate: creationSavings?.addedTokenEstimate,
+    creationNetSavedTokenEstimate: creationSavings?.netSavedTokenEstimate,
     activityLogEntryCount: block.activityLog?.length ?? 0,
     coveredSourceKeyCount: metadata?.coveredSourceKeys.length ?? 0,
     coveredSpanKeyCount: metadata?.coveredSpanKeys.length ?? 0,
@@ -323,14 +356,20 @@ export function registerCompressTool(
           }
         }
 
+        const creationSavingsByBlockId = new Map(
+          plannedBlocks.map((block) => [block.id, estimateBlockSavingsAtCreation(block, currentMessages)]),
+        )
+
         appendDebugLog(config, "compress_succeeded", {
           ...buildSessionDebugPayload(ctx.sessionManager),
           topic: params.topic,
           topics: plannedTopics,
           blockIds: newBlockIds,
-          blocks: plannedBlocks.map(buildBlockDebugMetrics),
-          totalSavedTokenEstimate: plannedBlocks.reduce(
-            (sum, block) => sum + (block.savedTokenEstimate ?? 0),
+          blocks: plannedBlocks.map((block) =>
+            buildBlockDebugMetrics(block, creationSavingsByBlockId.get(block.id)),
+          ),
+          totalCreationNetSavedTokenEstimate: plannedBlocks.reduce(
+            (sum, block) => sum + (creationSavingsByBlockId.get(block.id)?.netSavedTokenEstimate ?? 0),
             0,
           ),
           activeCompressionBlockCount: state.compressionBlocks.filter((block) => block.active).length,

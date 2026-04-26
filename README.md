@@ -47,11 +47,12 @@ If you are modifying DCP behavior rather than just using it, read `AGENTS.md` fi
 DCP uses a layered configuration system (later layers override earlier ones):
 
 1. Built-in defaults
-2. `~/.config/pi/dcp.jsonc` — global user config (auto-created with defaults on first run)
+2. `~/.pi/agent/dcp.jsonc` — preferred global user config (auto-created with defaults on first run)
+   - fallback: `~/.config/pi/dcp.jsonc` is still read when the preferred file does not exist
 3. `$PI_CONFIG_DIR/dcp.jsonc` — if the env var is set
 4. `<project>/.pi/dcp.jsonc` — project-local overrides (walk up from cwd)
 
-### Example: `~/.config/pi/dcp.jsonc`
+### Example: `~/.pi/agent/dcp.jsonc`
 
 ```jsonc
 {

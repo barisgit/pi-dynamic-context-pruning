@@ -81,6 +81,9 @@ const DEFAULT_CONFIG_FILE_CONTENT = `{
 }
 `
 
+const PREFERRED_GLOBAL_CONFIG_PATH = path.join(os.homedir(), ".pi", "agent", "dcp.jsonc")
+const LEGACY_GLOBAL_CONFIG_PATH = path.join(os.homedir(), ".config", "pi", "dcp.jsonc")
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -149,9 +152,9 @@ function readJsoncFile(filePath: string): Record<string, unknown> {
 }
 
 /**
- * Ensure the global config file exists, creating it with defaults if missing.
+ * Ensure a config file exists, creating it with defaults if missing.
  */
-function ensureGlobalConfig(filePath: string): void {
+function ensureConfigFile(filePath: string): void {
   const dir = path.dirname(filePath)
   try {
     fs.mkdirSync(dir, { recursive: true })
@@ -161,6 +164,19 @@ function ensureGlobalConfig(filePath: string): void {
   } catch {
     // Best-effort; do not crash if we cannot write
   }
+}
+
+/**
+ * Resolve the global user config path.
+ *
+ * Prefer pi's agent-local convention. Keep the historical XDG-style path as a
+ * read-only fallback; if neither exists, create the preferred file.
+ */
+function resolveGlobalConfigPath(): string {
+  if (fs.existsSync(PREFERRED_GLOBAL_CONFIG_PATH)) return PREFERRED_GLOBAL_CONFIG_PATH
+  if (fs.existsSync(LEGACY_GLOBAL_CONFIG_PATH)) return LEGACY_GLOBAL_CONFIG_PATH
+  ensureConfigFile(PREFERRED_GLOBAL_CONFIG_PATH)
+  return PREFERRED_GLOBAL_CONFIG_PATH
 }
 
 /**
@@ -188,7 +204,7 @@ function findProjectConfig(startDir: string): string | null {
 /**
  * Load the DCP configuration by merging (in order):
  *  1. Built-in defaults
- *  2. ~/.config/pi/dcp.jsonc  (global; auto-created if missing)
+ *  2. ~/.pi/agent/dcp.jsonc, falling back to ~/.config/pi/dcp.jsonc if only the legacy file exists
  *  3. $PI_CONFIG_DIR/dcp.jsonc  (if env var is set)
  *  4. <project>/.pi/dcp.jsonc  (walked up from projectDir)
  */
@@ -197,9 +213,7 @@ export function loadConfig(projectDir: string): DcpConfig {
   let config: DcpConfig = deepMerge(DEFAULT_CONFIG, {})
 
   // Layer 2: global config
-  const globalConfigPath = path.join(os.homedir(), ".config", "pi", "dcp.jsonc")
-  ensureGlobalConfig(globalConfigPath)
-  const globalRaw = readJsoncFile(globalConfigPath)
+  const globalRaw = readJsoncFile(resolveGlobalConfigPath())
   if (Object.keys(globalRaw).length > 0) {
     config = deepMerge(config, globalRaw as Partial<DcpConfig>)
   }
