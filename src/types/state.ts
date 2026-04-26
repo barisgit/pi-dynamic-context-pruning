@@ -30,7 +30,7 @@ export interface ToolRecord {
   turnIndex: number
   /** message.timestamp from the ToolResultMessage */
   timestamp: number
-  /** Rough token estimate: sum of result text content lengths divided by 4 */
+  /** Estimated token count for the tool result text content. */
   tokenEstimate: number
 }
 

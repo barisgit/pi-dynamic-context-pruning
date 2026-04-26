@@ -3,37 +3,9 @@
 // ---------------------------------------------------------------------------
 
 import type { DcpMessage } from "../../types/message.js"
+export { estimateMessageTokens, estimateTokens } from "../tokens/estimate.js"
 
 const PASSTHROUGH_ROLES = new Set(["compaction", "branch_summary", "custom_message"])
-
-/**
- * Simple token estimator: chars / 4, rounded.
- */
-export function estimateTokens(text: string): number {
-  return Math.round(text.length / 4);
-}
-
-/**
- * Estimate tokens from a message's content, whatever shape it takes.
- */
-export function estimateMessageTokens(msg: any): number {
-  if (!msg) return 0;
-  const content = msg.content;
-  if (!content) return 0;
-  if (typeof content === "string") return estimateTokens(content);
-  if (Array.isArray(content)) {
-    let total = 0;
-    for (const part of content) {
-      if (part && typeof part === "object") {
-        if (typeof part.text === "string") total += estimateTokens(part.text);
-        else if (typeof part.thinking === "string") total += estimateTokens(part.thinking);
-        else if (part.type === "image") total += 500; // rough estimate for images
-      }
-    }
-    return total;
-  }
-  return 0;
-}
 
 /**
  * Resolve the inclusive message index range covered by a timestamp-bounded

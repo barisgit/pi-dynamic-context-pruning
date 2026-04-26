@@ -1,6 +1,7 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent"
 import type { DcpState } from "../types/state.js"
 import { createInputFingerprint } from "../state.js"
+import { estimateTokens } from "../domain/tokens/estimate.js"
 
 /** Register tool call/result bookkeeping used by deduplication and error purging. */
 export function registerToolRecordingHandlers(pi: ExtensionAPI, state: DcpState): void {
@@ -27,7 +28,7 @@ export function registerToolRecordingHandlers(pi: ExtensionAPI, state: DcpState)
     const outputText = event.content
       .map((contentPart: any) => (contentPart.type === "text" ? contentPart.text : ""))
       .join("")
-    const tokenEstimate = Math.round(outputText.length / 4)
+    const tokenEstimate = estimateTokens(outputText)
 
     if (record) {
       record.isError = event.isError

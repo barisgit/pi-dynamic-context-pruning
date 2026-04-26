@@ -1,7 +1,7 @@
 {
   "name": "@complexthings/pi-dynamic-context-pruning",
   "version": "1.0.7",
-  "description": "PI coding agent extension \u2014 Dynamic Context Pruning (DCP)",
+  "description": "PI coding agent extension — Dynamic Context Pruning (DCP)",
   "keywords": [
     "pi-package",
     "pi-extension",
@@ -27,6 +27,7 @@
     "url": "https://github.com/complexthings/pi-dynamic-context-pruning.git"
   },
   "dependencies": {
+    "gpt-tokenizer": "^3.4.0",
     "jsonc-parser": "^3.3.1"
   },
   "peerDependencies": {

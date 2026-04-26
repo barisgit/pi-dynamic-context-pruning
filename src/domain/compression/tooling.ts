@@ -11,7 +11,7 @@ import type {
 } from "../../types/state.js"
 import { stripDcpMetadataTags } from "../refs/metadata.js"
 import { parseVisibleRef } from "../refs/index.js"
-import { estimateTokens, resolveCompressionRangeIndices } from "./range.js"
+import { estimateMessageTokens, estimateTokens, resolveCompressionRangeIndices } from "./range.js"
 import {
   buildTranscriptSnapshot,
   resolveCompressionBlockCoveredSourceKeys,
@@ -207,27 +207,7 @@ function formatCandidateRange(candidate: CompressionCandidateRange): string {
 }
 
 function estimateMessageTokenCost(message: any): number {
-  if (!message) return 0
-
-  const content = message.content
-  if (!content) return 0
-  if (typeof content === "string") return estimateTokens(content)
-  if (!Array.isArray(content)) return 0
-
-  let total = 0
-  for (const part of content) {
-    if (!part || typeof part !== "object") continue
-    if (typeof part.text === "string") total += estimateTokens(part.text)
-    else if (typeof (part as any).thinking === "string") {
-      total += estimateTokens((part as any).thinking)
-    } else if (typeof (part as any).input === "string") {
-      total += estimateTokens((part as any).input)
-    } else if ((part as any).type === "image") {
-      total += 500
-    }
-  }
-
-  return total
+  return estimateMessageTokens(message)
 }
 
 function collectCoveredSourceKeys(

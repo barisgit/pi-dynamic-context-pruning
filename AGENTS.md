@@ -333,6 +333,7 @@ Do not silently swallow programming mistakes.
 | Package                         | Role                               |
 | ------------------------------- | ---------------------------------- |
 | `jsonc-parser`                  | Parse JSONC config files           |
+| `gpt-tokenizer`                 | OpenAI-style token estimates with chars/4 fallback wrapper |
 | `@mariozechner/pi-coding-agent` | Peer — `ExtensionAPI`, event types |
 | `@mariozechner/pi-tui`          | Peer — UI types                    |
 | `@sinclair/typebox`             | Peer — tool input schemas          |
