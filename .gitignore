@@ -3,4 +3,5 @@ tmp/
 dist/
 .turbo/
 coverage/
+.pi/dag-tasks/
 *.tsbuildinfo
