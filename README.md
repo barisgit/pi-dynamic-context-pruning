@@ -152,11 +152,37 @@ When a compression range touches any part of an assistant→toolResult group, DC
 
 ### Deduplication
 
-Two tool results share the same fingerprint (`toolName::JSON(sorted-args)`) if they were called with identical arguments. All but the last occurrence are replaced with a tombstone message.
+Two tool results share the same fingerprint (`toolName::JSON(sorted-args)`) if they were called with identical arguments. All but the last occurrence are replaced with a tombstone message. The tool result remains structurally present, but its content is replaced with:
+
+```txt
+[Output removed to save context - information superseded or no longer needed]
+```
 
 ### Error purging
 
-Tool results that were errors are replaced with a tombstone after `purgeErrors.turns` logical turns have passed, keeping the context clean of long-dead failure traces.
+Tool results that were errors are replaced with a tombstone after `purgeErrors.turns` logical turns have passed, keeping the context clean of long-dead failure traces. The tool result remains structurally present, but its content is replaced with:
+
+```txt
+[Error output removed - tool failed more than N turns ago]
+```
+
+### Prefix-cache considerations
+
+DCP optimizes context size first, but some strategies intentionally mutate previously rendered transcript content and can invalidate provider prefix cache at the point where the mutation first appears:
+
+- **Compression blocks:** replacing old raw messages with a `[Compressed section: …]` block is the largest intentional prefix change, usually justified by much larger token savings.
+- **Error purging:** when an errored tool result crosses the `purgeErrors.turns` age threshold, its old output changes to the error tombstone once. The `toolCallId` then stays in `state.prunedToolIds`, so later renders are stable.
+- **Deduplication:** when an older duplicate result becomes pruned, its old output changes to the generic tombstone once.
+- **Block detail aging:** when newer blocks are added, older blocks can move from full → compact → minimal according to `renderFullBlockCount` / `renderCompactBlockCount`, changing prior block text.
+- **Nudges:** reminder text is appended near the active context tail, so it is usually a suffix change rather than an old-prefix rewrite.
+- **Provider-payload filtering:** hidden provider artifacts can be suppressed or minified independently of the visible transcript. Represented successful `compress` artifacts keep only the newest compact receipt and suppress older represented pairs.
+
+Ideas considered for a more cache-stable future policy:
+
+- disable age-based automatic error purging and only prune errors during compression or explicit sweep events
+- make stale error/dedup pruning context-pressure or emergency-only instead of N-turn-based
+- keep tombstoning deterministic but batch it into explicit pruning checkpoints so cache breaks are rarer and easier to reason about
+- prefer representation-driven pruning: remove/minify artifacts only once a durable compression block or receipt represents them
 
 ## Status indicator
 

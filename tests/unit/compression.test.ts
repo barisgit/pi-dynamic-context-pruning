@@ -68,7 +68,7 @@ describe("DCP compression.test", () => {
       text.includes("<agent-summary>"),
       "FAIL — expected structured summary wrapper when activity log exists"
     );
-    assert.ok(text.includes('<dcp-log v="1">'), "FAIL — expected deterministic log wrapper");
+    assert.ok(text.includes('<activity-log>'), "FAIL — expected deterministic log wrapper");
     assert.ok(
       text.includes(
         'u: "You need to remember one thing: SIMPLE... and keep the useful trailing context."'

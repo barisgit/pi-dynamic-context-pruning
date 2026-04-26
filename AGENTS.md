@@ -108,7 +108,7 @@ This repo is in a **hybrid state**:
 - Hidden/provider artifact ownership is **not** derived from arbitrary rendered text.
 - Do not render source owner markers into model-visible transcript content.
 - `src/domain/provider/payload-filter.ts` prunes stale `reasoning`, `function_call`, and `function_call_output` using canonical live owner keys plus the latest internal visible-ref → owner map.
-- Successful `compress` `function_call` / `function_call_output` artifacts are suppressed only when a live rendered block with the matching `CompressionBlock.compressCallId` already represents them.
+- Successful represented `compress` artifacts use a two-phase provider-payload rule: keep the newest live represented `compress` `function_call` / `function_call_output` as a compact success receipt, and suppress older represented pairs.
 - Failed or otherwise unrepresented `compress` attempts must stay visible.
 - Do **not** reintroduce visibility-based ownership heuristics.
 
@@ -135,7 +135,25 @@ This logical-turn model is used by:
 - Each active block stores `savedTokenEstimate`.
 - Repeated `context` passes must not double-count.
 
-### 5. Debug logging
+### 5. Prefix-cache mutation trade-offs
+
+DCP intentionally changes older rendered context in a few places. Treat these as cache-cost trade-offs, not bugs:
+
+- Compression blocks replace covered raw transcript spans with rendered `bN` blocks. This is the primary intentional prefix-cache break and should buy significant token savings.
+- `applyErrorPurging()` marks old errored `toolResult`s after `purgeErrors.turns` logical turns by adding their `toolCallId` to `state.prunedToolIds`.
+- `applyDeduplication()` marks older duplicate `toolResult`s in `state.prunedToolIds` while keeping the newest result.
+- `applyToolOutputPruning()` does **not** remove the whole assistant/tool pair; it replaces matching `toolResult.content` with a stable tombstone. The cache break happens when the ID first enters `state.prunedToolIds`; later renders should be stable.
+- Render detail aging can change older block text when blocks move full → compact → minimal according to `renderFullBlockCount` / `renderCompactBlockCount`.
+- Provider-payload filtering is separate from visible transcript rendering. The newest represented successful `compress` exchange is minified to a receipt; older represented pairs are suppressed.
+
+Ideas discussed but not currently implemented:
+
+- replace N-turn error purging with compression-driven or explicit-sweep-only pruning
+- make stale error/dedup pruning emergency/context-pressure-driven instead of time/turn-driven
+- batch tombstone transitions into explicit deterministic pruning checkpoints
+- prefer representation-driven artifact pruning, where old artifacts are removed/minified only after a durable block or receipt represents them
+
+### 6. Debug logging
 
 - `config.debug` writes best-effort JSONL diagnostics to `~/.pi/log/dcp.jsonl`.
 - Current logs include extension/session lifecycle, state saves, context evaluation, nudge emission, provider-payload filtering, and `compress` success/failure.

@@ -231,14 +231,15 @@ describe("DCP provider payload filter.test", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Test 20b — REDUNDANT COMPRESS TOOL ARTIFACTS ARE NOT SENT TO THE MODEL
+  // Test 20b — REPRESENTED COMPRESS TOOL ARTIFACTS BECOME A RECEIPT
   // ---------------------------------------------------------------------------
-  test("Test 20b — REDUNDANT COMPRESS TOOL ARTIFACTS ARE NOT SENT TO THE MODEL", () => {
-    console.log("TEST 20b: provider payload filter drops redundant compress tool artifacts");
+  test("Test 20b — REPRESENTED COMPRESS TOOL ARTIFACTS BECOME A RECEIPT", () => {
+    console.log("TEST 20b: provider payload filter keeps newest compress receipt and drops older duplicates");
 
     const liveOwners = new Set([
       buildSourceOwnerKey(0),
       buildSourceOwnerKey(1),
+      buildBlockOwnerKey(6),
       buildBlockOwnerKey(7),
       buildSourceOwnerKey(3),
       buildSourceOwnerKey(4),
@@ -253,18 +254,31 @@ describe("DCP provider payload filter.test", () => {
       ["m021", buildSourceOwnerKey(21)],
     ]);
 
+    const blockOwnerTag = (id: number): string => `<` + `dcp-block-id>b${id}</` + `dcp-block-id>`;
+
     const payloadInput: any[] = [
       {
         role: "user",
-        content: [{ type: "input_text", text: "current ask\n<dcp-id>m001</dcp-id>" }],
+        content: [{ type: "input_text", text: "current ask\n" }],
       },
       { type: "reasoning", encrypted_content: "keep-current" },
       { role: "assistant", content: [{ type: "output_text", text: "compressing now" }] },
       {
         role: "assistant",
         content: [
-          { type: "output_text", text: "\n<dcp-id>m002</dcp-id>\n<dcp-owner>s1</dcp-owner>" },
+          { type: "output_text", text: "\n\n" },
         ],
+      },
+      {
+        type: "function_call",
+        name: "compress",
+        call_id: "call_old_compress",
+        arguments: '{"topic":"old cleanup"}',
+      },
+      {
+        type: "function_call_output",
+        call_id: "call_old_compress",
+        output: "Compressed 1 range(s): old cleanup",
       },
       {
         type: "function_call",
@@ -282,7 +296,11 @@ describe("DCP provider payload filter.test", () => {
         content: [
           {
             type: "input_text",
-            text: "[Compressed section: cleanup]\n\nsummary\n\n<dcp-block-id>b7</dcp-block-id>",
+            text:
+              "[Compressed section: old cleanup]\n\nold summary\n\n" +
+              blockOwnerTag(6) +
+              "\n\n[Compressed section: cleanup]\n\nsummary\n\n" +
+              blockOwnerTag(7),
           },
         ],
       },
@@ -290,7 +308,7 @@ describe("DCP provider payload filter.test", () => {
       {
         role: "assistant",
         content: [
-          { type: "output_text", text: "\n<dcp-id>m003</dcp-id>\n<dcp-owner>s3</dcp-owner>" },
+          { type: "output_text", text: "\n\n" },
         ],
       },
       {
@@ -305,7 +323,7 @@ describe("DCP provider payload filter.test", () => {
         content: [
           {
             type: "input_text",
-            text: "latest ask\n<dcp-id>m004</dcp-id>\n<dcp-owner>s4</dcp-owner>",
+            text: "latest ask\n\n",
           },
         ],
       },
@@ -313,9 +331,16 @@ describe("DCP provider payload filter.test", () => {
 
     const compressionBlocks = [
       {
-        id: 7,
+        id: 6,
+        topic: "old cleanup",
         active: true,
-        compressCallId: "call_compress",
+        compressCallId: "call_old_compress|fc_old_provider_item",
+      },
+      {
+        id: 7,
+        topic: "cleanup",
+        active: true,
+        compressCallId: "call_compress|fc_provider_item",
       },
     ];
 
@@ -328,12 +353,28 @@ describe("DCP provider payload filter.test", () => {
     const serialized = JSON.stringify(filtered);
 
     assert.ok(
-      !serialized.includes("call_compress"),
-      "FAIL — compress function call/output should be dropped only when represented by a live block"
+      !serialized.includes("call_old_compress"),
+      "FAIL — older represented compress function call/output should be dropped"
+    );
+    assert.ok(
+      serialized.includes("call_compress"),
+      "FAIL — newest represented compress function call/output should remain as a receipt"
+    );
+    assert.ok(
+      serialized.includes("receiptOnly"),
+      "FAIL — newest represented compress function call should be minified to receipt arguments"
     );
     assert.ok(
       !serialized.includes("Compressed 1 range(s): cleanup"),
-      "FAIL — redundant successful compress tool result should not be forwarded"
+      "FAIL — raw successful compress tool result should not be forwarded"
+    );
+    assert.ok(
+      serialized.includes("Compression succeeded. Created b7: cleanup"),
+      "FAIL — newest represented compress tool output should be replaced by a success receipt"
+    );
+    assert.ok(
+      serialized.includes("Do not call compress again in this assistant turn"),
+      "FAIL — receipt should warn against same-turn repeat compression with stale ids"
     );
     assert.ok(
       serialized.includes("[Compressed section: cleanup]"),
@@ -349,7 +390,7 @@ describe("DCP provider payload filter.test", () => {
     );
 
     console.log(
-      "  PASS: redundant compress tool artifacts are removed only when represented by a live block"
+      "  PASS: newest represented compress artifacts are receipts and older duplicates are removed"
     );
     console.log("TEST 20b PASSED\n");
   });

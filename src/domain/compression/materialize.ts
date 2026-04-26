@@ -84,9 +84,7 @@ export function renderCompressedBlockText(block: CompressionBlockRenderData): st
   } else if (activityLog.length > 0) {
     parts.push(`<agent-summary>\n${summary}\n</agent-summary>`)
     parts.push(
-      `<dcp-log v="${block.activityLogVersion ?? 1}">\n${activityLog
-        .map(renderLogEntry)
-        .join("\n")}\n</dcp-log>`,
+      `<activity-log>\n${activityLog.map(renderLogEntry).join("\n")}\n</activity-log>`,
     )
   } else {
     parts.push(summary)

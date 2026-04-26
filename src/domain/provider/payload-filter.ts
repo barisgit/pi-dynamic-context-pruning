@@ -135,36 +135,128 @@ function buildNextAssistantOwners(
   return owners
 }
 
-type CompressArtifactBlock = Pick<CompressionBlock, "id" | "active" | "compressCallId">
+type CompressArtifactBlock = Pick<CompressionBlock, "id" | "active" | "compressCallId" | "topic">
 
-function buildRepresentedCompressCallIds(
+interface RepresentedCompressBlockReceipt {
+  id: number
+  topic: string
+}
+
+interface RepresentedCompressCallReceipt {
+  callId: string
+  blocks: RepresentedCompressBlockReceipt[]
+  newestBlockId: number
+}
+
+interface RepresentedCompressArtifacts {
+  byProviderCallId: Map<string, RepresentedCompressCallReceipt>
+  newestReceipt: RepresentedCompressCallReceipt | null
+}
+
+function addProviderCallIdAliases(
+  callIds: Map<string, RepresentedCompressCallReceipt>,
+  callId: string,
+  receipt: RepresentedCompressCallReceipt,
+): void {
+  callIds.set(callId, receipt)
+
+  // Pi tool call ids can preserve both the provider call id and provider item id
+  // as `${call_id}|${item_id}`. OpenAI Responses payload artifacts use only the
+  // provider `call_id`, so represented-compress suppression must match both.
+  const pipeIndex = callId.indexOf("|")
+  if (pipeIndex > 0) {
+    callIds.set(callId.slice(0, pipeIndex), receipt)
+  }
+}
+
+function buildRepresentedCompressArtifacts(
   liveOwnerKeys: Set<string>,
   compressionBlocks: readonly CompressArtifactBlock[],
-): Set<string> {
-  const compressCallIds = new Set<string>()
+): RepresentedCompressArtifacts {
+  const receiptsByStoredCallId = new Map<string, RepresentedCompressCallReceipt>()
 
   for (const block of compressionBlocks) {
     if (!block.active) continue
     if (typeof block.compressCallId !== "string") continue
     if (!liveOwnerKeys.has(`block:b${block.id}`)) continue
-    compressCallIds.add(block.compressCallId)
+
+    const existing = receiptsByStoredCallId.get(block.compressCallId)
+    const blockReceipt = {
+      id: block.id,
+      topic: typeof block.topic === "string" && block.topic.trim() ? block.topic : "untitled",
+    }
+
+    if (existing) {
+      existing.blocks.push(blockReceipt)
+      existing.newestBlockId = Math.max(existing.newestBlockId, block.id)
+    } else {
+      receiptsByStoredCallId.set(block.compressCallId, {
+        callId: block.compressCallId,
+        blocks: [blockReceipt],
+        newestBlockId: block.id,
+      })
+    }
   }
 
-  return compressCallIds
+  const byProviderCallId = new Map<string, RepresentedCompressCallReceipt>()
+  let newestReceipt: RepresentedCompressCallReceipt | null = null
+
+  for (const receipt of receiptsByStoredCallId.values()) {
+    receipt.blocks.sort((a, b) => a.id - b.id)
+    if (newestReceipt === null || receipt.newestBlockId > newestReceipt.newestBlockId) {
+      newestReceipt = receipt
+    }
+    addProviderCallIdAliases(byProviderCallId, receipt.callId, receipt)
+  }
+
+  return { byProviderCallId, newestReceipt }
 }
 
-function isRedundantCompressArtifact(item: any, representedCompressCallIds: Set<string>): boolean {
-  if (representedCompressCallIds.size === 0) return false
+function getRepresentedCompressReceipt(
+  item: any,
+  representedCompressArtifacts: RepresentedCompressArtifacts,
+): RepresentedCompressCallReceipt | null {
+  if (representedCompressArtifacts.byProviderCallId.size === 0) return null
+  if (typeof item?.call_id !== "string") return null
 
   if (item?.type === "function_call") {
-    return item?.name === "compress" && typeof item.call_id === "string" && representedCompressCallIds.has(item.call_id)
+    return item?.name === "compress" ? representedCompressArtifacts.byProviderCallId.get(item.call_id) ?? null : null
   }
 
   if (item?.type === "function_call_output") {
-    return typeof item.call_id === "string" && representedCompressCallIds.has(item.call_id)
+    return representedCompressArtifacts.byProviderCallId.get(item.call_id) ?? null
   }
 
-  return false
+  return null
+}
+
+function formatReceiptBlockList(receipt: RepresentedCompressCallReceipt): string {
+  return receipt.blocks.map((block) => `b${block.id}: ${block.topic}`).join(", ")
+}
+
+function minifyNewestCompressArtifact(item: DcpProviderPayloadItem, receipt: RepresentedCompressCallReceipt): DcpProviderPayloadItem {
+  const createdBlocks = receipt.blocks.map((block) => ({ id: `b${block.id}`, topic: block.topic }))
+
+  if (item?.type === "function_call") {
+    return {
+      ...item,
+      arguments: JSON.stringify({
+        receiptOnly: true,
+        status: "succeeded",
+        createdBlocks,
+        note: "Original compress arguments are represented by the created block(s). Previous visible message ids may now be stale.",
+      }),
+    }
+  }
+
+  if (item?.type === "function_call_output") {
+    return {
+      ...item,
+      output: `Compression succeeded. Created ${formatReceiptBlockList(receipt)}.\nThis compact receipt is kept so you know your compress call just succeeded; the compressed content is represented by the live block(s).\nDo not call compress again in this assistant turn. If more compression is needed, wait for refreshed visible boundaries.`,
+    }
+  }
+
+  return item
 }
 
 export function filterProviderPayloadInput(
@@ -181,28 +273,40 @@ export function filterProviderPayloadInput(
   const directOwners = buildDirectOwnerKeys(input, ownerByMessageRef)
   const previousAssistantOwners = buildPreviousAssistantOwners(input, directOwners)
   const nextAssistantOwners = buildNextAssistantOwners(input, directOwners)
-  const representedCompressCallIds = buildRepresentedCompressCallIds(liveOwners, compressionBlocks)
+  const representedCompressArtifacts = buildRepresentedCompressArtifacts(liveOwners, compressionBlocks)
+  const filtered: DcpProviderPayloadItem[] = []
 
-  return input.filter((item, index) => {
-    if (isRedundantCompressArtifact(item, representedCompressCallIds)) {
-      return false
+  for (let index = 0; index < input.length; index++) {
+    const item = input[index]
+    const representedCompressReceipt = getRepresentedCompressReceipt(item, representedCompressArtifacts)
+
+    if (representedCompressReceipt) {
+      if (representedCompressReceipt === representedCompressArtifacts.newestReceipt) {
+        filtered.push(minifyNewestCompressArtifact(item, representedCompressReceipt))
+      }
+      continue
     }
 
     if (isMessageLike(item)) {
       const owner = directOwners[index]
-      return owner === null ? true : liveOwners.has(owner)
+      if (owner === null || liveOwners.has(owner)) filtered.push(item)
+      continue
     }
 
     if (item?.type === "reasoning") {
       const owner = nextAssistantOwners[index] ?? previousAssistantOwners[index]
-      return owner === null ? true : liveOwners.has(owner)
+      if (owner === null || liveOwners.has(owner)) filtered.push(item)
+      continue
     }
 
     if (item?.type === "function_call" || item?.type === "function_call_output") {
       const owner = previousAssistantOwners[index] ?? nextAssistantOwners[index]
-      return owner === null ? true : liveOwners.has(owner)
+      if (owner === null || liveOwners.has(owner)) filtered.push(item)
+      continue
     }
 
-    return true
-  })
+    filtered.push(item)
+  }
+
+  return filtered
 }

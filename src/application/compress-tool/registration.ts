@@ -86,6 +86,24 @@ function formatTopicList(topics: string[]): string {
   return uniqueTopics.length === 1 ? uniqueTopics[0] : uniqueTopics.join(", ")
 }
 
+function buildBlockDebugMetrics(block: CompressionBlock): Record<string, unknown> {
+  const metadata = block.metadata
+  return {
+    id: block.id,
+    topic: block.topic,
+    summaryCharCount: block.summary.length,
+    summaryTokenEstimate: block.summaryTokenEstimate,
+    savedTokenEstimate: block.savedTokenEstimate ?? 0,
+    activityLogEntryCount: block.activityLog?.length ?? 0,
+    coveredSourceKeyCount: metadata?.coveredSourceKeys.length ?? 0,
+    coveredSpanKeyCount: metadata?.coveredSpanKeys.length ?? 0,
+    coveredToolIdCount: metadata?.coveredToolIds.length ?? 0,
+    fileReadStatCount: metadata?.fileReadStats.length ?? 0,
+    fileWriteStatCount: metadata?.fileWriteStats.length ?? 0,
+    commandStatCount: metadata?.commandStats.length ?? 0,
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Tool registration
 // ---------------------------------------------------------------------------
@@ -310,6 +328,13 @@ export function registerCompressTool(
           topic: params.topic,
           topics: plannedTopics,
           blockIds: newBlockIds,
+          blocks: plannedBlocks.map(buildBlockDebugMetrics),
+          totalSavedTokenEstimate: plannedBlocks.reduce(
+            (sum, block) => sum + (block.savedTokenEstimate ?? 0),
+            0,
+          ),
+          activeCompressionBlockCount: state.compressionBlocks.filter((block) => block.active).length,
+          tokensSavedAfter: state.tokensSaved,
           supersededBlockIds: Array.from(pendingSupersededBlockIds),
           planningHints,
           contextPercent,

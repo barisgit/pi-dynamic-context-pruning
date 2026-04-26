@@ -177,6 +177,7 @@ export interface PersistedDcpStateV1 {
   tokensSaved: number
   totalPruneCount: number
   manualMode: boolean
+  currentTurn?: number
   lastNudgeTurn?: number
   lastCompressTurn?: number
 }
@@ -192,6 +193,7 @@ export interface PersistedDcpStateV2 {
     nextRef: number
   }
   manualMode: boolean
+  currentTurn?: number
   lastNudgeTurn?: number
   lastCompressTurn?: number
 }
