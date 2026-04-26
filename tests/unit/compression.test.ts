@@ -664,8 +664,8 @@ describe("DCP compression.test", () => {
     console.log("TEST 23c: compress tool creates one block per range with per-range topics");
 
     const messages: any[] = [
-      { role: "user", content: [{ type: "text", text: "first topic" }], timestamp: 1000 },
-      { role: "user", content: [{ type: "text", text: "second topic" }], timestamp: 2000 },
+      { role: "user", content: [{ type: "text", text: "first topic ".repeat(200) }], timestamp: 1000 },
+      { role: "user", content: [{ type: "text", text: "second topic ".repeat(200) }], timestamp: 2000 },
       { role: "user", content: [{ type: "text", text: "anchor" }], timestamp: 3000 },
     ];
     const state = makeState();
@@ -736,6 +736,14 @@ describe("DCP compression.test", () => {
     assert.ok(
       result.content[0].text.includes("First block, Default topic"),
       "FAIL — tool result text should summarize all block topics"
+    );
+    assert.ok(
+      state.tokensSaved > 0,
+      "FAIL — successful compression should immediately populate estimated tokensSaved for /dcp stats"
+    );
+    assert.ok(
+      state.compressionBlocks.every((block) => (block.savedTokenEstimate ?? 0) > 0),
+      "FAIL — created blocks should carry an immediate creation-time saved-token estimate"
     );
 
     await assert.rejects(

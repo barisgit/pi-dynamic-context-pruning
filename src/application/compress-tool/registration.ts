@@ -359,6 +359,12 @@ export function registerCompressTool(
         const creationSavingsByBlockId = new Map(
           plannedBlocks.map((block) => [block.id, estimateBlockSavingsAtCreation(block, currentMessages)]),
         )
+        for (const block of plannedBlocks) {
+          block.savedTokenEstimate = creationSavingsByBlockId.get(block.id)?.netSavedTokenEstimate ?? 0
+        }
+        state.tokensSaved = state.compressionBlocks
+          .filter((block) => block.active)
+          .reduce((sum, block) => sum + (block.savedTokenEstimate ?? 0), 0)
 
         appendDebugLog(config, "compress_succeeded", {
           ...buildSessionDebugPayload(ctx.sessionManager),
