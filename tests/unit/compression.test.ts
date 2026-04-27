@@ -72,7 +72,7 @@ describe("DCP compression.test", () => {
       text.includes("<agent-summary>"),
       "FAIL — expected structured summary wrapper when activity log exists"
     );
-    assert.ok(text.includes('<activity-log>'), "FAIL — expected deterministic log wrapper");
+    assert.ok(text.includes("<activity-log>"), "FAIL — expected deterministic log wrapper");
     assert.ok(
       text.includes(
         'u: "You need to remember one thing: SIMPLE... and keep the useful trailing context."'
@@ -670,8 +670,16 @@ describe("DCP compression.test", () => {
   test("Test 23c — MESSAGE REFS CONTINUE BEYOND FOUR DIGITS", () => {
     console.log("TEST 23c: message refs preserve four-digit padding then continue wider");
 
-    assert.strictEqual(formatMessageRef(1), "m0001", "FAIL — low refs should keep four-digit padding");
-    assert.strictEqual(formatMessageRef(9999), "m9999", "FAIL — four-digit refs should be unchanged");
+    assert.strictEqual(
+      formatMessageRef(1),
+      "m0001",
+      "FAIL — low refs should keep four-digit padding"
+    );
+    assert.strictEqual(
+      formatMessageRef(9999),
+      "m9999",
+      "FAIL — four-digit refs should be unchanged"
+    );
     assert.strictEqual(formatMessageRef(10000), "m10000", "FAIL — refs should continue past m9999");
 
     assert.deepStrictEqual(
@@ -717,8 +725,16 @@ describe("DCP compression.test", () => {
     console.log("TEST 23d: compress tool creates one block per range with per-range topics");
 
     const messages: any[] = [
-      { role: "user", content: [{ type: "text", text: "first topic ".repeat(200) }], timestamp: 1000 },
-      { role: "user", content: [{ type: "text", text: "second topic ".repeat(200) }], timestamp: 2000 },
+      {
+        role: "user",
+        content: [{ type: "text", text: "first topic ".repeat(200) }],
+        timestamp: 1000,
+      },
+      {
+        role: "user",
+        content: [{ type: "text", text: "second topic ".repeat(200) }],
+        timestamp: 2000,
+      },
       { role: "user", content: [{ type: "text", text: "anchor" }], timestamp: 3000 },
     ];
     const state = makeState();

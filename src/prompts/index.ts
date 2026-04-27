@@ -53,7 +53,7 @@ Before compressing, ask: _"Is this section closed enough to become summary-only 
 Evaluate conversation signal-to-noise REGULARLY. Use \`compress\` deliberately with quality-first summaries. Prioritize stale content intelligently to maintain a high-signal context window that supports your agency.
 
 It is your responsibility to keep a sharp, high-quality context window for optimal performance.
-`.trim()
+`.trim();
 
 /**
  * Used as the \`description\` field when registering the \`compress\` tool.
@@ -128,7 +128,7 @@ Rules:
 - Avoid selecting ranges that end inside the newest protected hot tail of the conversation. DCP may reject compressions that touch the most recent conversational turns unless context is already in a hard emergency band.
 
 BATCHING
-When multiple independent ranges are ready and their boundaries do not overlap, include all of them as separate entries in the \`ranges\` array of a single tool call. Each entry creates one compressed block and must have its own \`startId\`, \`endId\`, \`summary\`, and effective topic. Prefer \`ranges[].topic\` for per-block labels; use top-level \`topic\` only as a default when all ranges share the same label.`
+When multiple independent ranges are ready and their boundaries do not overlap, include all of them as separate entries in the \`ranges\` array of a single tool call. Each entry creates one compressed block and must have its own \`startId\`, \`endId\`, \`summary\`, and effective topic. Prefer \`ranges[].topic\` for per-block labels; use top-level \`topic\` only as a default when all ranges share the same label.`;
 
 /**
  * Injected into messages when context usage exceeds maxContextPercent.
@@ -156,7 +156,7 @@ Use visible injected boundary IDs for compression (\`m0001\`-style refs for mess
 SUMMARY REQUIREMENTS
 Your summary must cover all essential details from the selected range so work can continue without reopening raw messages.
 If the compressed range includes user messages, preserve user intent exactly. Prefer direct quotes for short user messages to avoid semantic drift.
-</dcp-system-reminder>`
+</dcp-system-reminder>`;
 
 /**
  * Injected into messages when context usage exceeds maxContextPercent.
@@ -168,7 +168,7 @@ Context is getting full.
 If an older closed range is safe to compress now, do it.
 Keep the active working slice raw.
 Use visible boundary IDs and batch independent ranges when practical.
-</dcp-system-reminder>`
+</dcp-system-reminder>`;
 
 /**
  * Injected as a lightweight reminder between minContextPercent and maxContextPercent
@@ -177,7 +177,7 @@ Use visible boundary IDs and batch independent ranges when practical.
 export const TURN_NUDGE = `<dcp-system-reminder>
 If there is an older closed range that is unlikely to be needed immediately, compress it now.
 Keep the active working slice raw.
-</dcp-system-reminder>`
+</dcp-system-reminder>`;
 
 /**
  * Injected after iterationNudgeThreshold tool calls since the last user message.
@@ -187,7 +187,7 @@ You've been iterating for a while.
 
 If a finished slice is now stale, compress it.
 Keep the active slice raw.
-</dcp-system-reminder>`
+</dcp-system-reminder>`;
 
 /**
  * Replaces SYSTEM_PROMPT when manualMode.enabled = true.
@@ -215,4 +215,4 @@ Apply the same quality standards as always:
 - Batch independent ranges in a single \`compress\` call when possible
 
 Do not compress active, still-needed context. Only compress ranges that are genuinely closed and whose raw form is no longer required.
-`.trim()
+`.trim();
