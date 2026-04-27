@@ -104,7 +104,7 @@ This repo is in a **hybrid state**:
 
 ### 2. Ownership / hidden-provider pruning
 
-- Visible `mNNNN` IDs and `bN` block IDs are **agent-facing boundaries only**.
+- Visible message IDs (`m0001`-style, widening after `m9999`) and `bN` block IDs are **agent-facing boundaries only**.
 - Hidden/provider artifact ownership is **not** derived from arbitrary rendered text.
 - Do not render source owner markers into model-visible transcript content.
 - `src/domain/provider/payload-filter.ts` prunes stale `reasoning`, `function_call`, and `function_call_output` using canonical live owner keys plus the latest internal visible-ref → owner map.
@@ -249,7 +249,7 @@ Touch at least:
    - Recompute liveness from the current source transcript plus active blocks.
 
 4. **Visible IDs and internal ownership are different layers.**
-   - `mNNNN` / `bN` are for the agent/tool contract.
+   - `m0001`-style message refs / `bN` block refs are for the agent/tool contract.
    - canonical owner keys are internal runtime bookkeeping and must not be rendered as visible owner tags.
 
 5. **Supersession is allowed only for exact full coverage.**

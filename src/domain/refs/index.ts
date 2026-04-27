@@ -4,8 +4,7 @@
 
 const MESSAGE_REF_WIDTH = 4
 const MESSAGE_REF_MIN_INDEX = 1
-const MESSAGE_REF_MAX_INDEX = 9999
-const STABLE_MESSAGE_REF_REGEX = /^m(\d{4})$/i
+const STABLE_MESSAGE_REF_REGEX = /^m(\d{4,})$/i
 const LEGACY_MESSAGE_REF_REGEX = /^m(\d{3})$/i
 const BLOCK_REF_REGEX = /^b([1-9]\d*)$/i
 
@@ -35,8 +34,8 @@ export function createMessageAliasState(): MessageAliasState {
 }
 
 export function formatMessageRef(index: number): string {
-  if (!Number.isInteger(index) || index < MESSAGE_REF_MIN_INDEX || index > MESSAGE_REF_MAX_INDEX) {
-    throw new Error(`Message ID index out of bounds: ${index}. Supported range is ${MESSAGE_REF_MIN_INDEX}-${MESSAGE_REF_MAX_INDEX}.`)
+  if (!Number.isInteger(index) || index < MESSAGE_REF_MIN_INDEX) {
+    throw new Error(`Message ID index out of bounds: ${index}. Supported range starts at ${MESSAGE_REF_MIN_INDEX}.`)
   }
   return `m${String(index).padStart(MESSAGE_REF_WIDTH, "0")}`
 }
@@ -83,7 +82,7 @@ export function allocateMessageRef(aliases: MessageAliasState, sourceKey: string
     ? Math.max(MESSAGE_REF_MIN_INDEX, aliases.nextRef)
     : MESSAGE_REF_MIN_INDEX
 
-  while (candidate <= MESSAGE_REF_MAX_INDEX) {
+  while (true) {
     const ref = formatMessageRef(candidate)
     if (!aliases.byRef.has(ref)) {
       aliases.bySourceKey.set(sourceKey, ref)
@@ -93,8 +92,6 @@ export function allocateMessageRef(aliases: MessageAliasState, sourceKey: string
     }
     candidate++
   }
-
-  throw new Error(`Message ID alias capacity exceeded. Cannot allocate more than ${formatMessageRef(MESSAGE_REF_MAX_INDEX)} aliases in this session.`)
 }
 
 export function normalizeMessageAliasState(value: unknown): MessageAliasState {
@@ -138,7 +135,7 @@ function inferNextRef(aliases: MessageAliasState): number {
     const parsed = parseVisibleRef(ref)
     if (parsed?.kind === "message" && !parsed.legacy) max = Math.max(max, parsed.index)
   }
-  return Math.min(MESSAGE_REF_MAX_INDEX, max + 1)
+  return Math.max(MESSAGE_REF_MIN_INDEX, max + 1)
 }
 
 export function serializeMessageAliasState(aliases: MessageAliasState): {

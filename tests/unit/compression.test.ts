@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  allocateMessageRef,
   appendDebugLogLine,
   applyPruning,
   assert,
@@ -13,6 +14,7 @@ import {
   extractCanonicalOwnerKeyFromMessageLike,
   filterProviderPayloadInput,
   findOrphanedToolUse,
+  formatMessageRef,
   fs,
   getNudgeType,
   injectNudge,
@@ -20,7 +22,9 @@ import {
   makeMessages,
   makeState,
   mapLegacyBlockToSpanRange,
+  normalizeMessageAliasState,
   os,
+  parseVisibleRef,
   path,
   registerCompressTool,
   renderCompressedBlockMessage,
@@ -617,11 +621,12 @@ describe("DCP compression.test", () => {
     ]);
     state.messageIdSnapshot.set("m0001", 1000);
     state.messageIdSnapshot.set("m0002", 2000);
+    state.messageIdSnapshot.set("m10000", 10000);
 
     assert.throws(
-      () => validateCompressionRangeBoundaryIds("m9999", "m0002", state),
-      /Unknown message ID: m9999/,
-      "FAIL — stale message refs should reject"
+      () => validateCompressionRangeBoundaryIds("m10001", "m0002", state),
+      /Unknown message ID: m10001/,
+      "FAIL — stale wide message refs should reject"
     );
     assert.throws(
       () => validateCompressionRangeBoundaryIds("b3", "b3", state),
@@ -629,6 +634,8 @@ describe("DCP compression.test", () => {
       "FAIL — bN..bN self-compression should reject"
     );
     validateCompressionRangeBoundaryIds("m0001", "b3", state);
+    validateCompressionRangeBoundaryIds("m10000", "b3", state);
+    state.messageIdSnapshot.delete("m10000");
 
     state.messageRefSnapshot.set("m0001", {
       ref: "m0001",
@@ -658,10 +665,56 @@ describe("DCP compression.test", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Test 23c — COMPRESS TOOL SUPPORTS PER-RANGE TOPICS
+  // Test 23c — MESSAGE REFS CONTINUE BEYOND FOUR DIGITS
   // ---------------------------------------------------------------------------
-  test("Test 23c — COMPRESS TOOL SUPPORTS PER-RANGE TOPICS", async () => {
-    console.log("TEST 23c: compress tool creates one block per range with per-range topics");
+  test("Test 23c — MESSAGE REFS CONTINUE BEYOND FOUR DIGITS", () => {
+    console.log("TEST 23c: message refs preserve four-digit padding then continue wider");
+
+    assert.strictEqual(formatMessageRef(1), "m0001", "FAIL — low refs should keep four-digit padding");
+    assert.strictEqual(formatMessageRef(9999), "m9999", "FAIL — four-digit refs should be unchanged");
+    assert.strictEqual(formatMessageRef(10000), "m10000", "FAIL — refs should continue past m9999");
+
+    assert.deepStrictEqual(
+      parseVisibleRef("m10000"),
+      { kind: "message", ref: "m10000", index: 10000, legacy: false },
+      "FAIL — parser should accept stable refs wider than four digits"
+    );
+
+    const aliases = normalizeMessageAliasState({
+      bySourceKey: { "source:9999": "m9999" },
+      byRef: { m9999: "source:9999" },
+      nextRef: 10000,
+    });
+    assert.strictEqual(
+      allocateMessageRef(aliases, "source:10000"),
+      "m10000",
+      "FAIL — allocator should not stop at m9999"
+    );
+    assert.strictEqual(
+      allocateMessageRef(aliases, "source:10001"),
+      "m10001",
+      "FAIL — allocator should continue assigning wider refs"
+    );
+
+    const inferred = normalizeMessageAliasState({
+      bySourceKey: { "source:10000": "m10000" },
+      byRef: { m10000: "source:10000" },
+    });
+    assert.strictEqual(
+      allocateMessageRef(inferred, "source:10001"),
+      "m10001",
+      "FAIL — inferred nextRef should continue after wide persisted refs"
+    );
+
+    console.log("  PASS: message refs continue past m9999");
+    console.log("TEST 23c PASSED\n");
+  });
+
+  // ---------------------------------------------------------------------------
+  // Test 23d — COMPRESS TOOL SUPPORTS PER-RANGE TOPICS
+  // ---------------------------------------------------------------------------
+  test("Test 23d — COMPRESS TOOL SUPPORTS PER-RANGE TOPICS", async () => {
+    console.log("TEST 23d: compress tool creates one block per range with per-range topics");
 
     const messages: any[] = [
       { role: "user", content: [{ type: "text", text: "first topic ".repeat(200) }], timestamp: 1000 },
@@ -760,6 +813,6 @@ describe("DCP compression.test", () => {
     );
 
     console.log("  PASS: per-range topics create correctly labelled compression blocks");
-    console.log("TEST 23c PASSED\n");
+    console.log("TEST 23d PASSED\n");
   });
 });

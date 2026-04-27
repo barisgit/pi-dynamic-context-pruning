@@ -20,7 +20,7 @@ The system SHALL expose only message refs and block refs needed for compression 
 
 #### Scenario: Agent selects a compression range
 - **WHEN** the agent needs to call the `compress` tool
-- **THEN** it can identify raw messages by stable `m0001`-style refs and compressed blocks by `bN` refs
+- **THEN** it can identify raw messages by stable `m0001`-style refs that widen after `m9999` (for example, `m10000`) and compressed blocks by `bN` refs
 
 #### Scenario: Internal owner metadata is absent
 - **WHEN** the model-facing transcript is rendered
@@ -46,4 +46,4 @@ The system SHALL support a migration period where legacy message refs can be par
 
 #### Scenario: New prompt contract uses stable refs
 - **WHEN** DCP prompt/tool documentation is rendered for new sessions
-- **THEN** examples use stable `m0001`-style message refs and `bN` block refs
+- **THEN** examples use stable `m0001`-style message refs and `bN` block refs, without implying a `m9999` ceiling

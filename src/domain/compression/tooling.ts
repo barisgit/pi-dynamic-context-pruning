@@ -134,10 +134,10 @@ export function validateCompressionRangeBoundaryIds(startId: string, endId: stri
   const parsedEndId = parseVisibleRef(endId)
 
   if (!parsedStartId) {
-    throw new Error(`Invalid message ID: ${startId}. Expected a stable message ref like m0001 or a block ref like b3.`)
+    throw new Error(`Invalid message ID: ${startId}. Expected a stable message ref like m0001 or m10000, or a block ref like b3.`)
   }
   if (!parsedEndId) {
-    throw new Error(`Invalid message ID: ${endId}. Expected a stable message ref like m0001 or a block ref like b3.`)
+    throw new Error(`Invalid message ID: ${endId}. Expected a stable message ref like m0001 or m10000, or a block ref like b3.`)
   }
 
   if (parsedStartId.kind === "message" && !state.messageIdSnapshot.has(parsedStartId.ref) && !state.messageIdSnapshot.has(startId.trim())) {

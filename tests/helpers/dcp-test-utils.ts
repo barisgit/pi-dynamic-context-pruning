@@ -3,7 +3,13 @@ import type { DcpState } from "../../src/types/state.js";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { createMessageAliasState } from "../../src/domain/refs/index.js";
+import {
+  allocateMessageRef,
+  createMessageAliasState,
+  formatMessageRef,
+  normalizeMessageAliasState,
+  parseVisibleRef,
+} from "../../src/domain/refs/index.js";
 
 export { default as assert } from "node:assert";
 export { fs, os, path };
@@ -27,7 +33,13 @@ export {
   mapLegacyBlockToSpanRange,
 } from "../../src/infrastructure/persistence.js";
 export { renderCompressedBlockMessage } from "../../src/domain/compression/materialize.js";
-export { createMessageAliasState };
+export {
+  allocateMessageRef,
+  createMessageAliasState,
+  formatMessageRef,
+  normalizeMessageAliasState,
+  parseVisibleRef,
+};
 export {
   extractCanonicalOwnerKeyFromMessageLike,
   filterProviderPayloadInput,
