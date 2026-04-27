@@ -54,6 +54,6 @@
     "lint": "eslint . --max-warnings 0",
     "format": "prettier --write \"**/*.{ts,md,json,jsonc,cjs,mjs}\"",
     "ci": "bun run check-types && bun run lint && bun run test",
-    "prepare": "husky"
+    "prepare": "node -e \"const { existsSync } = require('node:fs'); const { execFileSync } = require('node:child_process'); if (existsSync('node_modules/.bin/husky')) execFileSync('node_modules/.bin/husky', { stdio: 'inherit' });\""
   }
 }
