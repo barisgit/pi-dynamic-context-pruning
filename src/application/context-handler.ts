@@ -15,6 +15,7 @@ import {
 } from "../domain/compression/tooling.js"
 import { buildLiveOwnerKeys } from "../domain/transcript/index.js"
 import { appendDebugLog, buildSessionDebugPayload } from "../infrastructure/debug-log.js"
+import { updateDcpStatus } from "./status.js"
 
 function cloneRenderedMessages(messages: DcpMessage[]): DcpMessage[] {
   return messages.map((message) => {
@@ -98,6 +99,7 @@ export function registerContextHandler(pi: ExtensionAPI, state: DcpState, config
 
     state.lastRenderedMessages = cloneRenderedMessages(prunedMessages)
     state.lastLiveOwnerKeys = Array.from(liveOwnerKeys)
+    updateDcpStatus(ctx, state)
 
     appendDebugLog(config, "context_evaluated", {
       ...buildSessionDebugPayload(ctx.sessionManager),

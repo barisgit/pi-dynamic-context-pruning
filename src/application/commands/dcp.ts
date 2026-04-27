@@ -2,6 +2,7 @@ import type { ExtensionAPI, ExtensionCommandContext } from "@mariozechner/pi-cod
 import type { AutocompleteItem } from "@mariozechner/pi-tui"
 import type { DcpState } from "../../types/state.js"
 import type { DcpConfig } from "../../types/config.js"
+import { updateDcpStatus } from "../status.js"
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -171,6 +172,7 @@ async function handleSweep(
   }
 
   const count = toAdd.length
+  updateDcpStatus(ctx, state)
   ctx.ui.notify(`Swept ${count} tool output${count === 1 ? "" : "s"}`, "info")
 }
 
@@ -200,6 +202,8 @@ function handleManual(
       "info",
     )
   }
+
+  updateDcpStatus(ctx, state)
 }
 
 // ---------------------------------------------------------------------------
@@ -255,6 +259,10 @@ function handleDecompress(
     }
 
     block.active = false
+    state.tokensSaved = state.compressionBlocks
+      .filter((candidate) => candidate.active)
+      .reduce((sum, candidate) => sum + (candidate.savedTokenEstimate ?? 0), 0)
+    updateDcpStatus(ctx, state)
     ctx.ui.notify(`Decompressed block b${id}: "${block.topic}"`, "info")
   }
 }

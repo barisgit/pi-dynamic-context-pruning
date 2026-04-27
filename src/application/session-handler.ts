@@ -4,6 +4,7 @@ import type { DcpState } from "../types/state.js"
 import { resetState } from "../state.js"
 import { appendDebugLog, buildSessionDebugPayload } from "../infrastructure/debug-log.js"
 import { restorePersistedState, serializePersistedState } from "../infrastructure/persistence.js"
+import { updateDcpStatus } from "./status.js"
 
 /** Apply config-derived baseline state before session hooks run. */
 export function initializeSessionState(state: DcpState, config: DcpConfig): void {
@@ -56,7 +57,7 @@ export function registerSessionHandlers(pi: ExtensionAPI, state: DcpState, confi
       nextBlockId: state.nextBlockId,
     })
 
-    ctx.ui.setStatus("dcp", state.manualMode ? "DCP [manual]" : "DCP")
+    updateDcpStatus(ctx, state)
   })
 
   pi.on("session_shutdown", async (_event, ctx) => {

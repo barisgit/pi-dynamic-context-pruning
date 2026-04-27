@@ -23,6 +23,7 @@ import {
 } from "../../domain/compression/tooling.js"
 import { renderCompressedBlockMessage } from "../../domain/compression/materialize.js"
 import { estimateMessageTokens, estimateTokens } from "../../domain/compression/range.js"
+import { updateDcpStatus } from "../status.js"
 import { buildTranscriptSnapshot } from "../../domain/transcript/index.js"
 
 export type { CompressionCandidateRange, CompressionPlanningHints } from "../../domain/compression/tooling.js"
@@ -365,6 +366,7 @@ export function registerCompressTool(
         state.tokensSaved = state.compressionBlocks
           .filter((block) => block.active)
           .reduce((sum, block) => sum + (block.savedTokenEstimate ?? 0), 0)
+        updateDcpStatus(ctx, state)
 
         appendDebugLog(config, "compress_succeeded", {
           ...buildSessionDebugPayload(ctx.sessionManager),
