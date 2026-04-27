@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { materializeContextMessages } from "../../src/application/context-handler.js";
+import { filterProviderPayloadInput } from "../../src/domain/provider/payload-filter.js";
 import { applyPruning } from "../../src/domain/pruning/index.js";
 import {
   buildBlockOwnerKey,
@@ -75,6 +76,41 @@ describe("context materialization routing", () => {
     expect(routed.renderedV2BlockIds).toEqual([]);
     expect(routed.messages).toEqual(direct);
     expect(routedState.messageOwnerSnapshot).toEqual(directState.messageOwnerSnapshot);
+  });
+
+  test("v1 finalization preserves source owners for messages after a compressed range", () => {
+    const messages = [
+      ...makeMessages(),
+      {
+        role: "user",
+        content: [{ type: "text", text: "continue after compression" }],
+        timestamp: 5000,
+      },
+      { role: "assistant", content: [{ type: "text", text: "still visible" }], timestamp: 6000 },
+    ];
+    const state = makeState([makeLegacyToolBlock()]);
+
+    const routed = materializeContextMessages(messages, state, makeConfig());
+    const providerFiltered = filterProviderPayloadInput(
+      routed.messages as any[],
+      routed.liveOwnerKeys,
+      state.compressionBlocks,
+      state.messageOwnerSnapshot
+    );
+
+    expect(routed.liveOwnerKeys.has(buildSourceOwnerKey(4))).toBe(true);
+    expect(routed.liveOwnerKeys.has(buildSourceOwnerKey(5))).toBe(true);
+    expect([...state.messageOwnerSnapshot.values()]).toContain(buildSourceOwnerKey(4));
+    expect([...state.messageOwnerSnapshot.values()]).toContain(buildSourceOwnerKey(5));
+    expect(providerFiltered).toHaveLength(routed.messages.length);
+    expect(
+      providerFiltered.some((message: any) =>
+        textOf(message).includes("continue after compression")
+      )
+    ).toBe(true);
+    expect(providerFiltered.some((message: any) => textOf(message).includes("still visible"))).toBe(
+      true
+    );
   });
 
   test("schema v2 renders an active span block through the context path", () => {

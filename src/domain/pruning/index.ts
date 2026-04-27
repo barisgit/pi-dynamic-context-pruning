@@ -452,13 +452,24 @@ export function finalizeMaterializedMessages(
         typeof block === "object" && block !== null ? { ...block } : block
       );
     }
+    const ownerKey =
+      options.messageOwnerKeys?.[ordinal] ??
+      (typeof (m as any)[INTERNAL_OWNER_KEY] === "string"
+        ? (m as any)[INTERNAL_OWNER_KEY]
+        : buildSourceOwnerKey(ordinal));
+    const sourceKey =
+      options.messageSourceKeys?.[ordinal] ??
+      (typeof (m as any)[INTERNAL_SOURCE_KEY] === "string"
+        ? (m as any)[INTERNAL_SOURCE_KEY]
+        : buildSourceItemKey(m, ordinal));
+
     Object.defineProperty(clone, INTERNAL_OWNER_KEY, {
-      value: options.messageOwnerKeys?.[ordinal] ?? buildSourceOwnerKey(ordinal),
+      value: ownerKey,
       enumerable: false,
       configurable: true,
     });
     Object.defineProperty(clone, INTERNAL_SOURCE_KEY, {
-      value: options.messageSourceKeys?.[ordinal] ?? buildSourceItemKey(m, ordinal),
+      value: sourceKey,
       enumerable: false,
       configurable: true,
     });
