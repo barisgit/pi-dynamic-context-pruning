@@ -5,6 +5,7 @@
 import { stripDcpMetadataTags } from "../refs/metadata.js";
 import type { CompressionBlockV2, CompressionLogEntry } from "../../types/state.js";
 import type { DcpMessage } from "../../types/message.js";
+import { buildBlockOwnerKey, buildSourceOwnerKey } from "../transcript/index.js";
 import type { TranscriptSnapshot } from "../transcript/index.js";
 
 /** Result of v2 transcript materialization. */
@@ -13,6 +14,10 @@ export interface MaterializedTranscript {
   messages: DcpMessage[];
   /** Active v2 block IDs rendered into the transcript */
   renderedBlockIds: number[];
+  /** Internal owner key for each rendered message, index-aligned with messages. */
+  messageOwnerKeys: string[];
+  /** Stable source key for each rendered message, index-aligned with messages. */
+  messageSourceKeys: string[];
 }
 
 export interface MaterializeTranscriptOptions {
@@ -188,6 +193,8 @@ export function materializeTranscript(
 
   const messages: DcpMessage[] = [];
   const renderedBlockIds: number[] = [];
+  const messageOwnerKeys: string[] = [];
+  const messageSourceKeys: string[] = [];
 
   for (let spanIndex = 0; spanIndex < snapshot.spans.length; spanIndex++) {
     const replacement = replacementByStartIndex.get(spanIndex);
@@ -199,6 +206,8 @@ export function materializeTranscript(
         })
       );
       renderedBlockIds.push(replacement.block.id);
+      messageOwnerKeys.push(buildBlockOwnerKey(replacement.block.id));
+      messageSourceKeys.push(buildBlockOwnerKey(replacement.block.id));
       spanIndex = replacement.endIndex;
       continue;
     }
@@ -206,12 +215,18 @@ export function materializeTranscript(
     const span = snapshot.spans[spanIndex]!;
     for (const sourceKey of span.sourceKeys) {
       const sourceItem = sourceItemByKey.get(sourceKey);
-      if (sourceItem) messages.push(cloneMessage(sourceItem.message));
+      if (sourceItem) {
+        messages.push(cloneMessage(sourceItem.message));
+        messageOwnerKeys.push(buildSourceOwnerKey(sourceItem.ordinal));
+        messageSourceKeys.push(sourceItem.key);
+      }
     }
   }
 
   return {
     messages,
     renderedBlockIds,
+    messageOwnerKeys,
+    messageSourceKeys,
   };
 }

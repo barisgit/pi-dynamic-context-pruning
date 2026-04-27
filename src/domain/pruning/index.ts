@@ -14,8 +14,8 @@ const ID_ELIGIBLE_ROLES = new Set(["user", "assistant", "toolResult", "bashExecu
 
 // Roles that are PI-internal and should pass through unchanged
 const PASSTHROUGH_ROLES = new Set(["compaction", "branch_summary", "custom_message"]);
-const INTERNAL_OWNER_KEY = "__dcpOwnerKey";
-const INTERNAL_SOURCE_KEY = "__dcpSourceKey";
+export const INTERNAL_OWNER_KEY = "__dcpOwnerKey";
+export const INTERNAL_SOURCE_KEY = "__dcpSourceKey";
 
 import {
   estimateMessageTokens,
@@ -340,7 +340,7 @@ function stripGeneratedDcpHallucinations(messages: any[]): void {
   }
 }
 
-function injectMessageIds(messages: any[], state: DcpState): void {
+export function injectMessageIds(messages: any[], state: DcpState): void {
   state.messageRefSnapshot.clear();
   state.messageIdSnapshot.clear();
   state.messageOwnerSnapshot.clear();
@@ -424,6 +424,58 @@ function injectMessageIds(messages: any[], state: DcpState): void {
   }
 }
 
+export interface FinalizeMaterializedMessagesOptions {
+  /** Source transcript used to preserve logical-turn semantics after materialization. */
+  turnMessages?: DcpMessage[];
+  /** Internal owner keys, index-aligned with messages. */
+  messageOwnerKeys?: readonly string[];
+  /** Stable source keys, index-aligned with messages. */
+  messageSourceKeys?: readonly string[];
+}
+
+/**
+ * Apply shared post-materialization pruning steps to an already materialized
+ * transcript. This lets the v2 span materializer reuse the v1 safety net,
+ * strategy pruning, explicit tool-output pruning, and visible-ref injection
+ * without rerunning timestamp compression blocks.
+ */
+export function finalizeMaterializedMessages(
+  messages: DcpMessage[],
+  state: DcpState,
+  config: DcpConfig,
+  options: FinalizeMaterializedMessagesOptions = {}
+): DcpMessage[] {
+  const msgs: DcpMessage[] = messages.map((m: DcpMessage, ordinal: number) => {
+    const clone = { ...m };
+    if (Array.isArray(clone.content)) {
+      clone.content = clone.content.map((block: any) =>
+        typeof block === "object" && block !== null ? { ...block } : block
+      );
+    }
+    Object.defineProperty(clone, INTERNAL_OWNER_KEY, {
+      value: options.messageOwnerKeys?.[ordinal] ?? buildSourceOwnerKey(ordinal),
+      enumerable: false,
+      configurable: true,
+    });
+    Object.defineProperty(clone, INTERNAL_SOURCE_KEY, {
+      value: options.messageSourceKeys?.[ordinal] ?? buildSourceItemKey(m, ordinal),
+      enumerable: false,
+      configurable: true,
+    });
+    return clone;
+  });
+
+  stripGeneratedDcpHallucinations(msgs);
+  state.currentTurn = countLogicalTurns(options.turnMessages ?? msgs);
+  repairOrphanedToolPairs(msgs);
+  applyDeduplication(msgs, state, config);
+  applyErrorPurging(msgs, state, config);
+  applyToolOutputPruning(msgs, state);
+  injectMessageIds(msgs, state);
+
+  return msgs;
+}
+
 /**
  * Main transform: applies all pruning and returns modified message array.
  * Called from the `context` event handler.
@@ -462,25 +514,7 @@ export function applyPruning(messages: DcpMessage[], state: DcpState, config: Dc
   // 2. Apply active compression blocks
   applyCompressionBlocks(msgs, state, config);
 
-  // 2b. Post-compression safety net: remove any orphaned tool pairs that the
-  // expansion logic could not catch (e.g. multi-block interactions, pre-broken state).
-  repairOrphanedToolPairs(msgs);
-
-  // 3. Apply deduplication
-  applyDeduplication(msgs, state, config);
-
-  // 4. Apply error purging
-  applyErrorPurging(msgs, state, config);
-
-  // 5. Apply explicit tool output pruning (prunedToolIds)
-  applyToolOutputPruning(msgs, state);
-
-  // 6. Inject message IDs into visible messages
-  injectMessageIds(msgs, state);
-
-  // 7. state.messageIdSnapshot is already updated by injectMessageIds
-
-  return msgs;
+  return finalizeMaterializedMessages(msgs, state, config, { turnMessages: messages });
 }
 
 /**
