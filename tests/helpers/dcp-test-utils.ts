@@ -44,7 +44,12 @@ export {
   extractCanonicalOwnerKeyFromMessageLike,
   filterProviderPayloadInput,
 } from "../../src/domain/provider/payload-filter.js";
-export { applyPruning, getNudgeType, injectNudge } from "../../src/domain/pruning/index.js";
+export {
+  applyPruning,
+  exceedsMaxContextLimit,
+  getNudgeType,
+  injectNudge,
+} from "../../src/domain/pruning/index.js";
 export {
   buildBlockOwnerKey,
   buildLiveOwnerKeys,

@@ -70,6 +70,10 @@ DCP uses a layered configuration system (later layers override earlier ones):
     "maxContextPercent": 0.9,
     // Below 75 % context: no nudges
     "minContextPercent": 0.75,
+    // Optional absolute-token thresholds. These are ORed with percent thresholds.
+    // Useful for 1M-token models that degrade around 150k-200k tokens.
+    // "maxContextTokens": 200000,
+    // "minContextTokens": 150000,
     // Minimum newer logical turns between nudges
     "nudgeDebounceTurns": 2,
     // Legacy context-pass cadence knob (retained for backward compatibility)
@@ -134,7 +138,7 @@ When the LLM calls the `compress` tool it provides one or more `{startId, endId,
 
 When a new compression exactly covers an older exact-coverage block, DCP now supersedes the older block instead of accumulating both summaries. Ambiguous partial overlap still rejects conservatively.
 
-By default, DCP also protects the hot tail of the conversation: ranges that end inside the last `protectRecentTurns` logical turns/tool batches are rejected unless the session is already above the hard emergency threshold (`maxContextPercent`). When a range is rejected, DCP now includes planning hints that surface the hot-tail start, protected `m0001` / `bN` IDs, and the largest visible safe candidate ranges; the same guidance is appended to live compression nudges.
+By default, DCP also protects the hot tail of the conversation: ranges that end inside the last `protectRecentTurns` logical turns/tool batches are rejected unless the session is already above the hard emergency threshold (`maxContextPercent` or `maxContextTokens`, if configured). When a range is rejected, DCP now includes planning hints that surface the hot-tail start, protected `m0001` / `bN` IDs, and the largest visible safe candidate ranges; the same guidance is appended to live compression nudges.
 
 Message IDs (`m0001`, `m0042`, etc.) and block IDs (`b1`, `b3`) are injected into context so the LLM can reference exact compression boundaries. Internal owner keys are not rendered as model-visible metadata; provider-payload filtering uses canonical source/span/block ownership tracked in state.
 
@@ -144,12 +148,12 @@ When a compression range touches any part of an assistant→toolResult group, DC
 
 ### Nudge types
 
-| Nudge              | Condition                                                                                                                                          |
-| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **context-strong** | Above `maxContextPercent`, after logical-turn debounce / post-compress cool-down, `nudgeForce = "strong"`                                          |
-| **context-soft**   | Same as above with `nudgeForce = "soft"`                                                                                                           |
-| **iteration**      | Between min/max percent, after logical-turn debounce / post-compress cool-down, AND ≥ `iterationNudgeThreshold` tool calls since last user message |
-| **turn**           | Between min/max percent, after logical-turn debounce / post-compress cool-down                                                                     |
+| Nudge              | Condition                                                                                                                                         |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **context-strong** | Above `maxContextPercent` OR `maxContextTokens`, after logical-turn debounce / post-compress cool-down, `nudgeForce = "strong"`                   |
+| **context-soft**   | Same as above with `nudgeForce = "soft"`                                                                                                          |
+| **iteration**      | Between min/max limits, after logical-turn debounce / post-compress cool-down, AND ≥ `iterationNudgeThreshold` tool calls since last user message |
+| **turn**           | Between min/max limits, after logical-turn debounce / post-compress cool-down                                                                     |
 
 ### Deduplication
 

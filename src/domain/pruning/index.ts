@@ -28,37 +28,43 @@ export { estimateTokens, resolveCompressionRangeIndices } from "../compression/r
 function getMessageSourceKey(message: any, ordinal: number): string {
   return typeof message?.[INTERNAL_SOURCE_KEY] === "string"
     ? message[INTERNAL_SOURCE_KEY]
-    : buildSourceItemKey(message, ordinal)
+    : buildSourceItemKey(message, ordinal);
 }
 
-function resolveCompressionRangeForBlock(messages: any[], block: DcpState["compressionBlocks"][number]): { lo: number; hi: number } | null {
+function resolveCompressionRangeForBlock(
+  messages: any[],
+  block: DcpState["compressionBlocks"][number]
+): { lo: number; hi: number } | null {
   if (block.startSourceKey && block.endSourceKey) {
-    const sourceKeys = messages.map((message, ordinal) => getMessageSourceKey(message, ordinal))
-    const startIdx = sourceKeys.indexOf(block.startSourceKey)
-    const endIdx = sourceKeys.indexOf(block.endSourceKey)
+    const sourceKeys = messages.map((message, ordinal) => getMessageSourceKey(message, ordinal));
+    const startIdx = sourceKeys.indexOf(block.startSourceKey);
+    const endIdx = sourceKeys.indexOf(block.endSourceKey);
     if (startIdx !== -1 && endIdx !== -1) {
       return expandCompressionIndexRange(
         messages,
         Math.min(startIdx, endIdx),
-        Math.max(startIdx, endIdx),
-      )
+        Math.max(startIdx, endIdx)
+      );
     }
   }
 
-  if (!Number.isFinite(block.startTimestamp) || !Number.isFinite(block.endTimestamp)) return null
-  return resolveCompressionRangeIndices(messages, block.startTimestamp, block.endTimestamp)
+  if (!Number.isFinite(block.startTimestamp) || !Number.isFinite(block.endTimestamp)) return null;
+  return resolveCompressionRangeIndices(messages, block.startTimestamp, block.endTimestamp);
 }
 
-function resolveAnchorIndex(messages: any[], block: DcpState["compressionBlocks"][number]): number | null {
-  if (!block.anchorSourceKey) return null
-  if (block.anchorSourceKey.startsWith("tail:")) return messages.length
+function resolveAnchorIndex(
+  messages: any[],
+  block: DcpState["compressionBlocks"][number]
+): number | null {
+  if (!block.anchorSourceKey) return null;
+  if (block.anchorSourceKey.startsWith("tail:")) return messages.length;
 
   for (let index = 0; index < messages.length; index++) {
     if (getMessageSourceKey(messages[index], index) === block.anchorSourceKey) {
-      return index
+      return index;
     }
   }
-  return null
+  return null;
 }
 
 function applyCompressionBlocks(messages: any[], state: DcpState, config: DcpConfig): any[] {
@@ -69,7 +75,7 @@ function applyCompressionBlocks(messages: any[], state: DcpState, config: DcpCon
   }
 
   const blocksByRecency = [...activeBlocks].sort(
-    (a, b) => (b.createdAt ?? b.id) - (a.createdAt ?? a.id),
+    (a, b) => (b.createdAt ?? b.id) - (a.createdAt ?? a.id)
   );
   const blockDetailById = new Map<number, "full" | "compact" | "minimal">();
   const fullCount = Math.max(0, Math.floor(config.compress.renderFullBlockCount));
@@ -111,7 +117,9 @@ function applyCompressionBlocks(messages: any[], state: DcpState, config: DcpCon
       // anchorTimestamp is always finite (resolveAnchorTimestamp returns
       // endTimestamp + 1 instead of Infinity), but guard against corrupted
       // state from older sessions where Infinity/null could leak in.
-      timestamp: Number.isFinite(block.anchorTimestamp) ? block.anchorTimestamp - 0.5 : block.endTimestamp + 0.5,
+      timestamp: Number.isFinite(block.anchorTimestamp)
+        ? block.anchorTimestamp - 0.5
+        : block.endTimestamp + 0.5,
     };
 
     // Estimate tokens added by the summary
@@ -299,34 +307,36 @@ function applyToolOutputPruning(messages: any[], state: DcpState): void {
  * Updates state.messageIdSnapshot.
  */
 function extractBlockOwnerKey(message: any): string | null {
-  const content = message?.content
-  const text = typeof content === "string"
-    ? content
-    : Array.isArray(content)
-      ? content.map((part: any) => typeof part?.text === "string" ? part.text : "").join("\n")
-      : ""
-  const match = text.match(/<dcp-block-id>(b\d+)<\/dcp-block-id>/)
-  return match?.[1] ? `block:${match[1]}` : null
+  const content = message?.content;
+  const text =
+    typeof content === "string"
+      ? content
+      : Array.isArray(content)
+        ? content.map((part: any) => (typeof part?.text === "string" ? part.text : "")).join("\n")
+        : "";
+  const match = text.match(/<dcp-block-id>(b\d+)<\/dcp-block-id>/);
+  return match?.[1] ? `block:${match[1]}` : null;
 }
 
 function stripGeneratedDcpHallucinations(messages: any[]): void {
   for (const msg of messages) {
-    const role = msg?.role
-    if (role !== "assistant" && role !== "toolResult" && role !== "bashExecution") continue
+    const role = msg?.role;
+    if (role !== "assistant" && role !== "toolResult" && role !== "bashExecution") continue;
 
     if (typeof msg.content === "string") {
-      msg.content = stripDcpHallucinationsFromString(msg.content)
-      continue
+      msg.content = stripDcpHallucinationsFromString(msg.content);
+      continue;
     }
 
-    if (!Array.isArray(msg.content)) continue
+    if (!Array.isArray(msg.content)) continue;
     msg.content = msg.content.map((part: any) => {
-      if (!part || typeof part !== "object") return part
-      const clone = { ...part }
-      if (typeof clone.text === "string") clone.text = stripDcpHallucinationsFromString(clone.text)
-      if (typeof clone.input === "string") clone.input = stripDcpHallucinationsFromString(clone.input)
-      return clone
-    })
+      if (!part || typeof part !== "object") return part;
+      const clone = { ...part };
+      if (typeof clone.text === "string") clone.text = stripDcpHallucinationsFromString(clone.text);
+      if (typeof clone.input === "string")
+        clone.input = stripDcpHallucinationsFromString(clone.input);
+      return clone;
+    });
   }
 }
 
@@ -344,12 +354,16 @@ function injectMessageIds(messages: any[], state: DcpState): void {
     // Skip non-eligible roles
     if (!ID_ELIGIBLE_ROLES.has(role)) continue;
 
-    const sourceKey = typeof msg[INTERNAL_SOURCE_KEY] === "string"
-      ? msg[INTERNAL_SOURCE_KEY]
-      : buildSourceItemKey(msg, ordinal);
+    const sourceKey =
+      typeof msg[INTERNAL_SOURCE_KEY] === "string"
+        ? msg[INTERNAL_SOURCE_KEY]
+        : buildSourceItemKey(msg, ordinal);
     const id = allocateMessageRef(state.messageAliases, sourceKey);
-    const ownerKey = extractBlockOwnerKey(msg)
-      ?? (typeof msg[INTERNAL_OWNER_KEY] === "string" ? msg[INTERNAL_OWNER_KEY] : buildSourceOwnerKey(ordinal));
+    const ownerKey =
+      extractBlockOwnerKey(msg) ??
+      (typeof msg[INTERNAL_OWNER_KEY] === "string"
+        ? msg[INTERNAL_OWNER_KEY]
+        : buildSourceOwnerKey(ordinal));
     const metadataTag = `\n<dcp-id>${id}</dcp-id>`;
 
     if (role === "user") {
@@ -369,9 +383,7 @@ function injectMessageIds(messages: any[], state: DcpState): void {
         // Insert the ID tag before any tool_use (toolCall) blocks.
         // Anthropic requires: thinking → text → tool_use.
         // Appending after tool_use blocks violates that constraint.
-        const firstToolCallIdx = msg.content.findIndex(
-          (b: any) => b.type === "toolCall",
-        );
+        const firstToolCallIdx = msg.content.findIndex((b: any) => b.type === "toolCall");
         const idBlock = { type: "text", text: metadataTag };
         if (firstToolCallIdx === -1) {
           // No tool_use blocks — append as usual
@@ -389,9 +401,8 @@ function injectMessageIds(messages: any[], state: DcpState): void {
       }
     }
 
-    const timestamp = typeof msg.timestamp === "number" && Number.isFinite(msg.timestamp)
-      ? msg.timestamp
-      : null;
+    const timestamp =
+      typeof msg.timestamp === "number" && Number.isFinite(msg.timestamp) ? msg.timestamp : null;
     state.messageRefSnapshot.set(id, { ref: id, sourceKey, timestamp, ownerKey });
     state.messageOwnerSnapshot.set(id, ownerKey);
     if (timestamp !== null) {
@@ -417,11 +428,7 @@ function injectMessageIds(messages: any[], state: DcpState): void {
  * Main transform: applies all pruning and returns modified message array.
  * Called from the `context` event handler.
  */
-export function applyPruning(
-  messages: DcpMessage[],
-  state: DcpState,
-  config: DcpConfig
-): any[] {
+export function applyPruning(messages: DcpMessage[], state: DcpState, config: DcpConfig): any[] {
   // Deep-clone each message and its content to prevent mutations from
   // affecting the original objects across context events.
   const msgs: DcpMessage[] = messages.map((m: DcpMessage, ordinal: number) => {
@@ -543,22 +550,41 @@ export function injectNudge(messages: DcpMessage[], nudgeText: string): void {
  * - suppressed immediately after a successful compress until enough newer logical
  *   turns have happened
  */
+export function exceedsMaxContextLimit(
+  contextPercent: number,
+  config: DcpConfig,
+  contextTokens?: number | null
+): boolean {
+  if (contextPercent > config.compress.maxContextPercent) return true;
+  const maxTokens = config.compress.maxContextTokens;
+  return typeof maxTokens === "number" && contextTokens !== null && contextTokens !== undefined
+    ? contextTokens > maxTokens
+    : false;
+}
+
+function reachesMinContextLimit(
+  contextPercent: number,
+  config: DcpConfig,
+  contextTokens?: number | null
+): boolean {
+  if (contextPercent >= config.compress.minContextPercent) return true;
+  const minTokens = config.compress.minContextTokens;
+  return typeof minTokens === "number" && contextTokens !== null && contextTokens !== undefined
+    ? contextTokens >= minTokens
+    : false;
+}
+
 export function getNudgeType(
   contextPercent: number,
   state: DcpState,
   config: DcpConfig,
-  toolCallsSinceLastUser: number
+  toolCallsSinceLastUser: number,
+  contextTokens?: number | null
 ): "context-strong" | "context-soft" | "turn" | "iteration" | null {
-  const {
-    maxContextPercent,
-    minContextPercent,
-    nudgeDebounceTurns,
-    nudgeForce,
-    iterationNudgeThreshold,
-  } = config.compress;
+  const { nudgeDebounceTurns, nudgeForce, iterationNudgeThreshold } = config.compress;
   const debounceTurns = Math.max(1, nudgeDebounceTurns);
 
-  if (contextPercent < minContextPercent) {
+  if (!reachesMinContextLimit(contextPercent, config, contextTokens)) {
     return null;
   }
 
@@ -569,14 +595,11 @@ export function getNudgeType(
   }
 
   // Debounce by logical turns rather than by raw context passes.
-  if (
-    state.lastNudgeTurn >= 0 &&
-    state.currentTurn - state.lastNudgeTurn < debounceTurns
-  ) {
+  if (state.lastNudgeTurn >= 0 && state.currentTurn - state.lastNudgeTurn < debounceTurns) {
     return null;
   }
 
-  if (contextPercent > maxContextPercent) {
+  if (exceedsMaxContextLimit(contextPercent, config, contextTokens)) {
     return nudgeForce === "strong" ? "context-strong" : "context-soft";
   }
 

@@ -16,6 +16,7 @@ import {
   fs,
   getNudgeType,
   injectNudge,
+  exceedsMaxContextLimit,
   makeConfig,
   makeMessages,
   makeState,
@@ -142,5 +143,38 @@ describe("DCP nudge.test", () => {
 
     console.log("  PASS: turn debounce and post-compress suppression work");
     console.log("TEST 13 PASSED\n");
+  });
+
+  test("token thresholds are ORed with percent thresholds", () => {
+    const config = makeConfig();
+    config.compress.minContextPercent = 0.75;
+    config.compress.maxContextPercent = 0.9;
+    config.compress.minContextTokens = 150_000;
+    config.compress.maxContextTokens = 200_000;
+
+    const state = makeState();
+    state.currentTurn = 5;
+    state.lastNudgeTurn = -1;
+
+    assert.strictEqual(
+      getNudgeType(0.2, state, config, 0, 149_999),
+      null,
+      "FAIL — should stay quiet below both percent and token minimum thresholds"
+    );
+    assert.strictEqual(
+      getNudgeType(0.2, state, config, 0, 150_000),
+      "turn",
+      "FAIL — absolute token minimum should allow nudges even when percent is low"
+    );
+    assert.strictEqual(
+      getNudgeType(0.2, state, config, 0, 200_001),
+      "context-soft",
+      "FAIL — absolute token maximum should trigger context nudge even when percent is low"
+    );
+    assert.strictEqual(
+      exceedsMaxContextLimit(0.2, config, 200_001),
+      true,
+      "FAIL — hot-tail emergency override should honor maxContextTokens"
+    );
   });
 });
