@@ -16,34 +16,36 @@ import {
   type PersistedDcpState,
   type PersistedDcpStateV1,
   type PersistedDcpStateV2,
-} from "../state.js"
-import { normalizeMessageAliasState, serializeMessageAliasState } from "../message-refs.js"
-import type { TranscriptSnapshot } from "../transcript.js"
+} from "../state.js";
+import { normalizeMessageAliasState, serializeMessageAliasState } from "../message-refs.js";
+import type { TranscriptSnapshot } from "../transcript.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
 function asObject(value: unknown): Record<string, unknown> | null {
-  if (value === null || typeof value !== "object") return null
-  return value as Record<string, unknown>
+  if (value === null || typeof value !== "object") return null;
+  return value as Record<string, unknown>;
 }
 
 function isFiniteNumber(value: unknown): value is number {
-  return typeof value === "number" && Number.isFinite(value)
+  return typeof value === "number" && Number.isFinite(value);
 }
 
 function normalizeBlockStatus(value: unknown): CompressionBlockStatus {
-  return value === "superseded" || value === "decompressed" ? value : "active"
+  return value === "superseded" || value === "decompressed" ? value : "active";
 }
 
 function normalizeStringArray(value: unknown): string[] {
-  return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : []
+  return Array.isArray(value)
+    ? value.filter((entry): entry is string => typeof entry === "string")
+    : [];
 }
 
 function normalizeCompressionLogEntry(value: unknown): CompressionLogEntry | null {
-  const entry = asObject(value)
-  if (!entry || typeof entry.text !== "string") return null
+  const entry = asObject(value);
+  if (!entry || typeof entry.text !== "string") return null;
 
   switch (entry.kind) {
     case "user_excerpt":
@@ -58,52 +60,55 @@ function normalizeCompressionLogEntry(value: unknown): CompressionLogEntry | nul
       return {
         kind: entry.kind,
         text: entry.text,
-      }
+      };
     default:
-      return null
+      return null;
   }
 }
 
 function normalizeFileReadStat(value: unknown): CompressionFileReadStat | null {
-  const stat = asObject(value)
-  if (!stat || typeof stat.path !== "string") return null
+  const stat = asObject(value);
+  if (!stat || typeof stat.path !== "string") return null;
 
   return {
     path: stat.path,
     count: isFiniteNumber(stat.count) ? stat.count : 0,
     lineSpans: normalizeStringArray(stat.lineSpans),
-  }
+  };
 }
 
 function normalizeFileWriteStat(value: unknown): CompressionFileWriteStat | null {
-  const stat = asObject(value)
-  if (!stat || typeof stat.path !== "string") return null
+  const stat = asObject(value);
+  if (!stat || typeof stat.path !== "string") return null;
 
   return {
     path: stat.path,
     editCount: isFiniteNumber(stat.editCount) ? stat.editCount : 0,
     addedLines: isFiniteNumber(stat.addedLines) ? stat.addedLines : 0,
     removedLines: isFiniteNumber(stat.removedLines) ? stat.removedLines : 0,
-  }
+  };
 }
 
 function normalizeCommandStat(value: unknown): CompressionCommandStat | null {
-  const stat = asObject(value)
-  if (!stat || typeof stat.command !== "string") return null
+  const stat = asObject(value);
+  if (!stat || typeof stat.command !== "string") return null;
 
   return {
     command: stat.command,
     status: stat.status === "ok" || stat.status === "error" ? stat.status : "other",
-  }
+  };
 }
 
-function normalizeCompressionBlockMetadata(value: unknown, legacySupersededBlockIds: number[]): CompressionBlockMetadata {
-  const metadata = asObject(value)
+function normalizeCompressionBlockMetadata(
+  value: unknown,
+  legacySupersededBlockIds: number[]
+): CompressionBlockMetadata {
+  const metadata = asObject(value);
   if (!metadata) {
     return {
       ...createEmptyCompressionBlockMetadata(),
       supersededBlockIds: legacySupersededBlockIds,
-    }
+    };
   }
 
   return {
@@ -115,20 +120,26 @@ function normalizeCompressionBlockMetadata(value: unknown, legacySupersededBlock
       ? metadata.supersededBlockIds.filter(isFiniteNumber)
       : legacySupersededBlockIds,
     fileReadStats: Array.isArray(metadata.fileReadStats)
-      ? metadata.fileReadStats.map(normalizeFileReadStat).filter((stat): stat is CompressionFileReadStat => stat !== null)
+      ? metadata.fileReadStats
+          .map(normalizeFileReadStat)
+          .filter((stat): stat is CompressionFileReadStat => stat !== null)
       : [],
     fileWriteStats: Array.isArray(metadata.fileWriteStats)
-      ? metadata.fileWriteStats.map(normalizeFileWriteStat).filter((stat): stat is CompressionFileWriteStat => stat !== null)
+      ? metadata.fileWriteStats
+          .map(normalizeFileWriteStat)
+          .filter((stat): stat is CompressionFileWriteStat => stat !== null)
       : [],
     commandStats: Array.isArray(metadata.commandStats)
-      ? metadata.commandStats.map(normalizeCommandStat).filter((stat): stat is CompressionCommandStat => stat !== null)
+      ? metadata.commandStats
+          .map(normalizeCommandStat)
+          .filter((stat): stat is CompressionCommandStat => stat !== null)
       : [],
-  }
+  };
 }
 
 function normalizeLegacyBlock(value: unknown): CompressionBlock | null {
-  const block = asObject(value)
-  if (!block) return null
+  const block = asObject(value);
+  if (!block) return null;
 
   if (
     !isFiniteNumber(block.id) ||
@@ -137,14 +148,14 @@ function normalizeLegacyBlock(value: unknown): CompressionBlock | null {
     !isFiniteNumber(block.startTimestamp) ||
     !isFiniteNumber(block.endTimestamp)
   ) {
-    return null
+    return null;
   }
 
   const activityLog = Array.isArray(block.activityLog)
     ? block.activityLog
         .map(normalizeCompressionLogEntry)
         .filter((entry): entry is CompressionLogEntry => entry !== null)
-    : undefined
+    : undefined;
 
   return {
     id: block.id,
@@ -152,9 +163,7 @@ function normalizeLegacyBlock(value: unknown): CompressionBlock | null {
     summary: block.summary,
     startTimestamp: block.startTimestamp,
     endTimestamp: block.endTimestamp,
-    anchorTimestamp: isFiniteNumber(block.anchorTimestamp)
-      ? block.anchorTimestamp
-      : Infinity,
+    anchorTimestamp: isFiniteNumber(block.anchorTimestamp) ? block.anchorTimestamp : Infinity,
     startSourceKey: typeof block.startSourceKey === "string" ? block.startSourceKey : undefined,
     endSourceKey: typeof block.endSourceKey === "string" ? block.endSourceKey : undefined,
     anchorSourceKey: typeof block.anchorSourceKey === "string" ? block.anchorSourceKey : undefined,
@@ -162,20 +171,18 @@ function normalizeLegacyBlock(value: unknown): CompressionBlock | null {
     summaryTokenEstimate: isFiniteNumber(block.summaryTokenEstimate)
       ? block.summaryTokenEstimate
       : 0,
-    savedTokenEstimate: isFiniteNumber(block.savedTokenEstimate)
-      ? block.savedTokenEstimate
-      : 0,
+    savedTokenEstimate: isFiniteNumber(block.savedTokenEstimate) ? block.savedTokenEstimate : 0,
     createdAt: isFiniteNumber(block.createdAt) ? block.createdAt : Date.now(),
     compressCallId: typeof block.compressCallId === "string" ? block.compressCallId : undefined,
     activityLogVersion: activityLog ? 1 : undefined,
     activityLog,
     metadata: normalizeCompressionBlockMetadata(block.metadata, []),
-  }
+  };
 }
 
 function normalizeV2Block(value: unknown): CompressionBlockV2 | null {
-  const block = asObject(value)
-  if (!block) return null
+  const block = asObject(value);
+  if (!block) return null;
 
   if (
     !isFiniteNumber(block.id) ||
@@ -184,18 +191,18 @@ function normalizeV2Block(value: unknown): CompressionBlockV2 | null {
     typeof block.startSpanKey !== "string" ||
     typeof block.endSpanKey !== "string"
   ) {
-    return null
+    return null;
   }
 
   const legacySupersededBlockIds = Array.isArray(block.supersedesBlockIds)
     ? block.supersedesBlockIds.filter(isFiniteNumber)
-    : []
+    : [];
   const activityLog = Array.isArray(block.activityLog)
     ? block.activityLog
         .map(normalizeCompressionLogEntry)
         .filter((entry): entry is CompressionLogEntry => entry !== null)
-    : []
-  const metadata = normalizeCompressionBlockMetadata(block.metadata, legacySupersededBlockIds)
+    : [];
+  const metadata = normalizeCompressionBlockMetadata(block.metadata, legacySupersededBlockIds);
 
   return {
     id: block.id,
@@ -211,7 +218,7 @@ function normalizeV2Block(value: unknown): CompressionBlockV2 | null {
     activityLogVersion: 1,
     activityLog,
     metadata,
-  }
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -220,24 +227,21 @@ function normalizeV2Block(value: unknown): CompressionBlockV2 | null {
 
 /** Span coverage for one remapped legacy block. */
 export interface LegacyBlockSpanRange {
-  startSpanKey: string
-  endSpanKey: string
+  startSpanKey: string;
+  endSpanKey: string;
 }
 
 function findSourceItemKeyByTimestamp(
   snapshot: TranscriptSnapshot,
-  timestamp: number,
+  timestamp: number
 ): string | null {
-  const item = snapshot.sourceItems.find((candidate) => candidate.timestamp === timestamp)
-  return item?.key ?? null
+  const item = snapshot.sourceItems.find((candidate) => candidate.timestamp === timestamp);
+  return item?.key ?? null;
 }
 
-function findContainingSpanKey(
-  snapshot: TranscriptSnapshot,
-  sourceKey: string,
-): string | null {
-  const span = snapshot.spans.find((candidate) => candidate.sourceKeys.includes(sourceKey))
-  return span?.key ?? null
+function findContainingSpanKey(snapshot: TranscriptSnapshot, sourceKey: string): string | null {
+  const span = snapshot.spans.find((candidate) => candidate.sourceKeys.includes(sourceKey));
+  return span?.key ?? null;
 }
 
 /**
@@ -249,20 +253,63 @@ function findContainingSpanKey(
  */
 export function mapLegacyBlockToSpanRange(
   block: CompressionBlock,
-  snapshot: TranscriptSnapshot,
+  snapshot: TranscriptSnapshot
 ): LegacyBlockSpanRange | null {
-  const startSourceKey = findSourceItemKeyByTimestamp(snapshot, block.startTimestamp)
-  const endSourceKey = findSourceItemKeyByTimestamp(snapshot, block.endTimestamp)
-  if (!startSourceKey || !endSourceKey) return null
+  const startSourceKey = findSourceItemKeyByTimestamp(snapshot, block.startTimestamp);
+  const endSourceKey = findSourceItemKeyByTimestamp(snapshot, block.endTimestamp);
+  if (!startSourceKey || !endSourceKey) return null;
 
-  const startSpanKey = findContainingSpanKey(snapshot, startSourceKey)
-  const endSpanKey = findContainingSpanKey(snapshot, endSourceKey)
-  if (!startSpanKey || !endSpanKey) return null
+  const startSpanKey = findContainingSpanKey(snapshot, startSourceKey);
+  const endSpanKey = findContainingSpanKey(snapshot, endSourceKey);
+  if (!startSpanKey || !endSpanKey) return null;
 
   return {
     startSpanKey,
     endSpanKey,
+  };
+}
+
+/**
+ * Convert timestamp-backed persisted blocks into span-key blocks at the
+ * persistence boundary. Unresolved blocks are skipped conservatively so callers
+ * can keep using the original v1 state until they deliberately switch runtime
+ * materialization to the converted blocks.
+ */
+export function migrateLegacyCompressionBlocksToV2(
+  blocks: CompressionBlock[],
+  snapshot: TranscriptSnapshot
+): CompressionBlockV2[] {
+  const migratedBlocks: CompressionBlockV2[] = [];
+
+  for (const block of blocks) {
+    const spanRange = mapLegacyBlockToSpanRange(block, snapshot);
+    if (!spanRange) continue;
+
+    const existingMetadata = block.metadata ?? createEmptyCompressionBlockMetadata();
+    const coveredSpanKeys =
+      existingMetadata.coveredSpanKeys.length > 0
+        ? existingMetadata.coveredSpanKeys
+        : [spanRange.startSpanKey, spanRange.endSpanKey];
+
+    migratedBlocks.push({
+      id: block.id,
+      topic: block.topic,
+      summary: block.summary,
+      startSpanKey: spanRange.startSpanKey,
+      endSpanKey: spanRange.endSpanKey,
+      status: block.active ? "active" : "decompressed",
+      summaryTokenEstimate: block.summaryTokenEstimate,
+      createdAt: block.createdAt,
+      activityLogVersion: 1,
+      activityLog: block.activityLog ?? [],
+      metadata: {
+        ...existingMetadata,
+        coveredSpanKeys,
+      },
+    });
   }
+
+  return migratedBlocks;
 }
 
 /**
@@ -281,8 +328,8 @@ export function serializePersistedState(state: DcpState): PersistedDcpState {
       currentTurn: state.currentTurn,
       lastNudgeTurn: state.lastNudgeTurn,
       lastCompressTurn: state.lastCompressTurn,
-    }
-    return persisted
+    };
+    return persisted;
   }
 
   const persisted: PersistedDcpStateV1 = {
@@ -297,8 +344,8 @@ export function serializePersistedState(state: DcpState): PersistedDcpState {
     currentTurn: state.currentTurn,
     lastNudgeTurn: state.lastNudgeTurn,
     lastCompressTurn: state.lastCompressTurn,
-  }
-  return persisted
+  };
+  return persisted;
 }
 
 /**
@@ -308,76 +355,74 @@ export function serializePersistedState(state: DcpState): PersistedDcpState {
  * in `state.compressionBlocksV2` for future work but are not yet materialized.
  */
 export function restorePersistedState(data: unknown, state: DcpState): void {
-  const persisted = asObject(data)
-  if (!persisted) return
+  const persisted = asObject(data);
+  if (!persisted) return;
 
   if (persisted.schemaVersion === 2 || Array.isArray(persisted.blocks)) {
     const blocks = Array.isArray(persisted.blocks)
       ? persisted.blocks.map(normalizeV2Block).filter((b): b is CompressionBlockV2 => b !== null)
-      : []
+      : [];
 
-    state.schemaVersion = 2
-    state.compressionBlocks = []
-    state.compressionBlocksV2 = blocks
+    state.schemaVersion = 2;
+    state.compressionBlocks = [];
+    state.compressionBlocksV2 = blocks;
     state.nextBlockId = isFiniteNumber(persisted.nextBlockId)
       ? persisted.nextBlockId
       : blocks.length > 0
         ? Math.max(0, ...blocks.map((b) => b.id)) + 1
-        : 1
-    state.messageAliases = normalizeMessageAliasState(persisted.messageAliases)
+        : 1;
+    state.messageAliases = normalizeMessageAliasState(persisted.messageAliases);
 
     if (typeof persisted.manualMode === "boolean") {
-      state.manualMode = persisted.manualMode
+      state.manualMode = persisted.manualMode;
     }
     if (isFiniteNumber(persisted.currentTurn)) {
-      state.currentTurn = persisted.currentTurn
+      state.currentTurn = persisted.currentTurn;
     }
     if (isFiniteNumber(persisted.lastNudgeTurn)) {
-      state.lastNudgeTurn = persisted.lastNudgeTurn
+      state.lastNudgeTurn = persisted.lastNudgeTurn;
     }
     if (isFiniteNumber(persisted.lastCompressTurn)) {
-      state.lastCompressTurn = persisted.lastCompressTurn
+      state.lastCompressTurn = persisted.lastCompressTurn;
     }
 
-    return
+    return;
   }
 
   const blocks = Array.isArray(persisted.compressionBlocks)
     ? persisted.compressionBlocks
         .map(normalizeLegacyBlock)
         .filter((b): b is CompressionBlock => b !== null)
-    : []
+    : [];
 
-  state.schemaVersion = 1
-  state.compressionBlocks = blocks
-  state.compressionBlocksV2 = []
+  state.schemaVersion = 1;
+  state.compressionBlocks = blocks;
+  state.compressionBlocksV2 = [];
   state.nextBlockId = isFiniteNumber(persisted.nextBlockId)
     ? persisted.nextBlockId
     : blocks.length > 0
       ? Math.max(0, ...blocks.map((b) => b.id)) + 1
-      : 1
-  state.messageAliases = normalizeMessageAliasState(persisted.messageAliases)
-  state.tokensSaved = isFiniteNumber(persisted.tokensSaved) ? persisted.tokensSaved : 0
-  state.totalPruneCount = isFiniteNumber(persisted.totalPruneCount)
-    ? persisted.totalPruneCount
-    : 0
+      : 1;
+  state.messageAliases = normalizeMessageAliasState(persisted.messageAliases);
+  state.tokensSaved = isFiniteNumber(persisted.tokensSaved) ? persisted.tokensSaved : 0;
+  state.totalPruneCount = isFiniteNumber(persisted.totalPruneCount) ? persisted.totalPruneCount : 0;
 
   if (Array.isArray(persisted.prunedToolIds)) {
     state.prunedToolIds = new Set(
-      persisted.prunedToolIds.filter((value): value is string => typeof value === "string"),
-    )
+      persisted.prunedToolIds.filter((value): value is string => typeof value === "string")
+    );
   }
 
   if (typeof persisted.manualMode === "boolean") {
-    state.manualMode = persisted.manualMode
+    state.manualMode = persisted.manualMode;
   }
   if (isFiniteNumber(persisted.currentTurn)) {
-    state.currentTurn = persisted.currentTurn
+    state.currentTurn = persisted.currentTurn;
   }
   if (isFiniteNumber(persisted.lastNudgeTurn)) {
-    state.lastNudgeTurn = persisted.lastNudgeTurn
+    state.lastNudgeTurn = persisted.lastNudgeTurn;
   }
   if (isFiniteNumber(persisted.lastCompressTurn)) {
-    state.lastCompressTurn = persisted.lastCompressTurn
+    state.lastCompressTurn = persisted.lastCompressTurn;
   }
 }
