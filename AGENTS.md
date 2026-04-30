@@ -68,25 +68,29 @@ Notes:
 This repo is in a **hybrid state**:
 
 1. **Active runtime path = legacy blocks with source-key anchors**
-   - `state.compressionBlocks` is still the live block log used by the extension.
-   - `src/application/compress-tool/` resolves stable visible refs through canonical source keys and keeps timestamp fallback for legacy blocks.
-   - `src/domain/pruning/` still applies active legacy blocks on each `context` pass, preferring source-key placement when available.
+
+- `state.compressionBlocks` is still the live block log used by the extension.
+- `src/application/compress-tool/` resolves stable visible refs through canonical source keys and keeps timestamp fallback for legacy blocks.
+- `src/domain/pruning/` still applies active legacy blocks on each `context` pass, preferring source-key placement when available.
 
 2. **Exact canonical metadata is already partially live**
-   - new blocks persist exact `metadata.coveredSourceKeys` and `metadata.coveredSpanKeys`
-   - exact metadata is preferred over timestamp approximation whenever available
-   - exact metadata is used for:
-     - live owner/liveness derivation
-     - exact supersession of older fully covered blocks
+
+- new blocks persist exact `metadata.coveredSourceKeys` and `metadata.coveredSpanKeys`
+- exact metadata is preferred over timestamp approximation whenever available
+- exact metadata is used for:
+  - live owner/liveness derivation
+  - exact supersession of older fully covered blocks
 
 3. **Canonical transcript scaffolding already exists**
-   - `src/domain/transcript/` builds `TranscriptSnapshot`
-   - assistant tool-call messages plus matching `toolResult` / `bashExecution` are grouped into one `tool-exchange` span
-   - this span model now drives several current semantics, not just future v2 work
+
+- `src/domain/transcript/` builds `TranscriptSnapshot`
+- assistant tool-call messages plus matching `toolResult` / `bashExecution` are grouped into one `tool-exchange` span
+- this span model now drives several current semantics, not just future v2 work
 
 4. **Full v2 materialization is not active yet**
-   - `compressionBlocksV2` and `src/domain/compression/materialize.ts` are scaffolding / shared renderer support
-   - the runtime still materializes legacy blocks, not full v2 span-key blocks
+
+- `compressionBlocksV2` and `src/domain/compression/materialize.ts` are scaffolding / shared renderer support
+- the runtime still materializes legacy blocks, not full v2 span-key blocks
 
 ---
 
@@ -200,7 +204,7 @@ Touch at least:
 
 - `src/application/compress-tool/` and `src/domain/compression/`
 - `src/domain/pruning/`
-- `tests/unit/compression.test.ts` and relevant `tests/integration/*`
+- `tests/unit/compression.test.ts` and relevant `tests/integration/`\*
 - `README.md` / `AGENTS.md` if user-visible behavior changes
 
 ### If you change ownership / hidden artifact filtering
@@ -237,30 +241,37 @@ Touch at least:
 ## Key invariants — do not break
 
 1. **Assistant + tool-result pairs must be removed atomically.**
-   - If a compression range touches a tool result, the matching assistant/tool-call message must come with it.
-   - `src/domain/pruning/` contains both expansion logic and a repair safety net.
+
+- If a compression range touches a tool result, the matching assistant/tool-call message must come with it.
+- `src/domain/pruning/` contains both expansion logic and a repair safety net.
 
 2. **Prefer exact coverage metadata over timestamps.**
-   - `coveredSourceKeys` / `coveredSpanKeys` are the best available truth.
-   - Timestamp fallback exists for backward compatibility only.
+
+- `coveredSourceKeys` / `coveredSpanKeys` are the best available truth.
+- Timestamp fallback exists for backward compatibility only.
 
 3. **Do not solve liveness with long-lived caches.**
-   - Persist canonical facts.
-   - Recompute liveness from the current source transcript plus active blocks.
+
+- Persist canonical facts.
+- Recompute liveness from the current source transcript plus active blocks.
 
 4. **Visible IDs and internal ownership are different layers.**
-   - `m0001`-style message refs / `bN` block refs are for the agent/tool contract.
-   - canonical owner keys are internal runtime bookkeeping and must not be rendered as visible owner tags.
+
+- `m0001`-style message refs / `bN` block refs are for the agent/tool contract.
+- canonical owner keys are internal runtime bookkeeping and must not be rendered as visible owner tags.
 
 5. **Supersession is allowed only for exact full coverage.**
-   - Full containment of an older exact block is absorbable.
-   - Partial ambiguous overlap should still reject.
+
+- Full containment of an older exact block is absorbable.
+- Partial ambiguous overlap should still reject.
 
 6. **Hot-tail protection is about recent logical work, not raw message count.**
-   - `protectRecentTurns` protects recent logical turns/tool batches.
+
+- `protectRecentTurns` protects recent logical turns/tool batches.
 
 7. **Saved-token accounting must be stable across repeated renders.**
-   - never re-add the same block savings on every `context` pass.
+
+- never re-add the same block savings on every `context` pass.
 
 ---
 
@@ -315,14 +326,16 @@ Use the established separators:
 Established patterns:
 
 1. **Best-effort / safe default**
-   - config loading
-   - optional file reads
-   - non-critical inspection paths
+
+- config loading
+- optional file reads
+- non-critical inspection paths
 
 2. **Throw explicit domain errors**
-   - invalid IDs
-   - invalid compression ranges
-   - unsupported overlap
+
+- invalid IDs
+- invalid compression ranges
+- unsupported overlap
 
 Do not silently swallow programming mistakes.
 
