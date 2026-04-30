@@ -69,6 +69,54 @@ function nudgePriority(nudgeType: NonNullable<ReturnType<typeof getNudgeType>>):
   return 40;
 }
 
+export type NudgeDecisionReason =
+  | "emitted"
+  | "no_context_usage"
+  | "manual_mode"
+  | "below_min_threshold"
+  | "same_turn_or_post_compress_debounce"
+  | "turn_debounce"
+  | "not_evaluated";
+
+function reachesMinNudgeThreshold(
+  contextPercent: number,
+  config: DcpConfig,
+  contextTokens?: number | null
+): boolean {
+  if (contextPercent >= config.compress.minContextPercent) return true;
+  const minTokens = config.compress.minContextTokens;
+  return typeof minTokens === "number" && contextTokens !== null && contextTokens !== undefined
+    ? contextTokens >= minTokens
+    : false;
+}
+
+export function getNudgeDecisionReason(
+  contextPercent: number | null,
+  state: DcpState,
+  config: DcpConfig,
+  nudgeType: ReturnType<typeof getNudgeType>,
+  contextTokens?: number | null
+): NudgeDecisionReason {
+  if (state.manualMode) return "manual_mode";
+  if (contextPercent === null) return "no_context_usage";
+  if (nudgeType) return "emitted";
+  if (!reachesMinNudgeThreshold(contextPercent, config, contextTokens)) {
+    return "below_min_threshold";
+  }
+  if (state.currentTurn <= state.lastCompressTurn) {
+    return "same_turn_or_post_compress_debounce";
+  }
+
+  const debounceTurns = Math.max(1, config.compress.nudgeDebounceTurns);
+  if (state.lastNudgeTurn >= 0 && state.currentTurn - state.lastNudgeTurn < debounceTurns) {
+    return state.lastCompressTurn >= state.lastNudgeTurn
+      ? "same_turn_or_post_compress_debounce"
+      : "turn_debounce";
+  }
+
+  return "not_evaluated";
+}
+
 interface ContextMaterializationResult {
   messages: DcpMessage[];
   liveOwnerKeys: Set<string>;
@@ -129,6 +177,7 @@ export function registerContextHandler(pi: ExtensionAPI, state: DcpState, config
       usage && usage.tokens !== null ? usage.tokens / usage.contextWindow : null;
     let toolCallsSinceLastUser: number | null = null;
     let nudgeType: ReturnType<typeof getNudgeType> = null;
+    let nudgeDecisionReason: NudgeDecisionReason = "not_evaluated";
 
     if (contextPercent !== null && !state.manualMode) {
       toolCallsSinceLastUser = countToolCallsSinceLastUser(prunedMessages);
@@ -170,10 +219,12 @@ export function registerContextHandler(pi: ExtensionAPI, state: DcpState, config
 
         (pi.events as any).emit(REMINDER_UPSERT_EVENT, reminder);
         state.lastNudgeTurn = state.currentTurn;
+        nudgeDecisionReason = "emitted";
 
         appendDebugLog(config, "nudge_emitted", {
           ...buildSessionDebugPayload(ctx.sessionManager),
           nudgeType,
+          nudgeDecisionReason,
           nudgeMessage: injectedNudgeText,
           contextPercent,
           contextTokens: usage?.tokens ?? null,
@@ -182,6 +233,16 @@ export function registerContextHandler(pi: ExtensionAPI, state: DcpState, config
           planningHints,
         });
       }
+    }
+
+    if (!nudgeType) {
+      nudgeDecisionReason = getNudgeDecisionReason(
+        contextPercent,
+        state,
+        config,
+        nudgeType,
+        usage?.tokens ?? null
+      );
     }
 
     state.lastRenderedMessages = cloneRenderedMessages(prunedMessages);
@@ -208,6 +269,7 @@ export function registerContextHandler(pi: ExtensionAPI, state: DcpState, config
       totalPruneCount: state.totalPruneCount,
       toolCallsSinceLastUser,
       nudgeType,
+      nudgeDecisionReason,
     });
 
     return { messages: prunedMessages as any[] };

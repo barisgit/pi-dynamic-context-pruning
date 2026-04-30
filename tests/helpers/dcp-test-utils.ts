@@ -28,7 +28,10 @@ export {
   appendDebugLogLine,
   buildSessionDebugPayload,
 } from "../../src/infrastructure/debug-log.js";
-export { registerContextHandler } from "../../src/application/context-handler.js";
+export {
+  getNudgeDecisionReason,
+  registerContextHandler,
+} from "../../src/application/context-handler.js";
 export {
   restorePersistedState,
   mapLegacyBlockToSpanRange,

@@ -4,6 +4,7 @@ import type { ReminderIntent } from "pi-reminders/src/types.js";
 import {
   assert,
   exceedsMaxContextLimit,
+  getNudgeDecisionReason,
   getNudgeType,
   makeConfig,
   makeMessages,
@@ -80,6 +81,7 @@ describe("DCP nudge.test", () => {
       contextTokens: 90_000,
       currentTurn: state.currentTurn,
     });
+    expect(getNudgeDecisionReason(0.9, state, config, "context-strong", 90_000)).toBe("emitted");
     expect(state.lastNudgeTurn).toBe(state.currentTurn);
 
     const renderedMessages = JSON.stringify((result as { messages: unknown[] }).messages);
@@ -189,5 +191,32 @@ describe("DCP nudge.test", () => {
       true,
       "FAIL — hot-tail emergency override should honor maxContextTokens"
     );
+  });
+
+  test("nudge decision reasons distinguish cache-relevant suppression paths", () => {
+    const config = makeConfig();
+    config.compress.minContextPercent = 0.75;
+    config.compress.nudgeDebounceTurns = 2;
+
+    const state = makeState();
+    state.currentTurn = 5;
+
+    expect(getNudgeDecisionReason(null, state, config, null, null)).toBe("no_context_usage");
+
+    state.manualMode = true;
+    expect(getNudgeDecisionReason(0.8, state, config, null, 80_000)).toBe("manual_mode");
+
+    state.manualMode = false;
+    expect(getNudgeDecisionReason(0.2, state, config, null, 20_000)).toBe("below_min_threshold");
+
+    state.lastCompressTurn = 5;
+    expect(getNudgeDecisionReason(0.8, state, config, null, 80_000)).toBe(
+      "same_turn_or_post_compress_debounce"
+    );
+
+    state.currentTurn = 6;
+    state.lastCompressTurn = -1;
+    state.lastNudgeTurn = 5;
+    expect(getNudgeDecisionReason(0.8, state, config, null, 80_000)).toBe("turn_debounce");
   });
 });
