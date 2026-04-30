@@ -1,79 +1,92 @@
 import { describe, expect, test } from "bun:test";
+import { REMINDER_UPSERT_EVENT } from "pi-reminders/src/types.js";
+import type { ReminderIntent } from "pi-reminders/src/types.js";
 import {
-  appendDebugLogLine,
-  applyPruning,
   assert,
-  buildBlockOwnerKey,
-  buildCompressionArtifactsForRange,
-  buildCompressionPlanningHints,
-  buildLiveOwnerKeys,
-  buildSessionDebugPayload,
-  buildSourceOwnerKey,
-  buildTranscriptSnapshot,
-  extractCanonicalOwnerKeyFromMessageLike,
-  filterProviderPayloadInput,
-  findOrphanedToolUse,
-  fs,
-  getNudgeType,
-  injectNudge,
   exceedsMaxContextLimit,
+  getNudgeType,
   makeConfig,
   makeMessages,
   makeState,
-  mapLegacyBlockToSpanRange,
-  os,
-  path,
-  renderCompressedBlockMessage,
-  renderCompressionPlanningHints,
-  resolveAnchorSourceKey,
-  resolveAnchorTimestamp,
-  resolveProtectedTailStartTimestamp,
-  resolveSupersededBlockIdsForRange,
-  restorePersistedState,
-  validateCompressionRangeBoundaryIds,
+  registerContextHandler,
 } from "../helpers/dcp-test-utils.js";
 
+type PiHandler = (event: any, ctx: any) => unknown;
+
+function createMockPi() {
+  const handlers = new Map<string, PiHandler>();
+  const emitted: Array<{ name: string; payload: unknown }> = [];
+  const pi = {
+    events: {
+      emit(name: string, payload: unknown) {
+        emitted.push({ name, payload });
+      },
+    },
+    on(name: string, handler: PiHandler) {
+      handlers.set(name, handler);
+    },
+  };
+
+  return { pi, handlers, emitted };
+}
+
+function createMockContext(tokens: number, contextWindow: number) {
+  return {
+    getContextUsage: () => ({ tokens, contextWindow }),
+    sessionManager: {
+      getCwd: () => process.cwd(),
+      getSessionDir: () => process.cwd(),
+      getSessionFile: () => undefined,
+      getSessionId: () => "test-session",
+      getLeafId: () => null,
+    },
+    ui: {
+      setStatus: () => undefined,
+    },
+  };
+}
+
 describe("DCP nudge.test", () => {
-  // ---------------------------------------------------------------------------
-  // Test 11 — NUDGE INJECTION SHOULD ANCHOR TO EXISTING MESSAGE
-  //
-  // Reminders should not be appended as a fresh terminal user message because
-  // that hijacks recency and focus. They should attach to the latest visible
-  // user/assistant message when possible.
-  // ---------------------------------------------------------------------------
-  test("Test 11 — NUDGE INJECTION SHOULD ANCHOR TO EXISTING MESSAGE", () => {
-    console.log("TEST 11: nudge injection anchors to existing message");
+  test("context nudges publish a pi-reminders intent without mutating rendered messages", async () => {
+    const config = makeConfig();
+    config.compress.minContextPercent = 0.1;
+    config.compress.maxContextPercent = 0.5;
+    config.compress.nudgeForce = "strong";
 
-    const messages: any[] = [
-      { role: "user", content: [{ type: "text", text: "do the thing" }], timestamp: 1000 },
-      { role: "assistant", content: [{ type: "text", text: "working" }], timestamp: 2000 },
-    ];
+    const state = makeState();
+    const messages = makeMessages();
+    const { pi, handlers, emitted } = createMockPi();
 
-    injectNudge(messages, "<dcp-system-reminder>compress maybe</dcp-system-reminder>");
+    registerContextHandler(pi as any, state, config);
+    const contextHandler = handlers.get("context");
+    expect(contextHandler).toBeDefined();
 
-    assert.strictEqual(
-      messages.length,
-      2,
-      "FAIL — injectNudge should not append a new message when an anchor exists"
-    );
-    assert.strictEqual(
-      messages[1]?.role,
-      "assistant",
-      "FAIL — last message role should stay assistant"
-    );
+    const result = await contextHandler!({ messages }, createMockContext(90_000, 100_000));
 
-    const content = messages[1]?.content;
-    const joined = Array.isArray(content)
-      ? content.map((part: any) => part?.text ?? "").join("\n")
-      : String(content ?? "");
+    const upserts = emitted.filter((event) => event.name === REMINDER_UPSERT_EVENT);
+    expect(upserts).toHaveLength(1);
 
-    assert.ok(
-      joined.includes("<dcp-system-reminder>compress maybe</dcp-system-reminder>"),
-      "FAIL — anchored nudge text missing from assistant message"
-    );
-    console.log("  PASS: reminder attached to existing assistant message");
+    const reminder = upserts[0]!.payload as ReminderIntent;
+    expect(reminder).toMatchObject({
+      source: "dcp",
+      id: "nudge",
+      label: "DCP",
+      ttl: "request",
+      priority: 100,
+    });
+    expect(reminder.metadata).toMatchObject({
+      nudgeType: "context-strong",
+      contextPercent: 0.9,
+      contextTokens: 90_000,
+      currentTurn: state.currentTurn,
+    });
+    expect(state.lastNudgeTurn).toBe(state.currentTurn);
 
-    console.log("TEST 11 PASSED\n");
+    const renderedMessages = JSON.stringify((result as { messages: unknown[] }).messages);
+    expect(renderedMessages).not.toContain("<reminders>");
+    if (reminder.text.trim()) {
+      expect(renderedMessages).not.toContain(reminder.text.trim());
+    }
   });
 
   // ---------------------------------------------------------------------------

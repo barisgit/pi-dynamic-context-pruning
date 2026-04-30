@@ -28,7 +28,8 @@
   },
   "dependencies": {
     "gpt-tokenizer": "^3.4.0",
-    "jsonc-parser": "^3.3.1"
+    "jsonc-parser": "^3.3.1",
+    "pi-reminders": "file:../pi-reminders"
   },
   "peerDependencies": {
     "@mariozechner/pi-coding-agent": "*",

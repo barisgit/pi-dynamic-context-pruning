@@ -1,4 +1,6 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import { REMINDER_UPSERT_EVENT } from "pi-reminders/src/types.js";
+import type { ReminderIntent } from "pi-reminders/src/types.js";
 import type { DcpConfig } from "../types/config.js";
 import type { DcpMessage } from "../types/message.js";
 import type { DcpState } from "../types/state.js";
@@ -12,7 +14,6 @@ import {
   applyPruning,
   finalizeMaterializedMessages,
   getNudgeType,
-  injectNudge,
 } from "../domain/pruning/index.js";
 import { materializeTranscript } from "../domain/compression/materialize.js";
 import {
@@ -36,14 +37,10 @@ function cloneRenderedMessages(messages: DcpMessage[]): DcpMessage[] {
 }
 
 function appendReminderDetails(reminder: string, details: string): string {
-  if (!details) return reminder;
-
-  const closingTag = "";
-  if (!reminder.includes(closingTag)) {
-    return `${reminder}\n\n${details}`;
-  }
-
-  return reminder.replace(closingTag, `\n\n${details}\n${closingTag}`);
+  return [reminder, details]
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .join("\n\n");
 }
 
 function countToolCallsSinceLastUser(messages: DcpMessage[]): number {
@@ -63,6 +60,13 @@ function selectNudgeText(nudgeType: NonNullable<ReturnType<typeof getNudgeType>>
   if (nudgeType === "context-soft") return CONTEXT_LIMIT_NUDGE_SOFT;
   if (nudgeType === "iteration") return ITERATION_NUDGE;
   return TURN_NUDGE;
+}
+
+function nudgePriority(nudgeType: NonNullable<ReturnType<typeof getNudgeType>>): number {
+  if (nudgeType === "context-strong") return 100;
+  if (nudgeType === "context-soft") return 80;
+  if (nudgeType === "iteration") return 60;
+  return 40;
 }
 
 interface ContextMaterializationResult {
@@ -148,7 +152,23 @@ export function registerContextHandler(pi: ExtensionAPI, state: DcpState, config
           planningHintText
         );
 
-        injectNudge(prunedMessages, injectedNudgeText);
+        const reminder: ReminderIntent = {
+          source: "dcp",
+          id: "nudge",
+          label: "DCP",
+          ttl: "request",
+          priority: nudgePriority(nudgeType),
+          text: injectedNudgeText,
+          metadata: {
+            nudgeType,
+            contextPercent,
+            contextTokens: usage?.tokens ?? null,
+            currentTurn: state.currentTurn,
+            toolCallsSinceLastUser,
+          },
+        };
+
+        (pi.events as any).emit(REMINDER_UPSERT_EVENT, reminder);
         state.lastNudgeTurn = state.currentTurn;
 
         appendDebugLog(config, "nudge_emitted", {

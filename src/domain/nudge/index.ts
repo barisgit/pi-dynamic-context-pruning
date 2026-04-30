@@ -1,1 +1,1 @@
-export { getNudgeType, injectNudge } from "../pruning/index.js"
+export { getNudgeType } from "../pruning/index.js";

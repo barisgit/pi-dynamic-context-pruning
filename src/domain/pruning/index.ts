@@ -529,64 +529,6 @@ export function applyPruning(messages: DcpMessage[], state: DcpState, config: Dc
 }
 
 /**
- * Best-effort injection of a reminder into an existing visible message.
- * This avoids hijacking recency by appending a brand-new terminal user turn.
- */
-function appendNudgeToMessage(message: any, nudgeText: string): boolean {
-  if (!message) return false;
-
-  if (typeof message.content === "string") {
-    message.content = `${message.content}\n\n${nudgeText}`;
-    return true;
-  }
-
-  if (!Array.isArray(message.content)) return false;
-
-  const nudgeBlock = { type: "text", text: `\n${nudgeText}` };
-
-  if (message.role === "assistant") {
-    const firstToolCallIdx = message.content.findIndex((block: any) => block.type === "toolCall");
-    if (firstToolCallIdx === -1) {
-      message.content = [...message.content, nudgeBlock];
-    } else {
-      message.content = [
-        ...message.content.slice(0, firstToolCallIdx),
-        nudgeBlock,
-        ...message.content.slice(firstToolCallIdx),
-      ];
-    }
-    return true;
-  }
-
-  message.content = [...message.content, nudgeBlock];
-  return true;
-}
-
-/**
- * Inject a nudge into the latest visible user/assistant message.
- * Falls back to a synthetic user message only if no suitable anchor exists.
- */
-export function injectNudge(messages: DcpMessage[], nudgeText: string): void {
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const message = messages[i];
-    const role = message?.role ?? "";
-
-    if (PASSTHROUGH_ROLES.has(role)) continue;
-    if (role !== "user" && role !== "assistant") continue;
-
-    if (appendNudgeToMessage(message, nudgeText)) {
-      return;
-    }
-  }
-
-  messages.push({
-    role: "user",
-    content: nudgeText,
-    timestamp: Date.now(),
-  });
-}
-
-/**
  * Determine if a nudge should fire and return the nudge type, or null.
  *
  * Policy:

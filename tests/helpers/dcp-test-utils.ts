@@ -28,6 +28,7 @@ export {
   appendDebugLogLine,
   buildSessionDebugPayload,
 } from "../../src/infrastructure/debug-log.js";
+export { registerContextHandler } from "../../src/application/context-handler.js";
 export {
   restorePersistedState,
   mapLegacyBlockToSpanRange,
@@ -48,7 +49,6 @@ export {
   applyPruning,
   exceedsMaxContextLimit,
   getNudgeType,
-  injectNudge,
 } from "../../src/domain/pruning/index.js";
 export {
   buildBlockOwnerKey,

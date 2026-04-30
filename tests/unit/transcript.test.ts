@@ -15,7 +15,6 @@ import {
   findOrphanedToolUse,
   fs,
   getNudgeType,
-  injectNudge,
   makeConfig,
   makeMessages,
   makeState,

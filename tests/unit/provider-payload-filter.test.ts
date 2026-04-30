@@ -15,7 +15,6 @@ import {
   findOrphanedToolUse,
   fs,
   getNudgeType,
-  injectNudge,
   makeConfig,
   makeMessages,
   makeState,
@@ -234,7 +233,9 @@ describe("DCP provider payload filter.test", () => {
   // Test 20b — REPRESENTED COMPRESS TOOL ARTIFACTS BECOME A RECEIPT
   // ---------------------------------------------------------------------------
   test("Test 20b — REPRESENTED COMPRESS TOOL ARTIFACTS BECOME A RECEIPT", () => {
-    console.log("TEST 20b: provider payload filter keeps newest compress receipt and drops older duplicates");
+    console.log(
+      "TEST 20b: provider payload filter keeps newest compress receipt and drops older duplicates"
+    );
 
     const liveOwners = new Set([
       buildSourceOwnerKey(0),
@@ -265,9 +266,7 @@ describe("DCP provider payload filter.test", () => {
       { role: "assistant", content: [{ type: "output_text", text: "compressing now" }] },
       {
         role: "assistant",
-        content: [
-          { type: "output_text", text: "\n\n" },
-        ],
+        content: [{ type: "output_text", text: "\n\n" }],
       },
       {
         type: "function_call",
@@ -307,9 +306,7 @@ describe("DCP provider payload filter.test", () => {
       { role: "assistant", content: [{ type: "output_text", text: "bash follow-up" }] },
       {
         role: "assistant",
-        content: [
-          { type: "output_text", text: "\n\n" },
-        ],
+        content: [{ type: "output_text", text: "\n\n" }],
       },
       {
         type: "function_call",
