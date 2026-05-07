@@ -13,7 +13,7 @@ You operate in a context-constrained environment. Manage context continuously to
 
 The ONLY tool you have for context management is \`compress\`. It replaces older conversation content with technical summaries you produce.
 
-\`<dcp-id>\` and \`<dcp-system-reminder>\` tags are environment-injected metadata. Do not output them.
+DCP metadata tags are environment-injected metadata. Do not output them.
 
 THE PHILOSOPHY OF COMPRESS
 \`compress\` transforms conversation content into dense, high-fidelity summaries. This is not cleanup — it is crystallization. Your summary becomes the durable handoff record for what transpired.
@@ -72,13 +72,11 @@ It is your responsibility to keep a sharp, high-quality context window for optim
 export const COMPRESS_RANGE_DESCRIPTION = `Collapse one or more ranges of the conversation into detailed summaries.
 
 THE SUMMARY
-Your summary must be explicit, durable, and high-fidelity. Capture the essential technical context needed to continue safely: file paths, function signatures, decisions made, constraints discovered, key findings, and current state. You do not need to replay every raw message or tool output verbatim; the deterministic log already carries chronology and provenance. This is not a brief note — it is a durable handoff summary that preserves context integrity.
+A deterministic <activity-log> is rendered next to your summary with file paths, line spans, edit counts, command status, and short message excerpts. Do not restate any of that.
 
-USER INTENT FIDELITY
-When the compressed range includes user messages, preserve the user's intent with extra care. Do not change scope, constraints, priorities, acceptance criteria, or requested outcomes.
-Directly quote user messages when they are short enough to include safely. Direct quotes are preferred when they best preserve exact meaning.
+Write only what the log can't recover: decisions, reasoning, and conclusions, constraints and invariants, key findings and current state, signatures/types that matter going forward, open questions. Be high-fidelity on those, lean everywhere else. Skip dead-end attempts and back-and-forth.
 
-Yet be LEAN. Strip away the noise: failed attempts that led nowhere, verbose tool outputs, back-and-forth exploration. What remains should be pure signal — golden nuggets of detail that preserve full understanding with zero ambiguity.
+For user messages in range, preserve intent exactly; quote short ones directly.
 
 COMPRESSED BLOCK PLACEHOLDERS
 When the selected range includes previously compressed blocks, use this exact placeholder format when referencing one:
@@ -131,63 +129,19 @@ BATCHING
 When multiple independent ranges are ready and their boundaries do not overlap, include all of them as separate entries in the \`ranges\` array of a single tool call. Each entry creates one compressed block and must have its own \`startId\`, \`endId\`, \`summary\`, and effective topic. Prefer \`ranges[].topic\` for per-block labels; use top-level \`topic\` only as a default when all ranges share the same label.`;
 
 /**
- * Injected into messages when context usage exceeds maxContextPercent.
- * nudgeForce = "strong" — emergency recovery tone.
+ * Legacy nudge prompt text retained for compatibility with older imports.
+ * Runtime DCP reminders now render compact planning hints inside <system-reminder>.
  */
-export const CONTEXT_LIMIT_NUDGE_STRONG = `<dcp-system-reminder>
-CRITICAL WARNING: MAX CONTEXT LIMIT REACHED
+export const CONTEXT_LIMIT_NUDGE_SOFT = ``;
 
-You are at or beyond the configured max context threshold. This is an emergency context-recovery moment.
+/** Legacy strong context-limit nudge text. */
+export const CONTEXT_LIMIT_NUDGE_STRONG = ``;
 
-You MUST use the \`compress\` tool now. Do not continue normal exploration until compression is handled.
+/** Legacy lightweight turn nudge text. */
+export const TURN_NUDGE = ``;
 
-If you are in the middle of a critical atomic operation, finish that atomic step first, then compress immediately.
-
-RANGE STRATEGY (MANDATORY)
-Prioritize one large, closed, high-yield compression range first.
-This overrides the normal preference for many small compressions.
-Only split into multiple compressions if one large range would reduce summary quality or make boundary selection unsafe.
-
-RANGE SELECTION
-Start from older, resolved history and capture as much stale context as safely possible in one pass.
-Avoid the newest active working slice unless it is clearly closed.
-Use visible injected boundary IDs for compression (\`m0001\`-style refs for messages, \`bN\` for compressed blocks), and ensure \`startId\` appears before \`endId\`.
-
-SUMMARY REQUIREMENTS
-Your summary must cover all essential details from the selected range so work can continue without reopening raw messages.
-If the compressed range includes user messages, preserve user intent exactly. Prefer direct quotes for short user messages to avoid semantic drift.
-</dcp-system-reminder>`;
-
-/**
- * Injected into messages when context usage exceeds maxContextPercent.
- * nudgeForce = "soft" — steady housekeeping tone.
- */
-export const CONTEXT_LIMIT_NUDGE_SOFT = `<dcp-system-reminder>
-Context is getting full.
-
-If an older closed range is safe to compress now, do it.
-Keep the active working slice raw.
-Use visible boundary IDs and batch independent ranges when practical.
-</dcp-system-reminder>`;
-
-/**
- * Injected as a lightweight reminder between minContextPercent and maxContextPercent
- * when turn-based nudge debounce allows it.
- */
-export const TURN_NUDGE = `<dcp-system-reminder>
-If there is an older closed range that is unlikely to be needed immediately, compress it now.
-Keep the active working slice raw.
-</dcp-system-reminder>`;
-
-/**
- * Injected after iterationNudgeThreshold tool calls since the last user message.
- */
-export const ITERATION_NUDGE = `<dcp-system-reminder>
-You've been iterating for a while.
-
-If a finished slice is now stale, compress it.
-Keep the active slice raw.
-</dcp-system-reminder>`;
+/** Legacy iteration nudge text. */
+export const ITERATION_NUDGE = ``;
 
 /**
  * Replaces SYSTEM_PROMPT when manualMode.enabled = true.
@@ -197,13 +151,13 @@ Keep the active slice raw.
 export const MANUAL_MODE_SYSTEM_PROMPT = `
 You are operating in DCP manual mode for context management.
 
-\`<dcp-id>\` and \`<dcp-system-reminder>\` tags are environment-injected metadata. Do not output them.
+DCP metadata tags are environment-injected metadata. Do not output them.
 
 In manual mode you do NOT proactively compress conversation content. Compression is a deliberate, user-directed action.
 
 WHEN TO COMPRESS
 - Only when the user explicitly asks you to compress
-- Only when a \`<dcp-system-reminder>\` nudge instructs you to (context-limit emergency)
+- Only when a DCP nudge instructs you to (context-limit emergency)
 - Never as background housekeeping or on your own initiative
 
 WHEN YOU DO COMPRESS
