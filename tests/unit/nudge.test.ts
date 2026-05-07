@@ -72,8 +72,9 @@ describe("DCP nudge.test", () => {
       source: "dcp",
       id: "nudge",
       label: "DCP",
-      ttl: "request",
+      ttl: "once",
       priority: 100,
+      display: true,
     });
     expect(reminder.metadata).toMatchObject({
       nudgeType: "context-strong",
@@ -84,11 +85,17 @@ describe("DCP nudge.test", () => {
     expect(getNudgeDecisionReason(0.9, state, config, "context-strong", 90_000)).toBe("emitted");
     expect(state.lastNudgeTurn).toBe(state.currentTurn);
 
+    expect(reminder.text.trim().length).toBeGreaterThan(0);
+    expect(reminder.text).toContain("Compress now");
+    expect(reminder.text).toContain("Protected hot tail");
+    expect(reminder.text).not.toContain("dcp-system-reminder");
+    expect(reminder.text).not.toContain("<");
+    expect(reminder.text).not.toContain(">");
+
     const renderedMessages = JSON.stringify((result as { messages: unknown[] }).messages);
     expect(renderedMessages).not.toContain("<reminders>");
-    if (reminder.text.trim()) {
-      expect(renderedMessages).not.toContain(reminder.text.trim());
-    }
+    expect(renderedMessages).not.toContain("<system-reminder>");
+    expect(renderedMessages).not.toContain(reminder.text.trim());
   });
 
   // ---------------------------------------------------------------------------
@@ -158,6 +165,30 @@ describe("DCP nudge.test", () => {
 
     console.log("  PASS: turn debounce and post-compress suppression work");
     console.log("TEST 13 PASSED\n");
+  });
+
+  test("max-token nudges use action wording even when percent is low", async () => {
+    const config = makeConfig();
+    config.compress.minContextPercent = 0.4;
+    config.compress.maxContextPercent = 0.8;
+    config.compress.minContextTokens = 120_000;
+    config.compress.maxContextTokens = 200_000;
+    config.compress.nudgeForce = "soft";
+
+    const state = makeState();
+    const messages = makeMessages();
+    const { pi, handlers, emitted } = createMockPi();
+
+    registerContextHandler(pi as any, state, config);
+    await handlers.get("context")!({ messages }, createMockContext(203_000, 1_000_000));
+
+    const upsert = emitted.find((event) => event.name === REMINDER_UPSERT_EVENT);
+    expect(upsert).toBeDefined();
+    const reminder = upsert!.payload as ReminderIntent;
+    expect(reminder.metadata).toMatchObject({ nudgeType: "context-soft", contextTokens: 203_000 });
+    expect(reminder.text).toContain("Compress now");
+    expect(reminder.text).toContain("120k-200k tokens");
+    expect(reminder.text).not.toContain("16%");
   });
 
   test("token thresholds are ORed with percent thresholds", () => {

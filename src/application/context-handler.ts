@@ -5,13 +5,8 @@ import type { DcpConfig } from "../types/config.js";
 import type { DcpMessage } from "../types/message.js";
 import type { DcpState } from "../types/state.js";
 import {
-  CONTEXT_LIMIT_NUDGE_SOFT,
-  CONTEXT_LIMIT_NUDGE_STRONG,
-  ITERATION_NUDGE,
-  TURN_NUDGE,
-} from "../prompts/nudge.js";
-import {
   applyPruning,
+  exceedsMaxContextLimit,
   finalizeMaterializedMessages,
   getNudgeType,
 } from "../domain/pruning/index.js";
@@ -36,11 +31,60 @@ function cloneRenderedMessages(messages: DcpMessage[]): DcpMessage[] {
   });
 }
 
-function appendReminderDetails(reminder: string, details: string): string {
-  return [reminder, details]
-    .map((part) => part.trim())
-    .filter(Boolean)
-    .join("\n\n");
+type NudgeType = NonNullable<ReturnType<typeof getNudgeType>>;
+
+function buildCompactReminderText(
+  details: string,
+  nudgeType: NudgeType,
+  config: DcpConfig,
+  contextPercent: number,
+  contextTokens?: number | null
+): string {
+  const header = buildNudgeHeader(nudgeType, config, contextPercent, contextTokens);
+  const trimmedDetails = details.trim();
+  return [header, trimmedDetails].filter(Boolean).join("\n");
+}
+
+function buildNudgeHeader(
+  nudgeType: NudgeType,
+  config: DcpConfig,
+  contextPercent: number,
+  contextTokens?: number | null
+): string {
+  const overCleanupTarget = exceedsMaxContextLimit(contextPercent, config, contextTokens);
+  const targetText = formatCleanupTarget(config);
+
+  if (overCleanupTarget || nudgeType === "context-strong") {
+    return `Compress now: you crossed the user's DCP cleanup target${targetText}. Prefer the largest safe older range below unless you need it immediately.`;
+  }
+
+  if (nudgeType === "iteration") {
+    return `Routine DCP checkpoint${targetText}: after a long tool run, compress a finished older slice if one is stale.`;
+  }
+
+  return `Routine DCP checkpoint${targetText}: if an older slice is finished, compress it; keep the active working slice raw.`;
+}
+
+function formatCleanupTarget(config: DcpConfig): string {
+  const minTokens = config.compress.minContextTokens;
+  const maxTokens = config.compress.maxContextTokens;
+  if (typeof minTokens === "number" && typeof maxTokens === "number") {
+    return ` (${formatTokenCount(minTokens)}-${formatTokenCount(maxTokens)} tokens)`;
+  }
+  if (typeof maxTokens === "number") return ` (${formatTokenCount(maxTokens)} tokens)`;
+  if (typeof minTokens === "number")
+    return ` (starts around ${formatTokenCount(minTokens)} tokens)`;
+  return "";
+}
+
+function formatTokenCount(tokens: number): string {
+  if (tokens >= 1_000_000) return `${trimFixed(tokens / 1_000_000)}M`;
+  if (tokens >= 1_000) return `${trimFixed(tokens / 1_000)}k`;
+  return String(tokens);
+}
+
+function trimFixed(value: number): string {
+  return value.toFixed(value >= 10 ? 0 : 1).replace(/\.0$/, "");
 }
 
 function countToolCallsSinceLastUser(messages: DcpMessage[]): number {
@@ -55,14 +99,7 @@ function countToolCallsSinceLastUser(messages: DcpMessage[]): number {
   return count;
 }
 
-function selectNudgeText(nudgeType: NonNullable<ReturnType<typeof getNudgeType>>): string {
-  if (nudgeType === "context-strong") return CONTEXT_LIMIT_NUDGE_STRONG;
-  if (nudgeType === "context-soft") return CONTEXT_LIMIT_NUDGE_SOFT;
-  if (nudgeType === "iteration") return ITERATION_NUDGE;
-  return TURN_NUDGE;
-}
-
-function nudgePriority(nudgeType: NonNullable<ReturnType<typeof getNudgeType>>): number {
+function nudgePriority(nudgeType: NudgeType): number {
   if (nudgeType === "context-strong") return 100;
   if (nudgeType === "context-soft") return 80;
   if (nudgeType === "iteration") return 60;
@@ -196,17 +233,21 @@ export function registerContextHandler(pi: ExtensionAPI, state: DcpState, config
           config.compress.protectRecentTurns
         );
         const planningHintText = renderCompressionPlanningHints(planningHints);
-        const injectedNudgeText = appendReminderDetails(
-          selectNudgeText(nudgeType),
-          planningHintText
+        const injectedNudgeText = buildCompactReminderText(
+          planningHintText,
+          nudgeType,
+          config,
+          contextPercent,
+          usage?.tokens ?? null
         );
 
         const reminder: ReminderIntent = {
           source: "dcp",
           id: "nudge",
           label: "DCP",
-          ttl: "request",
+          ttl: "once",
           priority: nudgePriority(nudgeType),
+          display: true,
           text: injectedNudgeText,
           metadata: {
             nudgeType,
