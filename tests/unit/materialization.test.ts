@@ -124,9 +124,32 @@ describe("v2 materialization", () => {
 
     expect(materialized.renderedBlockIds).toEqual([1, 2, 3]);
     expect(textOf(materialized.messages[0])).not.toContain("<agent-summary>");
-    expect(textOf(materialized.messages[0]).length).toBeLessThan(260);
+    expect(textOf(materialized.messages[0]).length).toBeLessThan(360);
     expect(textOf(materialized.messages[1])).toContain("<agent-summary>");
-    expect(textOf(materialized.messages[1]).length).toBeLessThan(430);
+    expect(textOf(materialized.messages[1]).length).toBeLessThan(760);
     expect(textOf(materialized.messages[2])).toContain(longSummary);
+  });
+
+  test("full detail keeps a larger bounded activity log", () => {
+    const messages = [{ role: "user", content: [{ type: "text", text: "one" }], timestamp: 1000 }];
+    const snapshot = buildTranscriptSnapshot(messages);
+    const activityLog = Array.from({ length: 110 }, (_, index) => ({
+      kind: "command" as const,
+      text: `command ${index + 1}`,
+    }));
+    const block = makeBlock({
+      id: 4,
+      topic: "log budget",
+      summary: "summary",
+      startSpanKey: snapshot.spans[0]!.key,
+      endSpanKey: snapshot.spans[0]!.key,
+      activityLog,
+    });
+
+    const materialized = materializeTranscript(snapshot, [block], { renderFullBlockCount: 1 });
+    const text = textOf(materialized.messages[0]);
+
+    expect(text).toContain("cmd: command 96");
+    expect(text).not.toContain("cmd: command 97");
   });
 });

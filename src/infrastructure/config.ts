@@ -24,13 +24,14 @@ const DEFAULT_CONFIG: DcpConfig = {
     nudgeFrequency: 8,
     iterationNudgeThreshold: 15,
     protectRecentTurns: 4,
-    renderFullBlockCount: 2,
-    renderCompactBlockCount: 3,
+    renderFullBlockCount: 4,
+    renderCompactBlockCount: 8,
     nudgeForce: "soft",
     protectedTools: ["compress", "write", "edit"],
     protectUserMessages: false,
   },
   strategies: {
+    pruneCadenceTurns: 1,
     deduplication: {
       enabled: true,
       protectedTools: [],
@@ -70,13 +71,17 @@ const DEFAULT_CONFIG_FILE_CONTENT = `{
   //   "nudgeFrequency": 8,
   //   "iterationNudgeThreshold": 15,
   //   "protectRecentTurns": 4,
-  //   "renderFullBlockCount": 2,
-  //   "renderCompactBlockCount": 3,
+  //   "renderFullBlockCount": 4,
+  //   "renderCompactBlockCount": 8,
   //   "nudgeForce": "soft",
   //   "protectedTools": ["compress", "write", "edit"],
   //   "protectUserMessages": false
   // },
   // "strategies": {
+  //   // Batch tombstone additions onto bucketed turn boundaries to reduce
+  //   // prefix-cache invalidations. 1 = current per-turn behavior; values like
+  //   // 5 or 10 group additions so a cache break happens at most every N turns.
+  //   "pruneCadenceTurns": 1,
   //   "deduplication": { "enabled": true, "protectedTools": [] },
   //   "purgeErrors": { "enabled": true, "turns": 4, "protectedTools": [] }
   // },

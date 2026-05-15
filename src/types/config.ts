@@ -25,6 +25,17 @@ export interface DcpConfig {
     protectUserMessages: boolean;
   };
   strategies: {
+    /**
+     * Batch tombstone additions onto turn boundaries that are multiples of N.
+     *
+     * `prunedToolIds` is treated as a pure function of `floor(currentTurn / N) * N`,
+     * so within a bucket no new tombstones appear and the rendered prefix stays
+     * cache-stable. `1` (default) preserves current per-turn behavior.
+     *
+     * Stateless on purpose: nothing is persisted between sessions, so reloads
+     * cannot trigger a spurious flush.
+     */
+    pruneCadenceTurns: number;
     deduplication: {
       enabled: boolean;
       protectedTools: string[];

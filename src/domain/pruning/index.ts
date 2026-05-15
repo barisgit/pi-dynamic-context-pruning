@@ -205,8 +205,30 @@ function repairOrphanedToolPairs(messages: any[]): void {
 }
 
 /**
+ * Bucket the current logical turn onto multiples of `pruneCadenceTurns`.
+ *
+ * Returns the largest multiple of N less than or equal to currentTurn. This is
+ * used as the effective "now" for tombstone-emission decisions so the set of
+ * tombstoned tool-call IDs only changes when the bucket boundary advances —
+ * keeping the rendered prefix cache-stable between boundaries.
+ *
+ * Stateless: identical inputs always produce the identical bucket, so a reload
+ * cannot trigger a spurious flush.
+ */
+function bucketedTurn(currentTurn: number, config: DcpConfig): number {
+  const cadence = Math.max(1, Math.floor(config.strategies.pruneCadenceTurns ?? 1));
+  if (cadence <= 1) return currentTurn;
+  return Math.floor(currentTurn / cadence) * cadence;
+}
+
+/**
  * Apply deduplication: mark redundant tool outputs for pruning.
  * Mutates state.prunedToolIds.
+ *
+ * Only tombstones duplicate results that originated in a closed bucket
+ * (turnIndex < bucketedTurn). Duplicates inside the currently-open bucket stay
+ * fully rendered until the next bucket boundary, so additions to
+ * `prunedToolIds` only happen at multiples of `pruneCadenceTurns`.
  */
 function applyDeduplication(messages: any[], state: DcpState, config: DcpConfig): void {
   if (!config.strategies.deduplication.enabled) return;
@@ -216,6 +238,8 @@ function applyDeduplication(messages: any[], state: DcpState, config: DcpConfig)
     ...ALWAYS_PROTECTED_DEDUP,
     ...(config.strategies.deduplication.protectedTools ?? []),
   ]);
+
+  const bucket = bucketedTurn(state.currentTurn, config);
 
   // fingerprint → array of toolCallIds in timestamp order
   const fingerprintMap = new Map<string, string[]>();
@@ -236,11 +260,15 @@ function applyDeduplication(messages: any[], state: DcpState, config: DcpConfig)
     fingerprintMap.get(fp)!.push(msg.toolCallId);
   }
 
-  // For each fingerprint with duplicates, prune all but the last
+  // For each fingerprint with duplicates, prune all but the last —
+  // but only ones whose originating turn falls in a closed bucket.
   for (const [, ids] of fingerprintMap) {
     if (ids.length <= 1) continue;
-    // Keep the last one; prune the rest
     for (let i = 0; i < ids.length - 1; i++) {
+      const record = state.toolCalls.get(ids[i]);
+      if (!record) continue;
+      if (record.turnIndex >= bucket) continue;
+      if (state.prunedToolIds.has(ids[i])) continue;
       state.prunedToolIds.add(ids[i]);
       state.totalPruneCount++;
     }
@@ -250,6 +278,10 @@ function applyDeduplication(messages: any[], state: DcpState, config: DcpConfig)
 /**
  * Apply error purging: mark old error tool outputs for pruning.
  * Mutates state.prunedToolIds.
+ *
+ * Age is measured against the bucketed turn, so eligibility flips only at
+ * bucket boundaries (multiples of `pruneCadenceTurns`). With the default
+ * cadence of 1 the behavior is identical to measuring against currentTurn.
  */
 function applyErrorPurging(messages: any[], state: DcpState, config: DcpConfig): void {
   if (!config.strategies.purgeErrors.enabled) return;
@@ -257,6 +289,7 @@ function applyErrorPurging(messages: any[], state: DcpState, config: DcpConfig):
 
   const protectedTools = new Set(config.strategies.purgeErrors.protectedTools ?? []);
   const turnsThreshold = config.strategies.purgeErrors.turns ?? 3;
+  const bucket = bucketedTurn(state.currentTurn, config);
 
   for (const msg of messages) {
     if (msg.role !== "toolResult") continue;
@@ -267,8 +300,9 @@ function applyErrorPurging(messages: any[], state: DcpState, config: DcpConfig):
 
     const record = state.toolCalls.get(msg.toolCallId);
     if (!record) continue;
+    if (state.prunedToolIds.has(msg.toolCallId)) continue;
 
-    if (state.currentTurn - record.turnIndex >= turnsThreshold) {
+    if (bucket - record.turnIndex >= turnsThreshold) {
       state.prunedToolIds.add(msg.toolCallId);
       state.totalPruneCount++;
     }

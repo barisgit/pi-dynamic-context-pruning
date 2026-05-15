@@ -21,7 +21,7 @@ THE PHILOSOPHY OF COMPRESS
 Think of compression as phase transitions: raw exploration becomes refined understanding. The original context served its purpose; your summary now carries that understanding forward.
 
 OPERATING STANCE
-Prefer short, closed, summary-safe compressions.
+Prefer short, closed, summary-safe compressions. Do not optimize for maximum token removal when the section still contains continuation-critical working memory.
 When multiple independent stale sections exist, prefer several focused compressions (in parallel when possible) over one broad compression.
 
 Use \`compress\` as steady housekeeping while you work.
@@ -49,6 +49,7 @@ DO NOT COMPRESS IF
 - You may need exact code, error messages, or file contents in the immediate next steps
 
 Before compressing, ask: _"Is this section closed enough to become summary-only right now?"_
+Also ask: _"Could another agent continue safely from my summary plus the deterministic log, without seeing the raw messages?"_ If not, do not compress yet or write a richer summary.
 
 Evaluate conversation signal-to-noise REGULARLY. Use \`compress\` deliberately with quality-first summaries. Prioritize stale content intelligently to maintain a high-signal context window that supports your agency.
 
@@ -75,6 +76,16 @@ THE SUMMARY
 A deterministic <activity-log> is rendered next to your summary with file paths, line spans, edit counts, command status, and short message excerpts. Do not restate any of that.
 
 Write only what the log can't recover: decisions, reasoning, and conclusions, constraints and invariants, key findings and current state, signatures/types that matter going forward, open questions. Be high-fidelity on those, lean everywhere else. Skip dead-end attempts and back-and-forth.
+
+Your summary is a handoff record, not a label. It must preserve enough semantic state for a future agent to continue without the raw transcript. Include, when present:
+
+- the user's actual intent and success criteria
+- decisions made and why alternatives were rejected
+- current objective, next action, and verification status
+- blockers, risks, assumptions, unresolved questions, and constraints
+- non-obvious file/symbol/API relationships needed to keep working
+
+Do not compress active working memory just because it is old or verbose. If the range contains an in-progress plan, partially applied change, unresolved debugging thread, or exact detail likely needed in the next steps, either leave it uncompressed or summarize that state explicitly enough to continue safely.
 
 For user messages in range, preserve intent exactly; quote short ones directly.
 

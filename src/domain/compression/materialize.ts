@@ -39,10 +39,10 @@ export interface CompressionBlockRenderData {
   detailLevel?: CompressionBlockRenderDetail;
 }
 
-const MAX_ACTIVITY_LOG_LINES = 48;
-const MAX_ACTIVITY_LOG_CHARS = 420;
-const MAX_COMPACT_SUMMARY_CHARS = 320;
-const MAX_MINIMAL_SUMMARY_CHARS = 140;
+const MAX_ACTIVITY_LOG_LINES = 96;
+const MAX_ACTIVITY_LOG_CHARS = 800;
+const MAX_COMPACT_SUMMARY_CHARS = 640;
+const MAX_MINIMAL_SUMMARY_CHARS = 240;
 
 function cloneMessage(message: any): any {
   const clone = { ...message };

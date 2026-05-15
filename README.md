@@ -82,12 +82,24 @@ DCP uses a layered configuration system (later layers override earlier ones):
     "iterationNudgeThreshold": 15,
     // Protect the hot tail beginning at the Nth-most-recent logical turn/tool batch
     "protectRecentTurns": 4,
+    // Newest compressed blocks rendered with full summaries + activity logs
+    "renderFullBlockCount": 4,
+    // Next older compressed blocks keep compact summaries before becoming minimal
+    "renderCompactBlockCount": 8,
     // "strong" = emergency tone, "soft" = housekeeping tone
     "nudgeForce": "soft",
     // These tool outputs are never auto-pruned
     "protectedTools": ["compress", "write", "edit"],
   },
   "strategies": {
+    // Batch dedup/purge tombstone additions onto turn boundaries that are
+    // multiples of N. Within a bucket, prunedToolIds does not grow, so the
+    // rendered prefix stays cache-stable. 1 = legacy per-turn behavior.
+    // Higher values (e.g. 10, 20) trade carrying noisy tool output a bit
+    // longer for at most one prefix-cache break per N turns from these
+    // strategies combined. Stateless: nothing is persisted, so reloads can
+    // never trigger a spurious flush.
+    "pruneCadenceTurns": 1,
     "deduplication": {
       "enabled": true,
       // Additional tools to exclude from dedup
@@ -178,7 +190,8 @@ DCP optimizes context size first, but some strategies intentionally mutate previ
 - **Compression blocks:** replacing old raw messages with a `[Compressed section: …]` block is the largest intentional prefix change, usually justified by much larger token savings.
 - **Error purging:** when an errored tool result crosses the `purgeErrors.turns` age threshold, its old output changes to the error tombstone once. The `toolCallId` then stays in `state.prunedToolIds`, so later renders are stable.
 - **Deduplication:** when an older duplicate result becomes pruned, its old output changes to the generic tombstone once.
-- **Block detail aging:** when newer blocks are added, older blocks can move from full → compact → minimal according to `renderFullBlockCount` / `renderCompactBlockCount`, changing prior block text.
+- **Pruning cadence (`strategies.pruneCadenceTurns`):** dedup/purge additions to `state.prunedToolIds` are gated by a bucketed turn `floor(currentTurn / N) * N`. With the default `1` the gate is a no-op (legacy behavior). With higher values, eligibility flips only at bucket boundaries, so all dedup/purge tombstone additions from a bucket land in a single context pass — turning many small prefix-cache breaks into at most one per N turns, regardless of how often errors or duplicates arrive. The gate is stateless on purpose: it is a pure function of `currentTurn`, so reloading the session cannot produce a flush that the previous session did not.
+- **Block detail aging:** when newer blocks are added, older blocks can move from full → compact → minimal according to `renderFullBlockCount` / `renderCompactBlockCount` (defaults: 4 full, 8 compact), changing prior block text.
 - **Nudges:** reminder text is appended near the active context tail, so it is usually a suffix change rather than an old-prefix rewrite.
 - **Provider-payload filtering:** hidden provider artifacts can be suppressed or minified independently of the visible transcript. Represented successful `compress` artifacts keep only the newest compact receipt and suppress older represented pairs.
 
