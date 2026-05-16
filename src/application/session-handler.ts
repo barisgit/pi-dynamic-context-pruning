@@ -65,12 +65,16 @@ export function registerSessionHandlers(
   });
 
   pi.on("session_shutdown", async (_event, ctx) => {
-    if (!ctx.hasUI) return;
+    let hasUI: boolean;
+    try { hasUI = ctx.hasUI; } catch { return; } // stale ctx after dispose (e.g. -p print mode)
+    if (!hasUI) return;
     saveState(pi, state, config, "session_shutdown", buildSessionDebugPayload(ctx.sessionManager));
   });
 
   pi.on("agent_end", async (_event, ctx) => {
-    if (!ctx.hasUI) return;
+    let hasUI: boolean;
+    try { hasUI = ctx.hasUI; } catch { return; } // stale ctx after dispose (e.g. -p print mode)
+    if (!hasUI) return;
     saveState(pi, state, config, "agent_end", buildSessionDebugPayload(ctx.sessionManager));
   });
 }
