@@ -137,7 +137,8 @@ Rules:
 - Avoid selecting ranges that end inside the newest protected hot tail of the conversation. DCP may reject compressions that touch the most recent conversational turns unless context is already in a hard emergency band.
 
 BATCHING
-When multiple independent ranges are ready and their boundaries do not overlap, include all of them as separate entries in the \`ranges\` array of a single tool call. Each entry creates one compressed block and must have its own \`startId\`, \`endId\`, \`summary\`, and effective topic. Prefer \`ranges[].topic\` for per-block labels; use top-level \`topic\` only as a default when all ranges share the same label.`;
+When multiple independent ranges are ready and their boundaries do not overlap, include all of them as separate entries in the \`ranges\` array of a single tool call. Each entry creates one compressed block and must have its own \`startId\`, \`endId\`, \`summary\`, and effective topic. Prefer \`ranges[].topic\` for per-block labels; use top-level \`topic\` only as a default when all ranges share the same label.
+`;
 
 /**
  * Legacy nudge prompt text retained for compatibility with older imports.

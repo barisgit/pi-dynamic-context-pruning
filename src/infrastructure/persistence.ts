@@ -339,6 +339,7 @@ export function serializePersistedState(state: DcpState): PersistedDcpState {
     messageAliases: serializeMessageAliasState(state.messageAliases),
     prunedToolIds: Array.from(state.prunedToolIds),
     tokensSaved: state.tokensSaved,
+    lifetimeTokensSavedRealized: state.lifetimeTokensSavedRealized,
     totalPruneCount: state.totalPruneCount,
     manualMode: state.manualMode,
     currentTurn: state.currentTurn,
@@ -405,6 +406,9 @@ export function restorePersistedState(data: unknown, state: DcpState): void {
       : 1;
   state.messageAliases = normalizeMessageAliasState(persisted.messageAliases);
   state.tokensSaved = isFiniteNumber(persisted.tokensSaved) ? persisted.tokensSaved : 0;
+  state.lifetimeTokensSavedRealized = isFiniteNumber(persisted.lifetimeTokensSavedRealized)
+    ? persisted.lifetimeTokensSavedRealized
+    : 0;
   state.totalPruneCount = isFiniteNumber(persisted.totalPruneCount) ? persisted.totalPruneCount : 0;
 
   if (Array.isArray(persisted.prunedToolIds)) {

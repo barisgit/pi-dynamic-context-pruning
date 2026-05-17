@@ -10,6 +10,7 @@ Automatically reduces token usage in Pi coding agent sessions by managing conver
 - **Context nudges** — injects compression reminders into the context at configurable thresholds: soft housekeeping notices, strong emergency warnings, and iteration reminders after long tool-call chains
 - **Manual mode** — disable autonomous compression nudges; trigger compression only via `/dcp compress` or explicit user request
 - **Session persistence** — compression blocks and pruning state survive session restarts
+- **Native pi compaction bridge** — `/dcp compact` can materialize active DCP summaries into a pi-native compaction entry, avoiding pi's default LLM compactor for that run
 - **Debug logging** — optional best-effort JSONL diagnostics at `~/.pi/log/dcp.jsonl`
 - **`/dcp` commands** — inspect context usage, view stats, sweep tool outputs, and manage compression blocks interactively
 
@@ -91,6 +92,15 @@ DCP uses a layered configuration system (later layers override earlier ones):
     // These tool outputs are never auto-pruned
     "protectedTools": ["compress", "write", "edit"],
   },
+  "nativeCompaction": {
+    // Normal DCP compression requests pi-native compaction immediately when
+    // the active branch has this many user/assistant/toolResult/bashExecution
+    // messages and active DCP blocks exist. Passthrough entries (DCP
+    // reminders, prior compactions, branch summaries) are not counted.
+    "enabled": true,
+    "autoTriggerMessageCount": 1000,
+    "minActiveBlockCount": 1,
+  },
   "strategies": {
     // Batch dedup/purge tombstone additions onto turn boundaries that are
     // multiples of N. Within a bucket, prunedToolIds does not grow, so the
@@ -133,6 +143,7 @@ All commands are available in the pi TUI via `/dcp <subcommand>`:
 | `/dcp manual on`      | Enable manual mode — autonomous nudges disabled                             |
 | `/dcp manual off`     | Disable manual mode — autonomous nudges re-enabled                          |
 | `/dcp compress`       | Trigger LLM compression immediately (sends a followUp message)              |
+| `/dcp compact`        | Materialize active DCP blocks into a pi-native compaction entry             |
 | `/dcp decompress`     | List all active compression blocks                                          |
 | `/dcp decompress N`   | Restore compression block `bN` (re-expands it in context)                   |
 
@@ -153,6 +164,12 @@ When a new compression exactly covers an older exact-coverage block, DCP now sup
 By default, DCP also protects the hot tail of the conversation: ranges that end inside the last `protectRecentTurns` logical turns/tool batches are rejected unless the session is already above the hard emergency threshold (`maxContextPercent` or `maxContextTokens`, if configured). When a range is rejected, DCP now includes planning hints that surface the hot-tail start, protected `m0001` / `bN` IDs, and the largest visible safe candidate ranges; the same guidance is appended to live compression nudges.
 
 Message IDs (`m0001`, `m0042`, etc.) and block IDs (`b1`, `b3`) are injected into context so the LLM can reference exact compression boundaries. Internal owner keys are not rendered as model-visible metadata; provider-payload filtering uses canonical source/span/block ownership tracked in state.
+
+### Native pi compaction
+
+`/dcp compact` sets a one-shot DCP compaction request and calls pi's native `compact()` API. During `session_before_compact`, DCP returns a `CompactionResult` built from active DCP blocks and bounded excerpts for any hidden raw gaps, so pi appends a real native compaction entry without running its default LLM summarizer for that compaction. After pi commits the compaction, DCP deactivates represented blocks because their summaries now live in the native compaction entry.
+
+When native compaction auto-triggering is enabled, normal successful `compress` calls request pi-native compaction immediately once the active branch exceeds `nativeCompaction.autoTriggerMessageCount`. DCP also handles host-initiated native compactions whenever active DCP blocks exist.
 
 ### Atomic tool pair removal
 

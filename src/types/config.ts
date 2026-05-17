@@ -24,6 +24,24 @@ export interface DcpConfig {
     protectedTools: string[]; // these tool outputs always protected from pruning
     protectUserMessages: boolean;
   };
+  nativeCompaction: {
+    enabled: boolean;
+    autoTriggerMessageCount: number;
+    minActiveBlockCount: number;
+    /**
+     * Minimum fraction (0-1) of hidden branch messages (before firstKeptEntryId)
+     * that must fall inside active DCP block ranges for DCP to override pi's
+     * default LLM compactor. Below this, DCP returns undefined from
+     * session_before_compact so pi falls back to its own LLM summary. The
+     * fallback is still seeded with active DCP block summaries via
+     * customInstructions.
+     */
+    minHiddenCoverageRatio: number;
+    /** Cap for non-DCP residue carried from preparation.previousSummary. */
+    maxPreviousSummaryTokens: number;
+    /** Hard cap for the total DCP-rendered native compaction summary. */
+    maxSummaryTokens: number;
+  };
   strategies: {
     /**
      * Batch tombstone additions onto turn boundaries that are multiples of N.

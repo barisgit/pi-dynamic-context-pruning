@@ -75,4 +75,35 @@ describe("DCP status.test", () => {
 
     expect(buildDcpStatusText(state)).toBe("DCP 1M saved");
   });
+
+  test("status text includes lifetime realized savings alongside active blocks", () => {
+    const state = makeState([
+      {
+        id: 5,
+        topic: "latest",
+        summary: "s",
+        startTimestamp: 1,
+        endTimestamp: 2,
+        anchorTimestamp: 3,
+        createdAt: 3,
+        active: true,
+        summaryTokenEstimate: 100,
+        savedTokenEstimate: 20_000,
+      },
+    ]);
+    state.tokensSaved = 20_000;
+    state.lifetimeTokensSavedRealized = 250_000;
+
+    // Total = 20k active + 250k realized = 270k. Footer must reflect the sum so
+    // it does not appear to regress after a native compaction.
+    expect(buildDcpStatusText(state)).toBe("DCP 270k saved b5");
+  });
+
+  test("status text shows lifetime realized savings after compaction with no active blocks", () => {
+    const state = makeState();
+    state.tokensSaved = 0;
+    state.lifetimeTokensSavedRealized = 175_000;
+
+    expect(buildDcpStatusText(state)).toBe("DCP 175k saved");
+  });
 });

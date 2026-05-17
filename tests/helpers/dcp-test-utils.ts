@@ -82,6 +82,14 @@ export function makeConfig(): DcpConfig {
       protectedTools: [],
       protectUserMessages: false,
     },
+    nativeCompaction: {
+      enabled: true,
+      autoTriggerMessageCount: 1000,
+      minActiveBlockCount: 1,
+      minHiddenCoverageRatio: 0,
+      maxPreviousSummaryTokens: 4000,
+      maxSummaryTokens: 20000,
+    },
     strategies: {
       pruneCadenceTurns: 1,
       deduplication: { enabled: false, protectedTools: [] },
@@ -108,6 +116,7 @@ export function makeState(compressionBlocks: DcpState["compressionBlocks"] = [])
     messageOwnerSnapshot: new Map(),
     currentTurn: 0,
     tokensSaved: 0,
+    lifetimeTokensSavedRealized: 0,
     totalPruneCount: 0,
     manualMode: false,
     lastNudgeTurn: -1,

@@ -25,6 +25,7 @@ import { renderCompressedBlockMessage } from "../../domain/compression/materiali
 import { exceedsMaxContextLimit } from "../../domain/pruning/index.js";
 import { estimateMessageTokens, estimateTokens } from "../../domain/compression/range.js";
 import { updateDcpStatus } from "../status.js";
+import { queueDcpAutoNativeCompaction } from "../native-compaction.js";
 import { buildTranscriptSnapshot } from "../../domain/transcript/index.js";
 
 export type {
@@ -147,6 +148,46 @@ function buildBlockDebugMetrics(
     fileWriteStatCount: metadata?.fileWriteStats.length ?? 0,
     commandStatCount: metadata?.commandStats.length ?? 0,
   };
+}
+
+// Passthrough entries are PI housekeeping (reminders, prior compaction
+// summaries, branch summaries), not real LLM turns. Counting them against
+// `autoTriggerMessageCount` makes the threshold fire much earlier than the
+// config implies — e.g. a 347-message session with ~150 DCP reminders and
+// prior compaction entries would trip a documented threshold of 500.
+const NATIVE_COMPACTION_PASSTHROUGH_ROLES = new Set([
+  "compaction",
+  "branch_summary",
+  "custom_message",
+]);
+
+function countLlmMessages(messages: readonly any[]): number {
+  let count = 0;
+  for (const message of messages) {
+    const role = typeof message?.role === "string" ? message.role : "";
+    if (NATIVE_COMPACTION_PASSTHROUGH_ROLES.has(role)) continue;
+    count++;
+  }
+  return count;
+}
+
+function shouldAutoTriggerNativeCompaction(
+  currentMessages: readonly any[],
+  state: DcpState,
+  config: DcpConfig,
+  newBlockCount: number
+): boolean {
+  if (!config.nativeCompaction.enabled) return false;
+  if (newBlockCount <= 0) return false;
+  const minActiveBlockCount = Math.max(1, Math.floor(config.nativeCompaction.minActiveBlockCount));
+  const activeBlockCount = state.compressionBlocks.filter((block) => block.active).length;
+  if (activeBlockCount < minActiveBlockCount) return false;
+
+  const autoTriggerMessageCount = Math.max(
+    1,
+    Math.floor(config.nativeCompaction.autoTriggerMessageCount)
+  );
+  return countLlmMessages(currentMessages) >= autoTriggerMessageCount;
 }
 
 // ---------------------------------------------------------------------------
@@ -385,6 +426,32 @@ export function registerCompressTool(pi: ExtensionAPI, state: DcpState, config: 
           .reduce((sum, block) => sum + (block.savedTokenEstimate ?? 0), 0);
         updateDcpStatus(ctx, state);
 
+        const nativeCompactionRequested = shouldAutoTriggerNativeCompaction(
+          currentMessages,
+          state,
+          config,
+          plannedBlocks.length
+        );
+        if (nativeCompactionRequested) {
+          queueDcpAutoNativeCompaction(state, newBlockIds);
+          if (ctx.hasUI) {
+            ctx.ui.notify("DCP native compaction will run at the end of this turn", "info");
+          }
+        }
+
+        // Recompute planning hints against the post-compress state so the
+        // returned tool message tells the agent what's still safe to compress
+        // without waiting for the next context-pass nudge. O(N) over the
+        // current transcript; cheap relative to compress itself.
+        const postCompressHints = buildCompressionPlanningHints(
+          currentMessages,
+          state,
+          config.compress.protectRecentTurns
+        );
+        const postCompressHintsText = renderCompressionPlanningHints(postCompressHints, {
+          includeTailStart: false,
+        });
+
         appendDebugLog(config, "compress_succeeded", {
           ...buildSessionDebugPayload(ctx.sessionManager),
           topic: params.topic,
@@ -402,22 +469,30 @@ export function registerCompressTool(pi: ExtensionAPI, state: DcpState, config: 
             .length,
           tokensSavedAfter: state.tokensSaved,
           supersededBlockIds: Array.from(pendingSupersededBlockIds),
+          nativeCompactionRequested,
           planningHints,
+          postCompressHints,
           contextPercent,
         });
 
+        const headerLine = `Compressed ${params.ranges.length} range(s): ${formatTopicList(plannedTopics)}`;
+        const followUpLine =
+          postCompressHints.candidateRanges.length > 0
+            ? "If still over the cleanup target, you can compress one of these now:"
+            : "No additional safe ranges remain right now.";
+        const responseText = [headerLine, followUpLine, postCompressHintsText]
+          .filter((segment) => segment && segment.trim().length > 0)
+          .join("\n\n");
+
         return {
-          content: [
-            {
-              type: "text",
-              text: `Compressed ${params.ranges.length} range(s): ${formatTopicList(plannedTopics)}`,
-            },
-          ],
+          content: [{ type: "text", text: responseText }],
           details: {
             blockIds: newBlockIds,
             topic: params.topic,
             topics: plannedTopics,
             blocks: newBlockIds.map((id, index) => ({ id, topic: plannedTopics[index] })),
+            nativeCompactionRequested,
+            postCompressHints,
           },
         };
       } catch (error) {

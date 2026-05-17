@@ -461,4 +461,49 @@ describe("DCP provider payload filter.test", () => {
     console.log("  PASS: failed or unrepresented compress attempts stay visible");
     console.log("TEST 20c PASSED\n");
   });
+
+  // ---------------------------------------------------------------------------
+  // Test 20d — NEVER DROP PI NATIVE COMPACTION SUMMARY USER MESSAGE
+  // ---------------------------------------------------------------------------
+  test("Test 20d — NEVER DROP PI NATIVE COMPACTION SUMMARY USER MESSAGE", () => {
+    // Reproduce: post-compaction, blocks bN are deactivated; the converted
+    // compactionSummary user message contains DCP markers from materialized
+    // block bodies. The filter must NOT use those markers to drop it.
+    const liveOwners = new Set<string>(["source:msg-tail"]);
+    const ownerByMessageRef = new Map<string, string>();
+
+    const payloadInput: any[] = [
+      {
+        type: "message",
+        role: "user",
+        content: [
+          {
+            type: "input_text",
+            text: 'The conversation history before this point was compacted into the following summary:\n\n<dcp-summary version="1">\n<section topic="Sample">\n[Compressed section: Sample]\n<agent-summary>\nbody\n</agent-summary>\n<activity-log>\nu: hi\n<dcp-block-id>b7</dcp-block-id>\n</activity-log>\n</section>\n</dcp-summary>',
+          },
+        ],
+      },
+      {
+        type: "message",
+        role: "user",
+        content: [{ type: "input_text", text: "recent live ask\n" }],
+      },
+    ];
+
+    const filtered = filterProviderPayloadInput(payloadInput, liveOwners, [], ownerByMessageRef);
+    const serialized = JSON.stringify(filtered);
+
+    assert.strictEqual(
+      filtered.length,
+      2,
+      "FAIL — compaction summary user message must survive even when its block markers reference deactivated blocks"
+    );
+    assert.ok(
+      serialized.includes("into the following summary"),
+      "FAIL — compaction summary text must reach the provider payload"
+    );
+
+    console.log("  PASS: native compaction summary user message survives filter");
+    console.log("TEST 20d PASSED\n");
+  });
 });

@@ -43,10 +43,22 @@ export interface CompressionPlanningHints {
   protectedTailStartId: string | null;
   protectedMessageIds: string[];
   protectedBlockIds: string[];
+  /** Largest safe ranges, sorted by token estimate desc, truncated to candidateLimit. */
   candidateRanges: CompressionCandidateRange[];
+  /** Total safe ranges discovered before top-N truncation. */
+  totalCandidateCount: number;
+  /** Sum of token estimates across every safe range, before top-N truncation. */
+  totalCompressibleTokens: number;
 }
 
-const DEFAULT_CANDIDATE_LIMIT = 3;
+const DEFAULT_CANDIDATE_LIMIT = 10;
+
+// Passthrough roles never get a visible message ref of their own (see
+// injectMessageIds skipping them), but the compression splice still removes
+// them when their timestamps fall inside a covered range. In planning, treat
+// them as transparent: do not flush the running safe candidate, just absorb
+// their tokens and keep extending across them.
+const PASSTHROUGH_ROLES = new Set(["compaction", "branch_summary", "custom_message"]);
 const MAX_RENDERED_PROTECTED_MESSAGE_IDS = 8;
 const MAX_RENDERED_PROTECTED_BLOCK_IDS = 6;
 
@@ -330,6 +342,9 @@ export function buildCompressionPlanningHints(
     activeCandidate = null;
   };
 
+  const isPassthroughOnlySpan = (items: ReadonlyArray<{ role: string }>): boolean =>
+    items.length > 0 && items.every((item) => PASSTHROUGH_ROLES.has(item.role));
+
   for (const span of snapshot.spans) {
     const sourceItems = span.sourceKeys
       .map((sourceKey) => sourceItemByKey.get(sourceKey))
@@ -351,13 +366,13 @@ export function buildCompressionPlanningHints(
 
     const spanStartTimestamp = timestamps[0]!;
     const spanEndTimestamp = timestamps[timestamps.length - 1]!;
-    const spanStartId = resolveVisibleIdForTimestamp(spanStartTimestamp, state);
-    const spanEndId = resolveVisibleIdForTimestamp(spanEndTimestamp, state);
     const touchesProtectedTail =
       protectedTailStartTimestamp !== null && spanEndTimestamp >= protectedTailStartTimestamp;
     const isCovered = sourceItems.some((item) => coveredSourceKeys.has(item.key));
 
-    if (!spanStartId || !spanEndId || touchesProtectedTail || isCovered) {
+    // Anything in the hot tail or already inside an active compression block
+    // ends the running candidate regardless of role.
+    if (touchesProtectedTail || isCovered) {
       pushActiveCandidate();
       continue;
     }
@@ -367,7 +382,22 @@ export function buildCompressionPlanningHints(
       0
     );
 
-    if (spanTokenEstimate <= 0) {
+    // Passthrough-only spans (reminders, branch summaries, native compactions)
+    // have no visible message ref but ARE removed by the compression splice
+    // when their timestamps fall inside the range. Keep the running candidate
+    // alive and absorb their tokens so a long stretch of raw history is not
+    // fragmented by every reminder injection.
+    if (isPassthroughOnlySpan(sourceItems)) {
+      if (activeCandidate && spanTokenEstimate > 0) {
+        activeCandidate.tokenEstimate += spanTokenEstimate;
+      }
+      continue;
+    }
+
+    const spanStartId = resolveVisibleIdForTimestamp(spanStartTimestamp, state);
+    const spanEndId = resolveVisibleIdForTimestamp(spanEndTimestamp, state);
+
+    if (!spanStartId || !spanEndId || spanTokenEstimate <= 0) {
       pushActiveCandidate();
       continue;
     }
@@ -386,6 +416,11 @@ export function buildCompressionPlanningHints(
 
   pushActiveCandidate();
 
+  const totalCompressibleTokens = candidateRanges.reduce(
+    (sum, candidate) => sum + candidate.tokenEstimate,
+    0
+  );
+
   candidateRanges.sort((a, b) => {
     if (b.tokenEstimate !== a.tokenEstimate) return b.tokenEstimate - a.tokenEstimate;
     return compareMessageIds(a.startId, b.startId);
@@ -396,6 +431,8 @@ export function buildCompressionPlanningHints(
     protectedMessageIds,
     protectedBlockIds,
     candidateRanges: candidateRanges.slice(0, Math.max(0, candidateLimit)),
+    totalCandidateCount: candidateRanges.length,
+    totalCompressibleTokens,
   };
 }
 
@@ -427,7 +464,11 @@ export function renderCompressionPlanningHints(
   }
 
   if (hints.candidateRanges.length > 0) {
-    lines.push("Largest safe uncompressed ranges right now:");
+    const hiddenCount = Math.max(0, hints.totalCandidateCount - hints.candidateRanges.length);
+    const totalSuffix = `~${hints.totalCompressibleTokens} tokens total across ${hints.totalCandidateCount} range${hints.totalCandidateCount === 1 ? "" : "s"}`;
+    const shownSuffix =
+      hiddenCount > 0 ? `; showing top ${hints.candidateRanges.length} by size` : "";
+    lines.push(`Largest safe uncompressed ranges right now (${totalSuffix}${shownSuffix}):`);
     for (const candidate of hints.candidateRanges) {
       lines.push(`- ${formatCandidateRange(candidate)} (~${candidate.tokenEstimate} tokens)`);
     }
