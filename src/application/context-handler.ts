@@ -55,14 +55,14 @@ function buildNudgeHeader(
   const targetText = formatCleanupTarget(config);
 
   if (overCleanupTarget || nudgeType === "context-strong") {
-    return `Compress now: you crossed the user's DCP cleanup target${targetText}. Prefer the largest safe older range below unless you need it immediately.`;
+    return `Compress now: over DCP cleanup target${targetText}. Compress every closed stretch below — not just the biggest. \`bN\` summaries stay citable; carrying closed work raw degrades the live task.`;
   }
 
   if (nudgeType === "iteration") {
-    return `Routine DCP checkpoint${targetText}: after a long tool run, compress a finished older slice if one is stale.`;
+    return `DCP checkpoint${targetText}. After a long tool run, compress every closed stretch below — not just the biggest. \`bN\` summaries stay citable; carrying closed work raw degrades the live task.`;
   }
 
-  return `Routine DCP checkpoint${targetText}: if an older slice is finished, compress it; keep the active working slice raw.`;
+  return `DCP checkpoint${targetText}. Compress every closed stretch below — not just the biggest. \`bN\` summaries stay citable; carrying closed work raw degrades the live task.`;
 }
 
 function formatCleanupTarget(config: DcpConfig): string {

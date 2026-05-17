@@ -439,36 +439,39 @@ export function buildCompressionPlanningHints(
 /** Render concise hot-tail and candidate-range guidance for the agent. */
 export function renderCompressionPlanningHints(
   hints: CompressionPlanningHints,
-  options: { includeTailStart?: boolean } = {}
+  options: { includeTailStart?: boolean; includeProtectedIdList?: boolean } = {}
 ): string {
-  const { includeTailStart = true } = options;
+  const { includeTailStart = true, includeProtectedIdList = false } = options;
   const lines: string[] = [];
 
   if (includeTailStart && hints.protectedTailStartId) {
     lines.push(`Protected hot tail starts at ${hints.protectedTailStartId}.`);
   }
 
-  const protectedParts: string[] = [];
-  if (hints.protectedMessageIds.length > 0) {
-    protectedParts.push(
-      `messages ${summarizeIdList(hints.protectedMessageIds, MAX_RENDERED_PROTECTED_MESSAGE_IDS)}`
-    );
-  }
-  if (hints.protectedBlockIds.length > 0) {
-    protectedParts.push(
-      `blocks ${summarizeIdList(hints.protectedBlockIds, MAX_RENDERED_PROTECTED_BLOCK_IDS)}`
-    );
-  }
-  if (protectedParts.length > 0) {
-    lines.push(`Do not use these as endId right now: ${protectedParts.join("; ")}.`);
+  if (includeProtectedIdList) {
+    const protectedParts: string[] = [];
+    if (hints.protectedMessageIds.length > 0) {
+      protectedParts.push(
+        `messages ${summarizeIdList(hints.protectedMessageIds, MAX_RENDERED_PROTECTED_MESSAGE_IDS)}`
+      );
+    }
+    if (hints.protectedBlockIds.length > 0) {
+      protectedParts.push(
+        `blocks ${summarizeIdList(hints.protectedBlockIds, MAX_RENDERED_PROTECTED_BLOCK_IDS)}`
+      );
+    }
+    if (protectedParts.length > 0) {
+      lines.push(`Do not use these as endId right now: ${protectedParts.join("; ")}.`);
+    }
   }
 
   if (hints.candidateRanges.length > 0) {
     const hiddenCount = Math.max(0, hints.totalCandidateCount - hints.candidateRanges.length);
-    const totalSuffix = `~${hints.totalCompressibleTokens} tokens total across ${hints.totalCandidateCount} range${hints.totalCandidateCount === 1 ? "" : "s"}`;
+    const stretchWord = hints.totalCandidateCount === 1 ? "stretch" : "stretches";
+    const totalSuffix = `~${hints.totalCompressibleTokens} tokens total across ${hints.totalCandidateCount} ${stretchWord}`;
     const shownSuffix =
       hiddenCount > 0 ? `; showing top ${hints.candidateRanges.length} by size` : "";
-    lines.push(`Largest safe uncompressed ranges right now (${totalSuffix}${shownSuffix}):`);
+    lines.push(`Stale and compressible now (${totalSuffix}${shownSuffix}):`);
     for (const candidate of hints.candidateRanges) {
       lines.push(`- ${formatCandidateRange(candidate)} (~${candidate.tokenEstimate} tokens)`);
     }

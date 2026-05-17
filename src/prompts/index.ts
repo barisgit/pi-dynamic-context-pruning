@@ -9,51 +9,20 @@
  * Appended to the existing system prompt when DCP is enabled (automatic mode).
  */
 export const SYSTEM_PROMPT = `
-You operate in a context-constrained environment. Manage context continuously to avoid buildup and preserve retrieval quality. Efficient context management is paramount for your agentic performance.
+You operate in a context-constrained environment. Compress proactively — it is essential to your performance.
 
-The ONLY tool you have for context management is \`compress\`. It replaces older conversation content with technical summaries you produce.
+The \`compress\` tool replaces older messages with \`bN\` summaries you author. Summaries stay citable; a deterministic activity log preserves file/command facts. Compression sharpens retrieval for the live task; carrying closed work raw degrades it. Treat compression as steady housekeeping while you work, not an interrupt.
 
-DCP metadata tags are environment-injected metadata. Do not output them.
+DCP metadata tags are injected metadata. Do not output them.
 
-THE PHILOSOPHY OF COMPRESS
-\`compress\` transforms conversation content into dense, high-fidelity summaries. This is not cleanup — it is crystallization. Your summary becomes the durable handoff record for what transpired.
+WHEN TO COMPRESS
+Each DCP reminder lists stretches that are structurally safe to compress. Compress every one whose work is closed — research concluded, change verified, exploration exhausted, dead-end noise. Don't cherry-pick only the biggest.
 
-Think of compression as phase transitions: raw exploration becomes refined understanding. The original context served its purpose; your summary now carries that understanding forward.
+Closedness over size: don't compress an in-progress plan, partial change, or unresolved thread just because it's a large stretch. Keep it raw, or write a richer summary that explicitly carries the in-progress state.
 
-OPERATING STANCE
-Prefer short, closed, summary-safe compressions. Do not optimize for maximum token removal when the section still contains continuation-critical working memory.
-When multiple independent stale sections exist, prefer several focused compressions (in parallel when possible) over one broad compression.
+Prefer many small focused compressions over one giant one — better summary quality, lower latency. Batch independent non-overlapping ranges as separate entries in a single \`compress\` call.
 
-Use \`compress\` as steady housekeeping while you work.
-
-CADENCE, SIGNALS, AND LATENCY
-
-- No fixed threshold mandates compression
-- Prioritize closedness and independence over raw size
-- Prefer smaller, regular compressions over infrequent massive compressions for better latency and summary quality
-- When multiple independent stale sections are ready, batch compressions in parallel
-
-COMPRESS WHEN
-
-A section is genuinely closed and the raw conversation has served its purpose:
-
-- Research concluded and findings are clear
-- Implementation finished and verified
-- Exploration exhausted and patterns understood
-- Dead-end noise can be discarded without waiting for a whole chapter to close
-
-DO NOT COMPRESS IF
-
-- Raw context is still relevant and needed for edits or precise references
-- The target content is still actively in progress
-- You may need exact code, error messages, or file contents in the immediate next steps
-
-Before compressing, ask: _"Is this section closed enough to become summary-only right now?"_
-Also ask: _"Could another agent continue safely from my summary plus the deterministic log, without seeing the raw messages?"_ If not, do not compress yet or write a richer summary.
-
-Evaluate conversation signal-to-noise REGULARLY. Use \`compress\` deliberately with quality-first summaries. Prioritize stale content intelligently to maintain a high-signal context window that supports your agency.
-
-It is your responsibility to keep a sharp, high-quality context window for optimal performance.
+Before compressing, ask: _"Could another agent continue safely from my summary plus the activity log?"_ If not, write more, or leave it raw.
 `.trim();
 
 /**
@@ -70,74 +39,24 @@ It is your responsibility to keep a sharp, high-quality context window for optim
  *     }>
  *   }
  */
-export const COMPRESS_RANGE_DESCRIPTION = `Collapse one or more ranges of the conversation into detailed summaries.
+export const COMPRESS_RANGE_DESCRIPTION = `Collapse one or more conversation ranges into dense \`bN\` summaries.
 
-THE SUMMARY
-A deterministic <activity-log> is rendered next to your summary with file paths, line spans, edit counts, command status, and short message excerpts. Do not restate any of that.
+INPUT
+- \`ranges\`: [{ startId, endId, summary, topic? }, ...]; optional top-level \`topic\` is the default label.
+- \`startId\`/\`endId\` are visible IDs from the transcript: \`mNNNN\` for messages, \`bN\` for prior compressed blocks. A message's ID lives in the XML metadata tag at the END of that message.
+- \`startId\` must appear before \`endId\`. Do not invent IDs.
+- Avoid ending inside the protected hot tail unless context is at hard emergency; the active DCP reminder names the tail start.
+- Multiple independent non-overlapping ranges go in one call as separate entries.
 
-Write only what the log can't recover: decisions, reasoning, and conclusions, constraints and invariants, key findings and current state, signatures/types that matter going forward, open questions. Be high-fidelity on those, lean everywhere else. Skip dead-end attempts and back-and-forth.
+SUMMARY CONTENT
+A deterministic <activity-log> with file paths, line spans, edit counts, command status, and short excerpts is rendered next to your summary. Do not restate it.
 
-Your summary is a handoff record, not a label. It must preserve enough semantic state for a future agent to continue without the raw transcript. Include, when present:
+Write what the log can't recover: user intent and success criteria, decisions made and rejected alternatives, current objective and next action, blockers/risks/assumptions, key constraints and invariants, non-obvious file/symbol/API relationships, open questions. Quote short user messages directly.
 
-- the user's actual intent and success criteria
-- decisions made and why alternatives were rejected
-- current objective, next action, and verification status
-- blockers, risks, assumptions, unresolved questions, and constraints
-- non-obvious file/symbol/API relationships needed to keep working
+Do not compress active working memory — in-progress plans, partial changes, unresolved debugging, exact details still needed — unless your summary captures that state explicitly enough for another agent to continue.
 
-Do not compress active working memory just because it is old or verbose. If the range contains an in-progress plan, partially applied change, unresolved debugging thread, or exact detail likely needed in the next steps, either leave it uncompressed or summarize that state explicitly enough to continue safely.
-
-For user messages in range, preserve intent exactly; quote short ones directly.
-
-COMPRESSED BLOCK PLACEHOLDERS
-When the selected range includes previously compressed blocks, use this exact placeholder format when referencing one:
-
-- \`(bN)\`
-
-Compressed block sections in context are clearly marked with a header:
-
-- \`[Compressed conversation section]\`
-
-Compressed block IDs always use the \`bN\` form (never message refs) and are represented in the same XML metadata tag format.
-
-Rules:
-
-- Include every required block placeholder exactly once.
-- Do not invent placeholders for blocks outside the selected range.
-- Treat \`(bN)\` placeholders as RESERVED TOKENS. Do not emit \`(bN)\` text anywhere except intentional placeholders.
-- If you need to mention a block in prose, use plain text like \`compressed bN\` (not as a placeholder).
-- Preflight check before finalizing: the set of \`(bN)\` placeholders in your summary must exactly match the required set, with no duplicates.
-
-These placeholders are semantic references. They will be replaced with the full stored compressed block content when the tool processes your output.
-
-FLOW PRESERVATION WITH PLACEHOLDERS
-When you use compressed block placeholders, write the surrounding summary text so it still reads correctly AFTER placeholder expansion.
-
-- Treat each placeholder as a stand-in for a full conversation segment, not as a short label.
-- Ensure transitions before and after each placeholder preserve chronology and causality.
-- Do not write text that depends on the placeholder staying literal (for example, "as noted in \`(b2)\`").
-- Your final meaning must be coherent once each placeholder is replaced with its full compressed block content.
-
-BOUNDARY IDS
-You specify boundaries by ID using the injected IDs visible in the conversation:
-
-- Message IDs identify raw messages (\`m0001\`-style refs: 4 digits while below 10000, then wider, e.g. \`m0001\`, \`m0042\`, \`m10000\`)
-- \`bN\` IDs identify previously compressed blocks
-
-Each message has an ID inside XML metadata tags like \`<dcp-id>...</dcp-id>\`.
-The ID tag appears at the end of the message it belongs to — it identifies the message above it, not the one below it.
-Treat these tags as boundary metadata only, not as tool result content.
-
-Rules:
-
-- Pick \`startId\` and \`endId\` directly from injected IDs in context.
-- IDs must exist in the current visible context.
-- \`startId\` must appear before \`endId\`.
-- Do not invent IDs. Use only IDs that are present in context.
-- Avoid selecting ranges that end inside the newest protected hot tail of the conversation. DCP may reject compressions that touch the most recent conversational turns unless context is already in a hard emergency band.
-
-BATCHING
-When multiple independent ranges are ready and their boundaries do not overlap, include all of them as separate entries in the \`ranges\` array of a single tool call. Each entry creates one compressed block and must have its own \`startId\`, \`endId\`, \`summary\`, and effective topic. Prefer \`ranges[].topic\` for per-block labels; use top-level \`topic\` only as a default when all ranges share the same label.
+NESTED \`bN\` PLACEHOLDERS
+If the range includes prior \`bN\` blocks (marked with a \`[Compressed conversation section]\` header), reference each as \`(bN)\` exactly once in your summary. The tool expands \`(bN)\` to the full stored block content, so write the surrounding prose so it still reads correctly after expansion (no "as noted in \`(b2)\`"). To mention a block in plain prose, write \`compressed bN\` instead. Do not invent placeholders for blocks outside the range. Preflight: \`(bN)\` placeholders in the summary must equal the set of nested blocks, no duplicates.
 `;
 
 /**
@@ -161,24 +80,11 @@ export const ITERATION_NUDGE = ``;
  * requested by the user or when a context-limit nudge fires.
  */
 export const MANUAL_MODE_SYSTEM_PROMPT = `
-You are operating in DCP manual mode for context management.
+You are in DCP manual mode. Do not proactively compress — compression is user-directed.
 
-DCP metadata tags are environment-injected metadata. Do not output them.
+DCP metadata tags are injected metadata. Do not output them.
 
-In manual mode you do NOT proactively compress conversation content. Compression is a deliberate, user-directed action.
+Compress only when the user asks, or when a DCP nudge instructs you to (context-limit emergency). Never as background housekeeping.
 
-WHEN TO COMPRESS
-- Only when the user explicitly asks you to compress
-- Only when a DCP nudge instructs you to (context-limit emergency)
-- Never as background housekeeping or on your own initiative
-
-WHEN YOU DO COMPRESS
-Apply the same quality standards as always:
-
-- Summaries must be explicit and high-fidelity — file paths, decisions, findings, exact constraints
-- Preserve user intent precisely; prefer direct quotes for short user messages
-- Use only boundary IDs visible in context (\`m0001\`-style refs for messages, \`bN\` for compressed blocks)
-- Batch independent ranges in a single \`compress\` call when possible
-
-Do not compress active, still-needed context. Only compress ranges that are genuinely closed and whose raw form is no longer required.
+When you do compress, the same quality bar applies: high-fidelity summaries (file paths, decisions, findings, constraints), preserve user intent precisely, use only visible IDs (\`mNNNN\` for messages, \`bN\` for blocks), batch independent ranges in one call. Leave active, still-needed context raw.
 `.trim();

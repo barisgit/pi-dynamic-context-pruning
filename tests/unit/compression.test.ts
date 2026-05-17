@@ -420,7 +420,10 @@ describe("DCP compression.test", () => {
     ]);
 
     const hints = buildCompressionPlanningHints(messages, state, 2);
-    const rendered = renderCompressionPlanningHints(hints);
+    const rendered = renderCompressionPlanningHints(hints, {
+      includeProtectedIdList: true,
+    });
+    const renderedRoutine = renderCompressionPlanningHints(hints);
 
     assert.deepStrictEqual(
       hints.protectedMessageIds,
@@ -452,11 +455,15 @@ describe("DCP compression.test", () => {
     );
     assert.ok(
       rendered.includes("messages m005, m006"),
-      "FAIL — rendered hints should enumerate protected message ids"
+      "FAIL — opted-in render should enumerate protected message ids"
     );
     assert.ok(
       rendered.includes("blocks b7"),
-      "FAIL — rendered hints should enumerate protected block ids"
+      "FAIL — opted-in render should enumerate protected block ids"
+    );
+    assert.ok(
+      !renderedRoutine.includes("Do not use these as endId"),
+      "FAIL — routine render should omit the verbose protected-id enumeration"
     );
     assert.ok(
       rendered.includes("- m001..m004"),
@@ -550,8 +557,12 @@ describe("DCP compression.test", () => {
       "FAIL — total candidate count should match the surfaced range"
     );
     assert.ok(
-      rendered.includes("1 range"),
-      "FAIL — rendered hint should disclose the total range count"
+      rendered.includes("1 stretch"),
+      "FAIL — rendered hint should disclose the total candidate-stretch count"
+    );
+    assert.ok(
+      !rendered.includes("1 stretches"),
+      "FAIL — single stretch should use singular wording"
     );
     assert.ok(
       rendered.includes("tokens total"),
@@ -1089,7 +1100,7 @@ describe("DCP compression.test", () => {
       "FAIL — tool result should still lead with the compressed-count header"
     );
     assert.ok(
-      text.includes("Largest safe uncompressed ranges right now"),
+      text.includes("Stale and compressible now"),
       "FAIL — tool result should append updated planning hints after a successful compress"
     );
     assert.ok(

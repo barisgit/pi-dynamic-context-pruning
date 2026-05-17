@@ -312,6 +312,7 @@ export function registerCompressTool(pi: ExtensionAPI, state: DcpState, config: 
           if (touchesProtectedTail && !emergencyOverride) {
             const planningHintText = renderCompressionPlanningHints(planningHints, {
               includeTailStart: false,
+              includeProtectedIdList: true,
             });
             throw new Error(
               `Compression ranges may not end inside the recent protected tail. ` +
