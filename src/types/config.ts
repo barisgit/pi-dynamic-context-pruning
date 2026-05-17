@@ -27,6 +27,7 @@ export interface DcpConfig {
   nativeCompaction: {
     enabled: boolean;
     autoTriggerMessageCount: number;
+    autoTriggerForceMessageCount?: number;
     minActiveBlockCount: number;
     /**
      * Minimum fraction (0-1) of hidden branch messages (before firstKeptEntryId)

@@ -33,6 +33,7 @@ const DEFAULT_CONFIG: DcpConfig = {
   nativeCompaction: {
     enabled: true,
     autoTriggerMessageCount: 1000,
+    autoTriggerForceMessageCount: 2000,
     minActiveBlockCount: 3,
     minHiddenCoverageRatio: 0.6,
     maxPreviousSummaryTokens: 4000,
@@ -90,6 +91,7 @@ const DEFAULT_CONFIG_FILE_CONTENT = `{
   //   // compaction once the active branch has this many renderable messages.
   //   "enabled": true,
   //   "autoTriggerMessageCount": 1000,
+  //   "autoTriggerForceMessageCount": 2000,
   //   "minActiveBlockCount": 3,
   //   "minHiddenCoverageRatio": 0.6,
   //   "maxPreviousSummaryTokens": 4000,

@@ -85,6 +85,7 @@ export function makeConfig(): DcpConfig {
     nativeCompaction: {
       enabled: true,
       autoTriggerMessageCount: 1000,
+      autoTriggerForceMessageCount: 2000,
       minActiveBlockCount: 1,
       minHiddenCoverageRatio: 0,
       maxPreviousSummaryTokens: 4000,

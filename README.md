@@ -99,6 +99,7 @@ DCP uses a layered configuration system (later layers override earlier ones):
     // reminders, prior compactions, branch summaries) are not counted.
     "enabled": true,
     "autoTriggerMessageCount": 1000,
+    "autoTriggerForceMessageCount": 2000,
     "minActiveBlockCount": 1,
   },
   "strategies": {
@@ -169,7 +170,7 @@ Message IDs (`m0001`, `m0042`, etc.) and block IDs (`b1`, `b3`) are injected int
 
 `/dcp compact` sets a one-shot DCP compaction request and calls pi's native `compact()` API. During `session_before_compact`, DCP returns a `CompactionResult` built from active DCP blocks and bounded excerpts for any hidden raw gaps, so pi appends a real native compaction entry without running its default LLM summarizer for that compaction. After pi commits the compaction, DCP deactivates represented blocks because their summaries now live in the native compaction entry.
 
-When native compaction auto-triggering is enabled, normal successful `compress` calls request pi-native compaction immediately once the active branch exceeds `nativeCompaction.autoTriggerMessageCount`. DCP also handles host-initiated native compactions whenever active DCP blocks exist.
+When native compaction auto-triggering is enabled, normal successful `compress` calls queue pi-native compaction after `nativeCompaction.autoTriggerMessageCount` estimated compactable messages only when estimated DCP coverage is at least `nativeCompaction.minHiddenCoverageRatio + 0.05`. At `nativeCompaction.autoTriggerForceMessageCount` messages, DCP queues native compaction even if estimated coverage is low so pi's built-in compactor can prevail. Existing configs that only set `autoTriggerMessageCount` remain valid. DCP also handles host-initiated native compactions whenever active DCP blocks exist.
 
 ### Atomic tool pair removal
 

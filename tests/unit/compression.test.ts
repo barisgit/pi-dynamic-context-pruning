@@ -989,6 +989,12 @@ describe("DCP compression.test", () => {
       true,
       "FAIL — compress should mark native compaction requested when auto threshold is crossed"
     );
+    assert.ok(
+      ["likely-dcp-owned", "force-threshold"].includes(
+        result.details.nativeCompactionAutoTrigger.reason
+      ),
+      "FAIL — backward-compatible default should still queue native compaction at autoTriggerMessageCount"
+    );
     assert.strictEqual(
       compactCallCount,
       0,
@@ -1231,5 +1237,201 @@ describe("DCP compression.test", () => {
 
     console.log("  PASS: passthrough entries are excluded from the auto-trigger count");
     console.log("TEST 23f PASSED\n");
+  });
+
+  // ---------------------------------------------------------------------------
+  // Test 23g — NATIVE-COMPACTION LOWER THRESHOLD QUEUES HIGH-COVERAGE WORK
+  // ---------------------------------------------------------------------------
+  test("Test 23g — NATIVE-COMPACTION LOWER THRESHOLD QUEUES HIGH-COVERAGE WORK", async () => {
+    const messages = Array.from({ length: 10 }, (_, idx) => ({
+      role: idx % 2 === 0 ? "user" : "assistant",
+      content: [{ type: "text", text: `message ${idx} `.repeat(40) }],
+      timestamp: 1000 + idx * 1000,
+    }));
+    const state = makeState();
+    messages.forEach((msg, idx) => {
+      const ref = `m${String(idx + 1).padStart(4, "0")}`;
+      state.messageIdSnapshot.set(ref, msg.timestamp);
+      state.messageRefSnapshot.set(ref, {
+        ref,
+        sourceKey: `msg:${msg.timestamp}:${msg.role}:${idx}`,
+        timestamp: msg.timestamp,
+        ownerKey: `source:${ref}`,
+      });
+    });
+
+    const config = makeConfig();
+    config.compress.protectRecentTurns = 0;
+    config.nativeCompaction.autoTriggerMessageCount = 10;
+    config.nativeCompaction.autoTriggerForceMessageCount = 20;
+    config.nativeCompaction.minHiddenCoverageRatio = 0.5;
+
+    let registeredTool: any = null;
+    registerCompressTool(
+      { registerTool: (tool: any) => (registeredTool = tool) } as any,
+      state,
+      config
+    );
+
+    const result = await registeredTool.execute(
+      "compress-call-23g",
+      {
+        topic: "covered",
+        ranges: [{ startId: "m0001", endId: "m0006", summary: "covered summary" }],
+      },
+      undefined,
+      undefined,
+      {
+        sessionManager: {
+          getSessionId: () => "session-23g",
+          getCwd: () => "/tmp/dcp-test",
+          getSessionDir: () => "/tmp/dcp-test/session",
+          getSessionFile: () => "/tmp/dcp-test/session.jsonl",
+          getLeafId: () => null,
+          getBranch: () => messages.map((message) => ({ type: "message", message })),
+        },
+        getContextUsage: () => ({ tokens: 100_000, contextWindow: 1_000_000 }),
+        compact: () => undefined,
+        hasUI: false,
+        ui: { notify: () => undefined },
+      }
+    );
+
+    assert.strictEqual(result.details.nativeCompactionRequested, true);
+    assert.strictEqual(result.details.nativeCompactionAutoTrigger.reason, "likely-dcp-owned");
+    assert.strictEqual(
+      result.details.nativeCompactionAutoTrigger.estimatedCompactableMessageCount,
+      10
+    );
+    assert.strictEqual(
+      result.details.nativeCompactionAutoTrigger.requiredEstimatedCoverageRatio,
+      0.55
+    );
+    assert.ok(result.content[0].text.includes("Native compaction queued (likely-dcp-owned"));
+  });
+
+  // ---------------------------------------------------------------------------
+  // Test 23h — NATIVE-COMPACTION LOWER THRESHOLD DEFERS LOW-COVERAGE WORK
+  // ---------------------------------------------------------------------------
+  test("Test 23h — NATIVE-COMPACTION LOWER THRESHOLD DEFERS LOW-COVERAGE WORK", async () => {
+    const messages = Array.from({ length: 10 }, (_, idx) => ({
+      role: idx % 2 === 0 ? "user" : "assistant",
+      content: [{ type: "text", text: `message ${idx} `.repeat(40) }],
+      timestamp: 1000 + idx * 1000,
+    }));
+    const state = makeState();
+    messages.forEach((msg, idx) => {
+      const ref = `m${String(idx + 1).padStart(4, "0")}`;
+      state.messageIdSnapshot.set(ref, msg.timestamp);
+      state.messageRefSnapshot.set(ref, {
+        ref,
+        sourceKey: `msg:${msg.timestamp}:${msg.role}:${idx}`,
+        timestamp: msg.timestamp,
+        ownerKey: `source:${ref}`,
+      });
+    });
+
+    const config = makeConfig();
+    config.compress.protectRecentTurns = 0;
+    config.nativeCompaction.autoTriggerMessageCount = 10;
+    config.nativeCompaction.autoTriggerForceMessageCount = 20;
+    config.nativeCompaction.minHiddenCoverageRatio = 0.55;
+
+    let registeredTool: any = null;
+    registerCompressTool(
+      { registerTool: (tool: any) => (registeredTool = tool) } as any,
+      state,
+      config
+    );
+
+    const result = await registeredTool.execute(
+      "compress-call-23h",
+      {
+        topic: "low coverage",
+        ranges: [{ startId: "m0001", endId: "m0005", summary: "low coverage summary" }],
+      },
+      undefined,
+      undefined,
+      {
+        sessionManager: {
+          getSessionId: () => "session-23h",
+          getCwd: () => "/tmp/dcp-test",
+          getSessionDir: () => "/tmp/dcp-test/session",
+          getSessionFile: () => "/tmp/dcp-test/session.jsonl",
+          getLeafId: () => null,
+          getBranch: () => messages.map((message) => ({ type: "message", message })),
+        },
+        getContextUsage: () => ({ tokens: 100_000, contextWindow: 1_000_000 }),
+        compact: () => undefined,
+        hasUI: false,
+        ui: { notify: () => undefined },
+      }
+    );
+
+    assert.strictEqual(result.details.nativeCompactionRequested, false);
+    assert.strictEqual(result.details.nativeCompactionAutoTrigger.reason, "low-estimated-coverage");
+    assert.ok(
+      result.content[0].text.includes("Native compaction deferred (low-estimated-coverage")
+    );
+  });
+
+  // ---------------------------------------------------------------------------
+  // Test 23i — NATIVE-COMPACTION UPPER THRESHOLD FORCES LOW-COVERAGE WORK
+  // ---------------------------------------------------------------------------
+  test("Test 23i — NATIVE-COMPACTION UPPER THRESHOLD FORCES LOW-COVERAGE WORK", async () => {
+    const messages = Array.from({ length: 20 }, (_, idx) => ({
+      role: idx % 2 === 0 ? "user" : "assistant",
+      content: [{ type: "text", text: `message ${idx} `.repeat(30) }],
+      timestamp: 1000 + idx * 1000,
+    }));
+    const state = makeState();
+    messages.forEach((msg, idx) => {
+      const ref = `m${String(idx + 1).padStart(4, "0")}`;
+      state.messageIdSnapshot.set(ref, msg.timestamp);
+      state.messageRefSnapshot.set(ref, {
+        ref,
+        sourceKey: `msg:${msg.timestamp}:${msg.role}:${idx}`,
+        timestamp: msg.timestamp,
+        ownerKey: `source:${ref}`,
+      });
+    });
+
+    const config = makeConfig();
+    config.compress.protectRecentTurns = 0;
+    config.nativeCompaction.autoTriggerMessageCount = 10;
+    config.nativeCompaction.autoTriggerForceMessageCount = 20;
+    config.nativeCompaction.minHiddenCoverageRatio = 0.9;
+
+    let registeredTool: any = null;
+    registerCompressTool(
+      { registerTool: (tool: any) => (registeredTool = tool) } as any,
+      state,
+      config
+    );
+
+    const result = await registeredTool.execute(
+      "compress-call-23i",
+      { topic: "force", ranges: [{ startId: "m0001", endId: "m0002", summary: "force summary" }] },
+      undefined,
+      undefined,
+      {
+        sessionManager: {
+          getSessionId: () => "session-23i",
+          getCwd: () => "/tmp/dcp-test",
+          getSessionDir: () => "/tmp/dcp-test/session",
+          getSessionFile: () => "/tmp/dcp-test/session.jsonl",
+          getLeafId: () => null,
+          getBranch: () => messages.map((message) => ({ type: "message", message })),
+        },
+        getContextUsage: () => ({ tokens: 100_000, contextWindow: 1_000_000 }),
+        compact: () => undefined,
+        hasUI: false,
+        ui: { notify: () => undefined },
+      }
+    );
+
+    assert.strictEqual(result.details.nativeCompactionRequested, true);
+    assert.strictEqual(result.details.nativeCompactionAutoTrigger.reason, "force-threshold");
+    assert.ok(result.content[0].text.includes("Native compaction queued (force-threshold"));
   });
 });

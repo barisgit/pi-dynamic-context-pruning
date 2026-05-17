@@ -26,7 +26,10 @@ import { exceedsMaxContextLimit } from "../../domain/pruning/index.js";
 import { estimateMessageTokens, estimateTokens } from "../../domain/compression/range.js";
 import { updateDcpStatus } from "../status.js";
 import { queueDcpAutoNativeCompaction } from "../native-compaction.js";
-import { buildTranscriptSnapshot } from "../../domain/transcript/index.js";
+import {
+  buildTranscriptSnapshot,
+  resolveLogicalTurnTailStartTimestamp,
+} from "../../domain/transcript/index.js";
 
 export type {
   CompressionCandidateRange,
@@ -171,23 +174,121 @@ function countLlmMessages(messages: readonly any[]): number {
   return count;
 }
 
-function shouldAutoTriggerNativeCompaction(
+const NATIVE_COMPACTION_ESTIMATED_COVERAGE_MARGIN = 0.05;
+
+interface NativeCompactionAutoTriggerDecision {
+  queued: boolean;
+  reason:
+    | "disabled"
+    | "no-new-blocks"
+    | "too-few-active-blocks"
+    | "below-lower-threshold"
+    | "low-estimated-coverage"
+    | "likely-dcp-owned"
+    | "force-threshold";
+  estimatedCompactableMessageCount: number;
+  estimatedDcpCoverageRatio: number | null;
+  requiredEstimatedCoverageRatio: number;
+  lowerMessageThreshold: number;
+  upperMessageThreshold: number;
+  activeBlockCount: number;
+  minActiveBlockCount: number;
+}
+
+function clampRatio(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.min(1, Math.max(0, value));
+}
+
+function estimateCompactableSourceItems(currentMessages: readonly any[], config: DcpConfig) {
+  const snapshot = buildTranscriptSnapshot([...currentMessages]);
+  const tailStartTimestamp = resolveLogicalTurnTailStartTimestamp(
+    [...currentMessages],
+    config.compress.protectRecentTurns
+  );
+
+  return snapshot.sourceItems.filter((item) => {
+    if (NATIVE_COMPACTION_PASSTHROUGH_ROLES.has(item.role)) return false;
+    if (tailStartTimestamp === null) return true;
+    if (item.timestamp === null) return true;
+    return item.timestamp < tailStartTimestamp;
+  });
+}
+
+function estimateDcpCoverageRatio(
+  compactableSourceItems: ReturnType<typeof estimateCompactableSourceItems>,
+  state: DcpState
+): number | null {
+  if (compactableSourceItems.length === 0) return null;
+
+  const coveredSourceKeys = new Set<string>();
+  for (const block of state.compressionBlocks) {
+    if (!block.active) continue;
+    for (const sourceKey of block.metadata?.coveredSourceKeys ?? []) {
+      coveredSourceKeys.add(sourceKey);
+    }
+  }
+
+  const coveredCount = compactableSourceItems.filter((item) =>
+    coveredSourceKeys.has(item.key)
+  ).length;
+  return coveredCount / compactableSourceItems.length;
+}
+
+function decideNativeCompactionAutoTrigger(
   currentMessages: readonly any[],
   state: DcpState,
   config: DcpConfig,
   newBlockCount: number
-): boolean {
-  if (!config.nativeCompaction.enabled) return false;
-  if (newBlockCount <= 0) return false;
-  const minActiveBlockCount = Math.max(1, Math.floor(config.nativeCompaction.minActiveBlockCount));
-  const activeBlockCount = state.compressionBlocks.filter((block) => block.active).length;
-  if (activeBlockCount < minActiveBlockCount) return false;
-
-  const autoTriggerMessageCount = Math.max(
+): NativeCompactionAutoTriggerDecision {
+  const estimatedCompactableSourceItems = estimateCompactableSourceItems(currentMessages, config);
+  const estimatedCompactableMessageCount = estimatedCompactableSourceItems.length;
+  const lowerMessageThreshold = Math.max(
     1,
     Math.floor(config.nativeCompaction.autoTriggerMessageCount)
   );
-  return countLlmMessages(currentMessages) >= autoTriggerMessageCount;
+  const upperMessageThreshold = Math.max(
+    lowerMessageThreshold,
+    Math.floor(config.nativeCompaction.autoTriggerForceMessageCount ?? lowerMessageThreshold)
+  );
+  const minActiveBlockCount = Math.max(1, Math.floor(config.nativeCompaction.minActiveBlockCount));
+  const activeBlockCount = state.compressionBlocks.filter((block) => block.active).length;
+  const requiredEstimatedCoverageRatio = clampRatio(
+    config.nativeCompaction.minHiddenCoverageRatio + NATIVE_COMPACTION_ESTIMATED_COVERAGE_MARGIN
+  );
+  const estimatedDcpCoverageRatio = estimateDcpCoverageRatio(
+    estimatedCompactableSourceItems,
+    state
+  );
+
+  const base = {
+    estimatedCompactableMessageCount,
+    estimatedDcpCoverageRatio,
+    requiredEstimatedCoverageRatio,
+    lowerMessageThreshold,
+    upperMessageThreshold,
+    activeBlockCount,
+    minActiveBlockCount,
+  };
+
+  if (!config.nativeCompaction.enabled) return { ...base, queued: false, reason: "disabled" };
+  if (newBlockCount <= 0) return { ...base, queued: false, reason: "no-new-blocks" };
+  if (activeBlockCount < minActiveBlockCount) {
+    return { ...base, queued: false, reason: "too-few-active-blocks" };
+  }
+  if (estimatedCompactableMessageCount >= upperMessageThreshold) {
+    return { ...base, queued: true, reason: "force-threshold" };
+  }
+  if (estimatedCompactableMessageCount < lowerMessageThreshold) {
+    return { ...base, queued: false, reason: "below-lower-threshold" };
+  }
+  if (
+    estimatedDcpCoverageRatio !== null &&
+    estimatedDcpCoverageRatio >= requiredEstimatedCoverageRatio
+  ) {
+    return { ...base, queued: true, reason: "likely-dcp-owned" };
+  }
+  return { ...base, queued: false, reason: "low-estimated-coverage" };
 }
 
 // ---------------------------------------------------------------------------
@@ -427,16 +528,20 @@ export function registerCompressTool(pi: ExtensionAPI, state: DcpState, config: 
           .reduce((sum, block) => sum + (block.savedTokenEstimate ?? 0), 0);
         updateDcpStatus(ctx, state);
 
-        const nativeCompactionRequested = shouldAutoTriggerNativeCompaction(
+        const nativeCompactionAutoTrigger = decideNativeCompactionAutoTrigger(
           currentMessages,
           state,
           config,
           plannedBlocks.length
         );
+        const nativeCompactionRequested = nativeCompactionAutoTrigger.queued;
         if (nativeCompactionRequested) {
           queueDcpAutoNativeCompaction(state, newBlockIds);
           if (ctx.hasUI) {
-            ctx.ui.notify("DCP native compaction will run at the end of this turn", "info");
+            ctx.ui.notify(
+              `DCP native compaction will run at the end of this turn (${nativeCompactionAutoTrigger.reason})`,
+              "info"
+            );
           }
         }
 
@@ -471,17 +576,28 @@ export function registerCompressTool(pi: ExtensionAPI, state: DcpState, config: 
           tokensSavedAfter: state.tokensSaved,
           supersededBlockIds: Array.from(pendingSupersededBlockIds),
           nativeCompactionRequested,
+          nativeCompactionAutoTrigger,
           planningHints,
           postCompressHints,
           contextPercent,
         });
 
         const headerLine = `Compressed ${params.ranges.length} range(s): ${formatTopicList(plannedTopics)}`;
+        const shouldRenderNativeCompactionLine = [
+          "force-threshold",
+          "likely-dcp-owned",
+          "low-estimated-coverage",
+        ].includes(nativeCompactionAutoTrigger.reason);
+        const nativeCompactionLine = shouldRenderNativeCompactionLine
+          ? nativeCompactionRequested
+            ? `Native compaction queued (${nativeCompactionAutoTrigger.reason}; ${nativeCompactionAutoTrigger.estimatedCompactableMessageCount} estimated compactable messages; ${nativeCompactionAutoTrigger.estimatedDcpCoverageRatio === null ? "unknown" : nativeCompactionAutoTrigger.estimatedDcpCoverageRatio.toFixed(2)} estimated DCP coverage; ${nativeCompactionAutoTrigger.requiredEstimatedCoverageRatio.toFixed(2)} required).`
+            : `Native compaction deferred (${nativeCompactionAutoTrigger.reason}; ${nativeCompactionAutoTrigger.estimatedCompactableMessageCount} estimated compactable messages; ${nativeCompactionAutoTrigger.estimatedDcpCoverageRatio === null ? "unknown" : nativeCompactionAutoTrigger.estimatedDcpCoverageRatio.toFixed(2)} estimated DCP coverage; ${nativeCompactionAutoTrigger.requiredEstimatedCoverageRatio.toFixed(2)} required).`
+          : null;
         const followUpLine =
           postCompressHints.candidateRanges.length > 0
             ? "If still over the cleanup target, you can compress one of these now:"
             : "No additional safe ranges remain right now.";
-        const responseText = [headerLine, followUpLine, postCompressHintsText]
+        const responseText = [headerLine, nativeCompactionLine, followUpLine, postCompressHintsText]
           .filter((segment) => segment && segment.trim().length > 0)
           .join("\n\n");
 
@@ -493,6 +609,7 @@ export function registerCompressTool(pi: ExtensionAPI, state: DcpState, config: 
             topics: plannedTopics,
             blocks: newBlockIds.map((id, index) => ({ id, topic: plannedTopics[index] })),
             nativeCompactionRequested,
+            nativeCompactionAutoTrigger,
             postCompressHints,
           },
         };
