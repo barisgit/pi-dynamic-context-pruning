@@ -312,16 +312,91 @@ export function migrateLegacyCompressionBlocksToV2(
   return migratedBlocks;
 }
 
+// ---------------------------------------------------------------------------
+// Inactive-block slimming
+// ---------------------------------------------------------------------------
+
+/**
+ * Reduce an inactive (decompressed / superseded) v1 block to the minimum
+ * fields needed for future restore/repair.
+ *
+ * Runtime sites uniformly skip blocks with `active: false` (see
+ * `domain/compression/tooling.ts`, `domain/provider/payload-filter.ts`,
+ * `domain/transcript/index.ts`), and `repairOffBranchNativeCompactionState`
+ * pulls a fully-populated copy from an earlier active-state snapshot when it
+ * needs to reactivate — it never reads coverage metadata, activity logs, or
+ * summaries from the inactive entry itself. So we can safely drop those fat
+ * fields on serialize. Older snapshots on disk remain full-fidelity for tree
+ * navigation; only newly-written entries are slim.
+ */
+function slimInactiveLegacyBlock(block: CompressionBlock): CompressionBlock {
+  if (block.active) return block;
+
+  return {
+    id: block.id,
+    topic: "",
+    summary: "",
+    startTimestamp: block.startTimestamp,
+    endTimestamp: block.endTimestamp,
+    anchorTimestamp: block.anchorTimestamp,
+    active: false,
+    summaryTokenEstimate: block.summaryTokenEstimate,
+    savedTokenEstimate: block.savedTokenEstimate,
+    createdAt: block.createdAt,
+    metadata: {
+      coveredSourceKeys: [],
+      coveredSpanKeys: [],
+      coveredArtifactRefs: [],
+      coveredToolIds: [],
+      supersededBlockIds: block.metadata?.supersededBlockIds ?? [],
+      fileReadStats: [],
+      fileWriteStats: [],
+      commandStats: [],
+    },
+  };
+}
+
+/** Mirror of `slimInactiveLegacyBlock` for the v2 schema. */
+function slimInactiveV2Block(block: CompressionBlockV2): CompressionBlockV2 {
+  if (block.status === "active") return block;
+
+  return {
+    id: block.id,
+    topic: "",
+    summary: "",
+    startSpanKey: block.startSpanKey,
+    endSpanKey: block.endSpanKey,
+    status: block.status,
+    summaryTokenEstimate: block.summaryTokenEstimate,
+    createdAt: block.createdAt,
+    activityLogVersion: 1,
+    activityLog: [],
+    metadata: {
+      coveredSourceKeys: [],
+      coveredSpanKeys: [],
+      coveredArtifactRefs: [],
+      coveredToolIds: [],
+      supersededBlockIds: block.metadata?.supersededBlockIds ?? [],
+      fileReadStats: [],
+      fileWriteStats: [],
+      commandStats: [],
+    },
+  };
+}
+
 /**
  * Serialize runtime state back into the most-recent persisted schema seen by
  * the current process. This keeps Phase 1 backward-compatible while avoiding
  * accidental loss of future v2 block data during round-trips.
+ *
+ * Inactive blocks are slimmed (see `slimInactiveLegacyBlock`) to keep session
+ * JSONL size proportional to *active* state rather than lifetime block count.
  */
 export function serializePersistedState(state: DcpState): PersistedDcpState {
   if (state.schemaVersion === 2) {
     const persisted: PersistedDcpStateV2 = {
       schemaVersion: 2,
-      blocks: state.compressionBlocksV2,
+      blocks: state.compressionBlocksV2.map(slimInactiveV2Block),
       nextBlockId: state.nextBlockId,
       messageAliases: serializeMessageAliasState(state.messageAliases),
       manualMode: state.manualMode,
@@ -334,7 +409,7 @@ export function serializePersistedState(state: DcpState): PersistedDcpState {
 
   const persisted: PersistedDcpStateV1 = {
     schemaVersion: 1,
-    compressionBlocks: state.compressionBlocks,
+    compressionBlocks: state.compressionBlocks.map(slimInactiveLegacyBlock),
     nextBlockId: state.nextBlockId,
     messageAliases: serializeMessageAliasState(state.messageAliases),
     prunedToolIds: Array.from(state.prunedToolIds),
@@ -358,6 +433,11 @@ export function serializePersistedState(state: DcpState): PersistedDcpState {
 export function restorePersistedState(data: unknown, state: DcpState): void {
   const persisted = asObject(data);
   if (!persisted) return;
+
+  // Offline maintenance can replace redundant snapshots with a tiny no-op
+  // marker. Restore is cumulative over branch entries, so this means "keep the
+  // state restored from the nearest previous DCP snapshot on this branch".
+  if (persisted.unchanged === true) return;
 
   if (persisted.schemaVersion === 2 || Array.isArray(persisted.blocks)) {
     const blocks = Array.isArray(persisted.blocks)

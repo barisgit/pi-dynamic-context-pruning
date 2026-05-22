@@ -55,14 +55,14 @@ function buildNudgeHeader(
   const targetText = formatCleanupTarget(config);
 
   if (overCleanupTarget || nudgeType === "context-strong") {
-    return `Compress now: over DCP cleanup target${targetText}. Compress every closed stretch below — not just the biggest. \`bN\` summaries stay citable; carrying closed work raw degrades the live task.`;
+    return `Compress now: over DCP cleanup target${targetText}. Compress every eligible stretch below — not just the biggest. The list is a suggestion: you may also re-compress across existing \`bN\` blocks (merging or rewriting prior summaries) when that better serves the live task. \`bN\` summaries stay citable; carrying closed work raw degrades retrieval.`;
   }
 
   if (nudgeType === "iteration") {
-    return `DCP checkpoint${targetText}. After a long tool run, compress every closed stretch below — not just the biggest. \`bN\` summaries stay citable; carrying closed work raw degrades the live task.`;
+    return `DCP checkpoint${targetText}. After a long tool run, compress every eligible stretch below — not just the biggest. The list is a suggestion: you may also re-compress across existing \`bN\` blocks when that better serves the live task. \`bN\` summaries stay citable; carrying closed work raw degrades retrieval.`;
   }
 
-  return `DCP checkpoint${targetText}. Compress every closed stretch below — not just the biggest. \`bN\` summaries stay citable; carrying closed work raw degrades the live task.`;
+  return `DCP checkpoint${targetText}. Compress every eligible stretch below — not just the biggest. The list is a suggestion: you may also re-compress across existing \`bN\` blocks when that better serves the live task. \`bN\` summaries stay citable; carrying closed work raw degrades retrieval.`;
 }
 
 function formatCleanupTarget(config: DcpConfig): string {

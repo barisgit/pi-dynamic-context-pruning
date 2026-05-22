@@ -493,6 +493,7 @@ export function registerCompressTool(pi: ExtensionAPI, state: DcpState, config: 
           state.compressionBlocks.push(...plannedBlocks);
           state.lastCompressTurn = state.currentTurn;
           state.lastNudgeTurn = state.currentTurn;
+          state.pendingSave = true;
         }
 
         if (config.pruneNotification !== "off") {

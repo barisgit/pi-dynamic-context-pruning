@@ -182,7 +182,16 @@ export function restoreStateFromBranch(
   };
 }
 
-/** Persist the current DCP runtime state as a custom session entry. */
+/**
+ * Persist the current DCP runtime state as a custom session entry.
+ *
+ * No-op when `state.pendingSave` is false. Pi fires `agent_end` after every
+ * assistant turn, and most of those turns make no material change to DCP
+ * state — persisting on each one was the root cause of session JSONLs growing
+ * to hundreds of MB. Mutation sites (compress success, prune tombstone
+ * additions, native_compaction commit, manual mode toggle) set the dirty
+ * flag; `saveState` consumes it.
+ */
 export function saveState(
   pi: ExtensionAPI,
   state: DcpState,
@@ -190,7 +199,18 @@ export function saveState(
   reason: "session_shutdown" | "agent_end" | "native_compaction",
   sessionPayload: Record<string, unknown>
 ): void {
+  if (!state.pendingSave) {
+    appendDebugLog(config, "state_save_skipped", {
+      ...sessionPayload,
+      reason,
+      activeCompressionBlockCount: state.compressionBlocks.filter((block) => block.active).length,
+      nextBlockId: state.nextBlockId,
+    });
+    return;
+  }
+
   pi.appendEntry("dcp-state", serializePersistedState(state));
+  state.pendingSave = false;
   appendDebugLog(config, "state_saved", {
     ...sessionPayload,
     reason,

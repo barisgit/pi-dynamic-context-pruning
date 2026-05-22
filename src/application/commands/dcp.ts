@@ -205,12 +205,14 @@ function handleManual(
 ): void {
   if (subArg === "on") {
     state.manualMode = true;
+    state.pendingSave = true;
     ctx.ui.notify(
       "Manual mode: on\nAutonomous compression is disabled. Use /dcp compress to trigger manually.",
       "info"
     );
   } else if (subArg === "off") {
     state.manualMode = false;
+    state.pendingSave = true;
     ctx.ui.notify("Manual mode: off\nAutonomous compression is enabled.", "info");
   } else {
     // Status display (no argument).

@@ -119,6 +119,7 @@ export function makeState(compressionBlocks: DcpState["compressionBlocks"] = [])
     tokensSaved: 0,
     lifetimeTokensSavedRealized: 0,
     totalPruneCount: 0,
+    pendingSave: false,
     manualMode: false,
     lastNudgeTurn: -1,
     lastCompressTurn: -1,

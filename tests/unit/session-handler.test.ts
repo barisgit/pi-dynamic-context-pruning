@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { registerSessionHandlers } from "../../src/application/session-handler.js";
-import { serializePersistedState } from "../../src/infrastructure/persistence.js";
+import { registerSessionHandlers, saveState } from "../../src/application/session-handler.js";
+import {
+  restorePersistedState,
+  serializePersistedState,
+} from "../../src/infrastructure/persistence.js";
 import type { CompressionBlock } from "../../src/types/state.js";
 import { makeConfig, makeState } from "../helpers/dcp-test-utils.js";
 
@@ -262,5 +265,110 @@ describe("DCP session handler", () => {
 
     expect(state.lastCompressTurn).toBe(25);
     expect(state.lastNudgeTurn).toBe(25);
+  });
+
+  test("serializePersistedState slims inactive blocks", () => {
+    const fatActive: CompressionBlock = {
+      id: 1,
+      topic: "alpha",
+      summary: "long summary text",
+      startTimestamp: 1000,
+      endTimestamp: 2000,
+      anchorTimestamp: 1500,
+      startSourceKey: "src-a",
+      endSourceKey: "src-b",
+      anchorSourceKey: "src-c",
+      active: true,
+      summaryTokenEstimate: 10,
+      savedTokenEstimate: 100,
+      createdAt: 1000,
+      compressCallId: "call-1",
+      activityLogVersion: 1,
+      activityLog: [{ kind: "command", text: "echo hi" }],
+      metadata: {
+        coveredSourceKeys: ["src-a", "src-b"],
+        coveredSpanKeys: ["span-a"],
+        coveredArtifactRefs: ["art-1", "art-2"],
+        coveredToolIds: ["tool-1"],
+        supersededBlockIds: [],
+        fileReadStats: [{ path: "a.ts", count: 1, lineSpans: ["L1-3"] }],
+        fileWriteStats: [],
+        commandStats: [{ command: "echo hi", status: "ok" }],
+      },
+    };
+
+    const fatInactive: CompressionBlock = {
+      ...fatActive,
+      id: 2,
+      topic: "beta",
+      active: false,
+      compressCallId: "call-2",
+    };
+
+    const state = makeState([fatActive, fatInactive]);
+    const serialized = serializePersistedState(state) as { compressionBlocks: CompressionBlock[] };
+
+    const [serActive, serInactive] = serialized.compressionBlocks;
+    if (!serActive || !serInactive) throw new Error("expected both blocks");
+
+    // active block round-trips fully
+    expect(serActive.topic).toBe("alpha");
+    expect(serActive.summary).toBe("long summary text");
+    expect(serActive.metadata?.coveredSourceKeys.length).toBe(2);
+    expect(serActive.metadata?.coveredArtifactRefs.length).toBe(2);
+    expect(serActive.activityLog?.length).toBe(1);
+
+    // inactive block is slimmed: id + structural fields kept, fat fields dropped
+    expect(serInactive.id).toBe(2);
+    expect(serInactive.active).toBe(false);
+    expect(serInactive.topic).toBe("");
+    expect(serInactive.summary).toBe("");
+    expect(serInactive.metadata?.coveredSourceKeys).toEqual([]);
+    expect(serInactive.metadata?.coveredSpanKeys).toEqual([]);
+    expect(serInactive.metadata?.coveredArtifactRefs).toEqual([]);
+    expect(serInactive.metadata?.coveredToolIds).toEqual([]);
+    expect(serInactive.metadata?.fileReadStats).toEqual([]);
+    expect(serInactive.metadata?.fileWriteStats).toEqual([]);
+    expect(serInactive.metadata?.commandStats).toEqual([]);
+    expect(serInactive.activityLog).toBeUndefined();
+    expect(serInactive.compressCallId).toBeUndefined();
+  });
+
+  test("restorePersistedState treats unchanged markers as no-ops", () => {
+    const state = makeState([block(true)]);
+    state.nextBlockId = 2;
+    state.tokensSaved = 100;
+
+    restorePersistedState({ schemaVersion: 1, unchanged: true }, state);
+
+    expect(state.compressionBlocks).toHaveLength(1);
+    expect(state.compressionBlocks[0]?.active).toBe(true);
+    expect(state.nextBlockId).toBe(2);
+    expect(state.tokensSaved).toBe(100);
+  });
+
+  test("saveState is a no-op when pendingSave is false and consumes the flag when true", () => {
+    const state = makeState([block(true)]);
+    state.pendingSave = false;
+
+    const appended: unknown[] = [];
+    const pi: any = { appendEntry: (_kind: string, data: unknown) => appended.push(data) };
+    const config = makeConfig();
+    const debugPayload = { sessionId: "s1", leafEntryId: "l1" };
+
+    // Clean state → skipped.
+    saveState(pi, state, config, "agent_end", debugPayload);
+    expect(appended.length).toBe(0);
+    expect(state.pendingSave).toBe(false);
+
+    // Mutation flips the flag.
+    state.pendingSave = true;
+    saveState(pi, state, config, "agent_end", debugPayload);
+    expect(appended.length).toBe(1);
+    expect(state.pendingSave).toBe(false);
+
+    // Second call without further mutations is skipped again.
+    saveState(pi, state, config, "agent_end", debugPayload);
+    expect(appended.length).toBe(1);
   });
 });

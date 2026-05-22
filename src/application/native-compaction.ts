@@ -754,6 +754,7 @@ export function registerDcpNativeCompactionBridge(
     // post-compaction turns. Reset them to -1 so the next nudge can fire freely.
     state.lastCompressTurn = -1;
     state.lastNudgeTurn = -1;
+    state.pendingSave = true;
     pendingRequests.delete(state);
     pendingAutoRequests.delete(state);
 

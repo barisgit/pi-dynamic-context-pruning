@@ -200,8 +200,17 @@ export interface PersistedDcpStateV2 {
   lastCompressTurn?: number;
 }
 
+/** Tiny no-op state entry used by offline maintenance to preserve JSONL shape. */
+export interface PersistedDcpStateUnchanged {
+  schemaVersion: 1 | 2;
+  unchanged: true;
+}
+
 /** Any persisted DCP state shape supported during migration. */
-export type PersistedDcpState = PersistedDcpStateV1 | PersistedDcpStateV2;
+export type PersistedDcpState =
+  | PersistedDcpStateV1
+  | PersistedDcpStateV2
+  | PersistedDcpStateUnchanged;
 
 /**
  * Full runtime state for the DCP extension.
@@ -261,10 +270,20 @@ export interface DcpState {
   /** Number of discrete pruning operations performed */
   totalPruneCount: number;
 
+  // ── Persistence ────────────────────────────────────────────────────────────
+  /**
+   * Set to true when a material runtime mutation occurred since the last
+   * `saveState` call. `saveState` is a no-op while this is false to keep
+   * session JSONL size proportional to *meaningful* state changes rather
+   * than lifecycle event frequency (pi fires `agent_end` after every turn).
+   * Cleared by `saveState` after a successful append.
+   */
+  pendingSave: boolean;
+
   // ── Mode ───────────────────────────────────────────────────────────────────
   /**
    * When true, the extension will not autonomously emit compress nudges.
-   * Automatic deduplication/error-purge strategies may still run depending on
+
    * the `manualMode.automaticStrategies` config flag.
    */
   manualMode: boolean;

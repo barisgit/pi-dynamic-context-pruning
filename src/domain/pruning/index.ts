@@ -271,6 +271,7 @@ function applyDeduplication(messages: any[], state: DcpState, config: DcpConfig)
       if (state.prunedToolIds.has(ids[i])) continue;
       state.prunedToolIds.add(ids[i]);
       state.totalPruneCount++;
+      state.pendingSave = true;
     }
   }
 }
@@ -305,6 +306,7 @@ function applyErrorPurging(messages: any[], state: DcpState, config: DcpConfig):
     if (bucket - record.turnIndex >= turnsThreshold) {
       state.prunedToolIds.add(msg.toolCallId);
       state.totalPruneCount++;
+      state.pendingSave = true;
     }
   }
 }
