@@ -1,9 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { registerSessionHandlers, saveState } from "../../src/application/session-handler.js";
-import {
-  restorePersistedState,
-  serializePersistedState,
-} from "../../src/infrastructure/persistence.js";
+import { restorePersistedState, serializePersistedState } from "../../src/infrastructure/persistence.js";
 import type { CompressionBlock } from "../../src/types/state.js";
 import { makeConfig, makeState } from "../helpers/dcp-test-utils.js";
 

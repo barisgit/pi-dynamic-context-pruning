@@ -207,10 +207,7 @@ export interface PersistedDcpStateUnchanged {
 }
 
 /** Any persisted DCP state shape supported during migration. */
-export type PersistedDcpState =
-  | PersistedDcpStateV1
-  | PersistedDcpStateV2
-  | PersistedDcpStateUnchanged;
+export type PersistedDcpState = PersistedDcpStateV1 | PersistedDcpStateV2 | PersistedDcpStateUnchanged;
 
 /**
  * Full runtime state for the DCP extension.

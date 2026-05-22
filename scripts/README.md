@@ -2,6 +2,33 @@
 
 Developer/debugging utilities for this repository. These scripts are not part of the pi extension runtime path.
 
+## `vacuum-dcp-session.ts`
+
+Offline maintenance utility for old pi session JSONL files that became large because historical `customType: "dcp-state"` entries stored full inactive compression blocks.
+
+Dry-run first:
+
+```bash
+bun scripts/vacuum-dcp-session.ts ~/.pi/agent/sessions/.../session.jsonl
+```
+
+Apply with a backup:
+
+```bash
+bun scripts/vacuum-dcp-session.ts ~/.pi/agent/sessions/.../session.jsonl --write
+```
+
+The script:
+
+- rewrites only `customType: "dcp-state"` entries through DCP's normal restore + serialize path
+- slims inactive blocks in historical snapshots
+- replaces materially unchanged DCP snapshots with tiny no-op markers when they match the nearest ancestor DCP state on the same branch
+- byte-preserves non-DCP session entries
+- validates generated JSONL before replacement
+- writes `session.jsonl.bak` by default before atomic replacement
+
+Use `--no-markers` to only slim inactive blocks without retroactive dirty-save markers.
+
 ## `llm-proxy.ts`
 
 `llm-proxy.ts` is a Bun-based local proxy for debugging DCP behavior against real LLM provider traffic. It captures request/response metadata so we can inspect what the model actually received after DCP pruning, compaction, provider-payload filtering, and self-forking.
