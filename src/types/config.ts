@@ -5,10 +5,6 @@
 export interface DcpConfig {
   enabled: boolean;
   debug: boolean;
-  manualMode: {
-    enabled: boolean;
-    automaticStrategies: boolean; // run dedup/purge even in manual mode
-  };
   compress: {
     maxContextPercent: number; // 0-1, e.g. 0.9 — above this, aggressive nudges / emergency override
     minContextPercent: number; // 0-1, e.g. 0.75 — below this, no nudges

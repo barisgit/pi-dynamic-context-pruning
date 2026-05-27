@@ -232,7 +232,6 @@ function bucketedTurn(currentTurn: number, config: DcpConfig): number {
  */
 function applyDeduplication(messages: any[], state: DcpState, config: DcpConfig): void {
   if (!config.strategies.deduplication.enabled) return;
-  if (state.manualMode && !config.manualMode.automaticStrategies) return;
 
   const protectedTools = new Set([
     ...ALWAYS_PROTECTED_DEDUP,
@@ -286,7 +285,6 @@ function applyDeduplication(messages: any[], state: DcpState, config: DcpConfig)
  */
 function applyErrorPurging(messages: any[], state: DcpState, config: DcpConfig): void {
   if (!config.strategies.purgeErrors.enabled) return;
-  if (state.manualMode && !config.manualMode.automaticStrategies) return;
 
   const protectedTools = new Set(config.strategies.purgeErrors.protectedTools ?? []);
   const turnsThreshold = config.strategies.purgeErrors.turns ?? 3;

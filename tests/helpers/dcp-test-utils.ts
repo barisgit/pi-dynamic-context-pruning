@@ -68,7 +68,6 @@ export function makeConfig(): DcpConfig {
   return {
     enabled: true,
     debug: false,
-    manualMode: { enabled: false, automaticStrategies: false },
     compress: {
       maxContextPercent: 0.8,
       minContextPercent: 0.4,
@@ -120,7 +119,6 @@ export function makeState(compressionBlocks: DcpState["compressionBlocks"] = [])
     lifetimeTokensSavedRealized: 0,
     totalPruneCount: 0,
     pendingSave: false,
-    manualMode: false,
     lastNudgeTurn: -1,
     lastCompressTurn: -1,
   };

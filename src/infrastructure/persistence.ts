@@ -399,7 +399,6 @@ export function serializePersistedState(state: DcpState): PersistedDcpState {
       blocks: state.compressionBlocksV2.map(slimInactiveV2Block),
       nextBlockId: state.nextBlockId,
       messageAliases: serializeMessageAliasState(state.messageAliases),
-      manualMode: state.manualMode,
       currentTurn: state.currentTurn,
       lastNudgeTurn: state.lastNudgeTurn,
       lastCompressTurn: state.lastCompressTurn,
@@ -416,7 +415,6 @@ export function serializePersistedState(state: DcpState): PersistedDcpState {
     tokensSaved: state.tokensSaved,
     lifetimeTokensSavedRealized: state.lifetimeTokensSavedRealized,
     totalPruneCount: state.totalPruneCount,
-    manualMode: state.manualMode,
     currentTurn: state.currentTurn,
     lastNudgeTurn: state.lastNudgeTurn,
     lastCompressTurn: state.lastCompressTurn,
@@ -454,9 +452,8 @@ export function restorePersistedState(data: unknown, state: DcpState): void {
         : 1;
     state.messageAliases = normalizeMessageAliasState(persisted.messageAliases);
 
-    if (typeof persisted.manualMode === "boolean") {
-      state.manualMode = persisted.manualMode;
-    }
+    // manualMode field was removed in dcp-replay-v3; ignore if present in
+    // legacy persisted entries.
     if (isFiniteNumber(persisted.currentTurn)) {
       state.currentTurn = persisted.currentTurn;
     }
@@ -497,9 +494,8 @@ export function restorePersistedState(data: unknown, state: DcpState): void {
     );
   }
 
-  if (typeof persisted.manualMode === "boolean") {
-    state.manualMode = persisted.manualMode;
-  }
+  // manualMode field was removed in dcp-replay-v3; ignore if present in
+  // legacy persisted entries.
   if (isFiniteNumber(persisted.currentTurn)) {
     state.currentTurn = persisted.currentTurn;
   }

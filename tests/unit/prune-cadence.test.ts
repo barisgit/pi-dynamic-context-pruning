@@ -65,7 +65,6 @@ function makeCadenceConfig(
   cfg.strategies.deduplication.enabled = opts.dedup ?? false;
   cfg.strategies.purgeErrors.enabled = opts.purge ?? false;
   cfg.strategies.purgeErrors.turns = opts.turns ?? 4;
-  cfg.manualMode.automaticStrategies = true;
   return cfg;
 }
 

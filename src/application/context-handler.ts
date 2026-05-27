@@ -109,7 +109,6 @@ function nudgePriority(nudgeType: NudgeType): number {
 export type NudgeDecisionReason =
   | "emitted"
   | "no_context_usage"
-  | "manual_mode"
   | "below_min_threshold"
   | "same_turn_or_post_compress_debounce"
   | "turn_debounce"
@@ -134,7 +133,6 @@ export function getNudgeDecisionReason(
   nudgeType: ReturnType<typeof getNudgeType>,
   contextTokens?: number | null
 ): NudgeDecisionReason {
-  if (state.manualMode) return "manual_mode";
   if (contextPercent === null) return "no_context_usage";
   if (nudgeType) return "emitted";
   if (!reachesMinNudgeThreshold(contextPercent, config, contextTokens)) {
@@ -216,7 +214,7 @@ export function registerContextHandler(pi: ExtensionAPI, state: DcpState, config
     let nudgeType: ReturnType<typeof getNudgeType> = null;
     let nudgeDecisionReason: NudgeDecisionReason = "not_evaluated";
 
-    if (contextPercent !== null && !state.manualMode) {
+    if (contextPercent !== null) {
       toolCallsSinceLastUser = countToolCallsSinceLastUser(prunedMessages);
       nudgeType = getNudgeType(
         contextPercent,
@@ -296,7 +294,6 @@ export function registerContextHandler(pi: ExtensionAPI, state: DcpState, config
       contextWindow: usage?.contextWindow ?? null,
       contextPercent,
       currentTurn: state.currentTurn,
-      manualMode: state.manualMode,
       sourceMessageCount: event.messages.length,
       renderedMessageCount: prunedMessages.length,
       liveOwnerCount: liveOwnerKeys.size,

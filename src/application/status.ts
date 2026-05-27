@@ -40,8 +40,6 @@ export function computeDisplayedTokensSaved(state: DcpState): number {
 
 /** Build the footer status text from one coherent DCP state snapshot. */
 export function buildDcpStatusText(state: DcpState): string {
-  if (state.manualMode) return "DCP [manual]";
-
   const activeBlocks = state.compressionBlocks.filter((block) => block.active);
   const displayedSaved = computeDisplayedTokensSaved(state);
   if (displayedSaved <= 0 && state.totalPruneCount <= 0 && activeBlocks.length === 0) {

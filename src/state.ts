@@ -44,7 +44,6 @@ export function createState(): DcpState {
     lifetimeTokensSavedRealized: 0,
     totalPruneCount: 0,
     pendingSave: false,
-    manualMode: false,
     lastNudgeTurn: -1,
     lastCompressTurn: -1,
   };
@@ -73,7 +72,6 @@ export function resetState(state: DcpState): void {
   state.lifetimeTokensSavedRealized = 0;
   state.totalPruneCount = 0;
   state.pendingSave = false;
-  state.manualMode = false;
   state.lastNudgeTurn = -1;
   state.lastCompressTurn = -1;
 }

@@ -26,8 +26,6 @@ export default function (pi: ExtensionAPI): void {
   appendDebugLog(config, "extension_init", {
     cwd: process.cwd(),
     debugLogPath: DEBUG_LOG_PATH,
-    manualModeConfigured: config.manualMode.enabled,
-    automaticStrategiesInManualMode: config.manualMode.automaticStrategies,
     protectRecentTurns: config.compress.protectRecentTurns,
     pruneNotification: config.pruneNotification,
   });

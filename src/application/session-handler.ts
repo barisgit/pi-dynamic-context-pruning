@@ -7,10 +7,8 @@ import { restorePersistedState, serializePersistedState } from "../infrastructur
 import { updateDcpStatus } from "./status.js";
 
 /** Apply config-derived baseline state before session hooks run. */
-export function initializeSessionState(state: DcpState, config: DcpConfig): void {
-  if (config.manualMode.enabled) {
-    state.manualMode = true;
-  }
+export function initializeSessionState(_state: DcpState, _config: DcpConfig): void {
+  // No-op: manual mode was removed in dcp-replay-v3.
 }
 
 interface RestoreStateFromBranchResult {
@@ -214,7 +212,6 @@ export function saveState(
   appendDebugLog(config, "state_saved", {
     ...sessionPayload,
     reason,
-    manualMode: state.manualMode,
     activeCompressionBlockCount: state.compressionBlocks.filter((block) => block.active).length,
     nextBlockId: state.nextBlockId,
     totalPruneCount: state.totalPruneCount,
@@ -242,7 +239,6 @@ export function registerSessionHandlers(
       restoredStateEntries: restore.restoredStateEntries,
       repairedBlockIds: restore.repairedBlockIds,
       repairedNudgeWatermarks: restore.repairedNudgeWatermarks,
-      manualMode: state.manualMode,
       activeCompressionBlockCount: state.compressionBlocks.filter((block) => block.active).length,
       nextBlockId: state.nextBlockId,
     });
@@ -266,7 +262,6 @@ export function registerSessionHandlers(
       restoredStateEntries: restore.restoredStateEntries,
       repairedBlockIds: restore.repairedBlockIds,
       repairedNudgeWatermarks: restore.repairedNudgeWatermarks,
-      manualMode: state.manualMode,
       activeCompressionBlockCount: state.compressionBlocks.filter((block) => block.active).length,
       nextBlockId: state.nextBlockId,
     });

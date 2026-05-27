@@ -13,10 +13,6 @@ export type { DcpConfig } from "../types/config.js";
 const DEFAULT_CONFIG: DcpConfig = {
   enabled: true,
   debug: false,
-  manualMode: {
-    enabled: false,
-    automaticStrategies: true,
-  },
   compress: {
     maxContextPercent: 0.9,
     minContextPercent: 0.75,
@@ -65,10 +61,6 @@ const DEFAULT_CONFIG_FILE_CONTENT = `{
   //
   // "enabled": true,
   // "debug": false, // best-effort JSONL log at ~/.pi/log/dcp.jsonl
-  // "manualMode": {
-  //   "enabled": false,
-  //   "automaticStrategies": true
-  // },
   // "compress": {
   //   "maxContextPercent": 0.9,
   //   "minContextPercent": 0.75,

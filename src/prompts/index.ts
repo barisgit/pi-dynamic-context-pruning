@@ -73,18 +73,3 @@ export const TURN_NUDGE = ``;
 
 /** Legacy iteration nudge text. */
 export const ITERATION_NUDGE = ``;
-
-/**
- * Replaces SYSTEM_PROMPT when manualMode.enabled = true.
- * The agent should NOT proactively compress — only compress when explicitly
- * requested by the user or when a context-limit nudge fires.
- */
-export const MANUAL_MODE_SYSTEM_PROMPT = `
-You are in DCP manual mode. Do not proactively compress — compression is user-directed.
-
-DCP metadata tags are injected metadata. Do not output them.
-
-Compress only when the user asks, or when a DCP nudge instructs you to (context-limit emergency). Never as background housekeeping.
-
-When you do compress, the same quality bar applies: high-fidelity summaries (file paths, decisions, findings, constraints), preserve user intent precisely, use only visible IDs (\`mNNNN\` for messages, \`bN\` for blocks), batch independent ranges in one call. Leave active, still-needed context raw.
-`.trim();

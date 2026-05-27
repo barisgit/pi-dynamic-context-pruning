@@ -178,7 +178,6 @@ export interface PersistedDcpStateV1 {
   /** Optional: monotonic tokens already realized by native compaction. */
   lifetimeTokensSavedRealized?: number;
   totalPruneCount: number;
-  manualMode: boolean;
   currentTurn?: number;
   lastNudgeTurn?: number;
   lastCompressTurn?: number;
@@ -194,7 +193,6 @@ export interface PersistedDcpStateV2 {
     byRef: Record<string, string>;
     nextRef: number;
   };
-  manualMode: boolean;
   currentTurn?: number;
   lastNudgeTurn?: number;
   lastCompressTurn?: number;
@@ -276,14 +274,6 @@ export interface DcpState {
    * Cleared by `saveState` after a successful append.
    */
   pendingSave: boolean;
-
-  // ── Mode ───────────────────────────────────────────────────────────────────
-  /**
-   * When true, the extension will not autonomously emit compress nudges.
-
-   * the `manualMode.automaticStrategies` config flag.
-   */
-  manualMode: boolean;
 
   // ── Nudge state ────────────────────────────────────────────────────────────
   /**

@@ -234,10 +234,6 @@ describe("DCP nudge.test", () => {
 
     expect(getNudgeDecisionReason(null, state, config, null, null)).toBe("no_context_usage");
 
-    state.manualMode = true;
-    expect(getNudgeDecisionReason(0.8, state, config, null, 80_000)).toBe("manual_mode");
-
-    state.manualMode = false;
     expect(getNudgeDecisionReason(0.2, state, config, null, 20_000)).toBe("below_min_threshold");
 
     state.lastCompressTurn = 5;
