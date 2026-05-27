@@ -311,10 +311,12 @@ export function registerCompressTool(pi: ExtensionAPI, state: DcpState, config: 
       ranges: Type.Array(
         Type.Object({
           startId: Type.String({
-            description: "Message ID marking start of range (e.g. m0001, b2)",
+            description:
+              "Visible boundary marking start of range (e.g. non-assistant message m0001, or b2). Assistant turns are selected via surrounding user/toolResult/bashExecution IDs.",
           }),
           endId: Type.String({
-            description: "Message ID marking end of range (e.g. m0042, b5)",
+            description:
+              "Visible boundary marking end of range (e.g. non-assistant message m0042, or b5). Assistant turns are selected via surrounding user/toolResult/bashExecution IDs.",
           }),
           summary: Type.String({
             description: "Complete technical summary replacing all content in range",

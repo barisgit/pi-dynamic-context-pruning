@@ -111,7 +111,7 @@ This repo is post **dcp-replay-v3**: persistence is replay-first, but the in-mem
 
 ### 2. Ownership / hidden-provider pruning
 
-- Visible message IDs (`m0001`-style, widening after `m9999`) and `bN` block IDs are **agent-facing boundaries only**.
+- Visible message IDs (`m0001`-style, widening after `m9999`) are injected only on user/toolResult/bashExecution messages, and `bN` block IDs are **agent-facing boundaries only**.
 - Hidden/provider artifact ownership is **not** derived from arbitrary rendered text.
 - Do not render source owner markers into model-visible transcript content.
 - `src/domain/provider/payload-filter.ts` prunes stale `reasoning`, `function_call`, and `function_call_output` using canonical live owner keys plus the latest internal visible-ref → owner map.
@@ -265,7 +265,7 @@ Touch at least:
 
 4. **Visible IDs and internal ownership are different layers.**
 
-- `m0001`-style message refs / `bN` block refs are for the agent/tool contract.
+- `m0001`-style non-assistant message refs / `bN` block refs are for the agent/tool contract; assistants are selected through surrounding refs and atomic tool-pair expansion.
 - canonical owner keys are internal runtime bookkeeping and must not be rendered as visible owner tags.
 
 5. **Supersession is allowed only for exact full coverage.**

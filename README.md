@@ -144,7 +144,7 @@ All commands are available in the pi TUI via `/dcp <subcommand>`:
 
 When the LLM calls the `compress` tool it provides one or more `{startId, endId, summary}` ranges. DCP:
 
-1. Resolves visible message refs (`m0001`, `m0042`, etc.) and block refs (`b1`, `b3`) through stable internal source/span keys
+1. Resolves visible non-assistant message refs (`m0001`, `m0042`, etc.) and block refs (`b1`, `b3`) through stable internal source/span keys
 2. Records the range as a `CompressionBlock` with legacy timestamps plus canonical source-key coverage/anchor metadata when available
 3. On every `context` event, splices out the raw messages in that range and prefers source-key placement for anchored blocks, with timestamp fallback for legacy blocks
 4. Injects a synthetic `[Compressed section: …]` user message containing the summary and, for newer blocks, a deterministic activity log
@@ -154,7 +154,7 @@ When a new compression exactly covers an older exact-coverage block, DCP now sup
 
 By default, DCP also protects the hot tail of the conversation: ranges that end inside the last `protectRecentTurns` logical turns/tool batches are rejected unless the session is already above the hard emergency threshold (`maxContextPercent` or `maxContextTokens`, if configured). When a range is rejected, DCP now includes planning hints that surface the hot-tail start, protected `m0001` / `bN` IDs, and the largest visible safe candidate ranges; the same guidance is appended to live compression nudges.
 
-Message IDs (`m0001`, `m0042`, etc.) and block IDs (`b1`, `b3`) are injected into context so the LLM can reference exact compression boundaries. Internal owner keys are not rendered as model-visible metadata; provider-payload filtering uses canonical source/span/block ownership tracked in state.
+Message IDs (`m0001`, `m0042`, etc.) are injected only on user/toolResult/bashExecution messages, and block IDs (`b1`, `b3`) are injected on compressed blocks, so the LLM can reference exact compression boundaries without mutating freshly generated assistant output. Assistant turns are selected through surrounding visible boundaries and atomic tool-pair expansion. Internal owner keys are not rendered as model-visible metadata; provider-payload filtering uses canonical source/span/block ownership tracked in state.
 
 ### Native pi compaction
 

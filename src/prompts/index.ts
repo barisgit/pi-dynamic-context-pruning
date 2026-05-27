@@ -32,8 +32,8 @@ Before compressing, ask: _"Could another agent continue safely from my summary p
  *   {
  *     topic?: string           // optional default 3-5 word label
  *     ranges: Array<{
- *       startId: string        // m0001-style message ref or bN
- *       endId:   string        // m0001-style message ref or bN
+ *       startId: string        // m0001-style non-assistant message ref or bN
+ *       endId:   string        // m0001-style non-assistant message ref or bN
  *       summary: string        // detailed technical handoff summary
  *       topic?: string         // per-block label; falls back to top-level topic
  *     }>
@@ -43,7 +43,7 @@ export const COMPRESS_RANGE_DESCRIPTION = `Collapse one or more conversation ran
 
 INPUT
 - \`ranges\`: [{ startId, endId, summary, topic? }, ...]; optional top-level \`topic\` is the default label.
-- \`startId\`/\`endId\` are visible IDs from the transcript: \`mNNNN\` for messages, \`bN\` for prior compressed blocks. A message's ID lives in the XML metadata tag at the END of that message.
+- \`startId\`/\`endId\` are visible IDs from the transcript: \`mNNNN\` for user/toolResult/bashExecution messages, \`bN\` for prior compressed blocks. Assistant turns are not directly addressable; choose surrounding visible IDs and DCP will pull complete assistant/tool groups in through atomic-pair expansion. A message's ID lives in the XML metadata tag at the END of eligible non-assistant messages.
 - \`startId\` must appear before \`endId\`. Do not invent IDs.
 - Avoid ending inside the protected hot tail unless context is at hard emergency; the active DCP reminder names the tail start.
 - Multiple independent non-overlapping ranges go in one call as separate entries.

@@ -2,6 +2,8 @@ import type { CompressionBlock } from "../../types/state.js";
 import type { DcpMessage } from "../../types/message.js";
 import type { DcpProviderPayloadItem } from "../../types/api.js";
 
+const INTERNAL_OWNER_KEY = "__dcpOwnerKey";
+
 function getTextParts(content: unknown): string[] {
   if (typeof content === "string") return [content];
   if (!Array.isArray(content)) return [];
@@ -41,6 +43,11 @@ export function extractCanonicalOwnerKeyFromMessageLike(
   message: DcpMessage,
   ownerByMessageRef: ReadonlyMap<string, string> = new Map()
 ): string | null {
+  const internalOwner = (message as any)?.[INTERNAL_OWNER_KEY];
+  if ((message as any)?.role === "assistant" && typeof internalOwner === "string") {
+    return internalOwner;
+  }
+
   const normalized = normalizeInlineWhitespace(extractMessageLikeText(message));
   if (!normalized) return null;
 

@@ -31,6 +31,15 @@ import {
   validateCompressionRangeBoundaryIds,
 } from "../helpers/dcp-test-utils.js";
 
+function withOwner<T extends object>(item: T, ownerKey: string): T {
+  Object.defineProperty(item, "__dcpOwnerKey", {
+    value: ownerKey,
+    enumerable: false,
+    configurable: true,
+  });
+  return item;
+}
+
 describe("DCP provider payload filter.test", () => {
   // ---------------------------------------------------------------------------
   // Test 19 — LIVE OWNER KEYS COME FROM SOURCE ORDINALS + ACTIVE BLOCKS
@@ -120,13 +129,10 @@ describe("DCP provider payload filter.test", () => {
         content: [{ type: "input_text", text: "current head\n<dcp-id>m001</dcp-id>" }],
       },
       { type: "reasoning", encrypted_content: "keep-current" },
-      { role: "assistant", content: [{ type: "output_text", text: "current reply" }] },
-      {
-        role: "assistant",
-        content: [
-          { type: "output_text", text: "\n<dcp-id>m002</dcp-id>\n<dcp-owner>s1</dcp-owner>" },
-        ],
-      },
+      withOwner(
+        { role: "assistant", content: [{ type: "output_text", text: "current reply" }] },
+        buildSourceOwnerKey(1)
+      ),
       {
         role: "user",
         content: [
@@ -137,13 +143,10 @@ describe("DCP provider payload filter.test", () => {
         ],
       },
       { type: "reasoning", encrypted_content: "drop-stale" },
-      { role: "assistant", content: [{ type: "output_text", text: "stale reply" }] },
-      {
-        role: "assistant",
-        content: [
-          { type: "output_text", text: "\n<dcp-id>m021</dcp-id>\n<dcp-owner>s21</dcp-owner>" },
-        ],
-      },
+      withOwner(
+        { role: "assistant", content: [{ type: "output_text", text: "stale reply" }] },
+        buildSourceOwnerKey(21)
+      ),
       { type: "function_call", name: "bash", call_id: "toolu_old" },
       { type: "function_call_output", call_id: "toolu_old", output: "ok" },
       {
@@ -174,17 +177,14 @@ describe("DCP provider payload filter.test", () => {
         ],
       },
       { type: "reasoning", encrypted_content: "keep-latest" },
-      { role: "assistant", content: [{ type: "output_text", text: "latest reply" }] },
-      {
-        role: "assistant",
-        content: [
-          { type: "output_text", text: "\n<dcp-id>m004</dcp-id>\n<dcp-owner>s4</dcp-owner>" },
-        ],
-      },
+      withOwner(
+        { role: "assistant", content: [{ type: "output_text", text: "latest reply" }] },
+        buildSourceOwnerKey(4)
+      ),
     ];
 
     assert.strictEqual(
-      extractCanonicalOwnerKeyFromMessageLike(payloadInput[11], ownerByMessageRef),
+      extractCanonicalOwnerKeyFromMessageLike(payloadInput[9], ownerByMessageRef),
       buildBlockOwnerKey(1),
       "FAIL — compressed block ownership should not be stolen by quoted stale dcp-owner tags inside the summary body"
     );
@@ -263,11 +263,10 @@ describe("DCP provider payload filter.test", () => {
         content: [{ type: "input_text", text: "current ask\n" }],
       },
       { type: "reasoning", encrypted_content: "keep-current" },
-      { role: "assistant", content: [{ type: "output_text", text: "compressing now" }] },
-      {
-        role: "assistant",
-        content: [{ type: "output_text", text: "\n\n" }],
-      },
+      withOwner(
+        { role: "assistant", content: [{ type: "output_text", text: "compressing now" }] },
+        buildSourceOwnerKey(1)
+      ),
       {
         type: "function_call",
         name: "compress",
@@ -303,11 +302,10 @@ describe("DCP provider payload filter.test", () => {
           },
         ],
       },
-      { role: "assistant", content: [{ type: "output_text", text: "bash follow-up" }] },
-      {
-        role: "assistant",
-        content: [{ type: "output_text", text: "\n\n" }],
-      },
+      withOwner(
+        { role: "assistant", content: [{ type: "output_text", text: "bash follow-up" }] },
+        buildSourceOwnerKey(4)
+      ),
       {
         type: "function_call",
         name: "bash",
@@ -417,13 +415,10 @@ describe("DCP provider payload filter.test", () => {
         role: "user",
         content: [{ type: "input_text", text: "current ask\n<dcp-id>m001</dcp-id>" }],
       },
-      { role: "assistant", content: [{ type: "output_text", text: "trying compress" }] },
-      {
-        role: "assistant",
-        content: [
-          { type: "output_text", text: "\n<dcp-id>m002</dcp-id>\n<dcp-owner>s1</dcp-owner>" },
-        ],
-      },
+      withOwner(
+        { role: "assistant", content: [{ type: "output_text", text: "trying compress" }] },
+        buildSourceOwnerKey(1)
+      ),
       {
         type: "function_call",
         name: "compress",

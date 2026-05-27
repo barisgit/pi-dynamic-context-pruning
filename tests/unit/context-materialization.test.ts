@@ -101,7 +101,7 @@ describe("context materialization routing", () => {
     expect(routed.liveOwnerKeys.has(buildSourceOwnerKey(4))).toBe(true);
     expect(routed.liveOwnerKeys.has(buildSourceOwnerKey(5))).toBe(true);
     expect([...state.messageOwnerSnapshot.values()]).toContain(buildSourceOwnerKey(4));
-    expect([...state.messageOwnerSnapshot.values()]).toContain(buildSourceOwnerKey(5));
+    expect([...state.messageOwnerSnapshot.values()]).not.toContain(buildSourceOwnerKey(5));
     expect(providerFiltered).toHaveLength(routed.messages.length);
     expect(
       providerFiltered.some((message: any) =>

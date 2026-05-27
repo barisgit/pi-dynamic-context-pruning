@@ -94,9 +94,10 @@ describe("DCP replay engine", () => {
   // Test R1 — Single successful compress reconstructs a CompressionBlock
   // -------------------------------------------------------------------------
   test("R1 — single compress produces one active block with non-zero savings", () => {
-    // Build a transcript with three messages, then a compress targeting
-    // the first two. The replay engine must allocate message refs for those
-    // entries and reconstruct the block.
+    // Build a transcript with three messages, then a compress targeting the
+    // visible non-assistant boundaries around the assistant reply. The replay
+    // engine must allocate message refs for those eligible entries and
+    // reconstruct the block.
     const m1 = makeUser(LONG_BODY + " alpha", 1000);
     const m2 = makeAssistantText(LONG_BODY + " beta", 2000);
     const m3 = makeUser("Now compress the first two messages.", 3000);
@@ -135,7 +136,7 @@ describe("DCP replay engine", () => {
     expect(block.active).toBe(true);
     expect(block.compressCallId).toBe("call-compress-1");
     expect(block.summary).toContain("intro exchange");
-    expect(block.metadata?.coveredSourceKeys.length).toBe(2);
+    expect(block.metadata?.coveredSourceKeys.length).toBe(3);
     expect(block.savedTokenEstimate ?? 0).toBeGreaterThan(0);
     expect(state.tokensSaved).toBe(block.savedTokenEstimate ?? 0);
     expect(state.nextBlockId).toBe(2);

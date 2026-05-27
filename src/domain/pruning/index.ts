@@ -9,8 +9,10 @@ import { buildSourceItemKey, buildSourceOwnerKey, countLogicalTurns } from "../t
 // Always-protected tool names for deduplication
 const ALWAYS_PROTECTED_DEDUP = new Set(["compress", "write", "edit"]);
 
-// Roles that get message IDs injected
-const ID_ELIGIBLE_ROLES = new Set(["user", "assistant", "toolResult", "bashExecution"]);
+// Roles that get message IDs injected. Assistant messages are deliberately
+// excluded so DCP does not mutate freshly generated model output and break the
+// provider prefix cache on every turn.
+const ID_ELIGIBLE_ROLES = new Set(["user", "toolResult", "bashExecution"]);
 
 // Roles that are PI-internal and should pass through unchanged
 const PASSTHROUGH_ROLES = new Set(["compaction", "branch_summary", "custom_message"]);
@@ -337,8 +339,12 @@ function applyToolOutputPruning(messages: any[], state: DcpState): void {
 }
 
 /**
- * Inject sequential message IDs into eligible messages.
- * Updates state.messageIdSnapshot.
+ * Inject sequential message IDs into eligible non-assistant messages.
+ *
+ * Assistant messages are deliberately skipped: mutating freshly generated model
+ * output would break the provider prefix cache on every request. User,
+ * toolResult, and bashExecution messages still receive visible refs because they
+ * are agent-input boundaries. Updates state.messageIdSnapshot.
  */
 function extractBlockOwnerKey(message: any): string | null {
   const content = message?.content;
@@ -409,27 +415,6 @@ export function injectMessageIds(messages: any[], state: DcpState): void {
     } else if (role === "toolResult" || role === "bashExecution") {
       if (Array.isArray(msg.content)) {
         msg.content = [...msg.content, { type: "text", text: metadataTag }];
-      } else if (typeof msg.content === "string") {
-        msg.content = msg.content + metadataTag;
-      }
-    } else if (role === "assistant") {
-      if (Array.isArray(msg.content)) {
-        // Insert the ID tag before any tool_use (toolCall) blocks.
-        // Anthropic requires: thinking → text → tool_use.
-        // Appending after tool_use blocks violates that constraint.
-        const firstToolCallIdx = msg.content.findIndex((b: any) => b.type === "toolCall");
-        const idBlock = { type: "text", text: metadataTag };
-        if (firstToolCallIdx === -1) {
-          // No tool_use blocks — append as usual
-          msg.content = [...msg.content, idBlock];
-        } else {
-          // Insert immediately before the first tool_use block
-          msg.content = [
-            ...msg.content.slice(0, firstToolCallIdx),
-            idBlock,
-            ...msg.content.slice(firstToolCallIdx),
-          ];
-        }
       } else if (typeof msg.content === "string") {
         msg.content = msg.content + metadataTag;
       }

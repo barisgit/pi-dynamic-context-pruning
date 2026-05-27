@@ -375,10 +375,12 @@ describe("DCP pruning.test", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Test 7b — STABLE VISIBLE REFS + NO VISIBLE OWNER METADATA
+  // Test 7b — STABLE VISIBLE REFS + NO ASSISTANT MUTATION / VISIBLE OWNER METADATA
   // ---------------------------------------------------------------------------
-  test("Test 7b — STABLE VISIBLE REFS + NO VISIBLE OWNER METADATA", () => {
-    console.log("TEST 7b: stable visible refs persist and owner metadata is hidden");
+  test("Test 7b — STABLE VISIBLE REFS + NO ASSISTANT MUTATION / VISIBLE OWNER METADATA", () => {
+    console.log(
+      "TEST 7b: stable visible refs persist, assistants are untouched, and owner metadata is hidden"
+    );
 
     const messages = [
       {
@@ -393,6 +395,12 @@ describe("DCP pruning.test", () => {
         content: [{ type: "text", text: "middle" }],
         timestamp: 2000,
       },
+      {
+        id: "raw_bash_1",
+        role: "bashExecution",
+        content: [{ type: "text", text: "bash output" }],
+        timestamp: 2500,
+      },
       { id: "raw_user_2", role: "user", content: [{ type: "text", text: "end" }], timestamp: 3000 },
     ];
     const state = makeState();
@@ -400,13 +408,32 @@ describe("DCP pruning.test", () => {
 
     const first = applyPruning(messages, state, config);
     const firstSerialized = JSON.stringify(first);
+    assert.strictEqual(
+      JSON.stringify(first.find((m: any) => m.role === "assistant")?.content),
+      JSON.stringify(messages[1].content),
+      "FAIL — assistant content should stay bytewise identical"
+    );
     assert.ok(
       firstSerialized.includes("<dcp-id>m0001</dcp-id>"),
       "FAIL — first stable message ref should render as m0001"
     );
     assert.ok(
       firstSerialized.includes("<dcp-id>m0002</dcp-id>"),
-      "FAIL — second stable message ref should render as m0002"
+      "FAIL — bashExecution should render as dense m0002 after skipped assistant"
+    );
+    assert.ok(
+      firstSerialized.includes("<dcp-id>m0003</dcp-id>"),
+      "FAIL — trailing user should render as dense m0003 after bashExecution"
+    );
+    assert.ok(
+      !state.messageRefSnapshot.has("m0004"),
+      "FAIL — assistant should not consume a visible ref and leave a gap"
+    );
+    assert.ok(
+      [...state.messageRefSnapshot.values()].every(
+        (entry) => entry.sourceKey !== "raw:raw_assistant_1"
+      ),
+      "FAIL — assistant should not get a ref snapshot entry"
     );
     assert.ok(
       !firstSerialized.includes("<dcp-owner>"),
@@ -441,7 +468,7 @@ describe("DCP pruning.test", () => {
     );
     assert.ok(
       secondSerialized.includes("<dcp-id>m0003</dcp-id>"),
-      "FAIL — trailing raw message should keep stable ref m0003 after compression changes"
+      "FAIL — trailing raw message should keep dense ref m0003 after compression changes"
     );
     assert.ok(
       secondSerialized.indexOf("middle was compressed") < secondSerialized.indexOf("end"),
@@ -452,7 +479,9 @@ describe("DCP pruning.test", () => {
       "FAIL — owner metadata should remain hidden after compression"
     );
 
-    console.log("  PASS: stable refs persist and owner metadata is not model-visible");
+    console.log(
+      "  PASS: stable refs persist, assistants are untouched, and owner metadata is not model-visible"
+    );
     console.log("TEST 7b PASSED\n");
   });
 

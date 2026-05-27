@@ -130,11 +130,11 @@ New blocks persist `startSourceKey`, `endSourceKey`, and `anchorSourceKey` for s
 
 ### 7. Owner Key Derivation
 
-Owner keys are derived from rendered transcript metadata tags (`<dcp-block-id>`, `<dcp-id>`), not from arbitrary text. `provider/payload-filter.ts` uses these keys to filter stale artifacts.
+Owner keys are derived from rendered transcript metadata tags for visible non-assistant messages and compressed blocks, plus the non-enumerable `__dcpOwnerKey` attached to assistant messages during context materialization. Assistant messages do not receive visible refs, preserving provider prefix cache. `provider/payload-filter.ts` uses these keys to filter stale artifacts.
 
 ### 8. Passthrough Roles
 
-Roles `compaction`, `branch_summary`, `custom_message` are treated as transparent: they are excluded from visible ID injection and logical turn counting, but their timestamps still fall inside compression ranges for splicing.
+Roles `compaction`, `branch_summary`, `custom_message` are treated as transparent: they are excluded from visible ID injection and logical turn counting, but their timestamps still fall inside compression ranges for splicing. Assistant messages are also excluded from visible ID injection, while remaining part of logical turns and atomic tool-pair expansion.
 
 ---
 
