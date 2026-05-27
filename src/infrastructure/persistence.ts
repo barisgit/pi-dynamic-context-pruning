@@ -16,6 +16,7 @@ import {
   type PersistedDcpState,
   type PersistedDcpStateV1,
   type PersistedDcpStateV2,
+  type PersistedDcpStateV3,
 } from "../state.js";
 import { normalizeMessageAliasState, serializeMessageAliasState } from "../message-refs.js";
 import type { TranscriptSnapshot } from "../transcript.js";
@@ -385,28 +386,39 @@ function slimInactiveV2Block(block: CompressionBlockV2): CompressionBlockV2 {
 }
 
 /**
- * Serialize runtime state back into the most-recent persisted schema seen by
- * the current process. This keeps Phase 1 backward-compatible while avoiding
- * accidental loss of future v2 block data during round-trips.
+ * Serialize runtime state into the tiny v3 marker shape.
  *
- * Inactive blocks are slimmed (see `slimInactiveLegacyBlock`) to keep session
- * JSONL size proportional to *active* state rather than lifetime block count.
+ * dcp-replay-v3 stops persisting compression blocks, messageAliases, and
+ * derived statistics because they are reconstructed from the session
+ * transcript by `replayDcpState`. Only scalar counters and the
+ * `prunedToolIds` tombstone set are written: dedup/error-purge cadence
+ * depends on `currentTurn` and the active tombstone set, which would be
+ * costly to re-derive deterministically on every restore.
+ *
+ * Legacy v1/v2 fat snapshots are still tolerated by `restorePersistedState`,
+ * but new writes are always tiny.
  */
 export function serializePersistedState(state: DcpState): PersistedDcpState {
-  if (state.schemaVersion === 2) {
-    const persisted: PersistedDcpStateV2 = {
-      schemaVersion: 2,
-      blocks: state.compressionBlocksV2.map(slimInactiveV2Block),
-      nextBlockId: state.nextBlockId,
-      messageAliases: serializeMessageAliasState(state.messageAliases),
-      currentTurn: state.currentTurn,
-      lastNudgeTurn: state.lastNudgeTurn,
-      lastCompressTurn: state.lastCompressTurn,
-    };
-    return persisted;
-  }
+  const persisted: PersistedDcpStateV3 = {
+    schemaVersion: 3,
+    savedAt: Date.now(),
+    currentTurn: state.currentTurn,
+    lastNudgeTurn: state.lastNudgeTurn,
+    lastCompressTurn: state.lastCompressTurn,
+    prunedToolIds: Array.from(state.prunedToolIds),
+    lifetimeTokensSavedRealized: state.lifetimeTokensSavedRealized,
+  };
+  return persisted;
+}
 
-  const persisted: PersistedDcpStateV1 = {
+/**
+ * Serialize runtime state into the legacy v1 fat snapshot shape.
+ *
+ * Used by tests and by the retro vacuum tool (f6) when round-tripping old
+ * sessions. Not called by the live runtime.
+ */
+export function serializeLegacyV1PersistedState(state: DcpState): PersistedDcpStateV1 {
+  return {
     schemaVersion: 1,
     compressionBlocks: state.compressionBlocks.map(slimInactiveLegacyBlock),
     nextBlockId: state.nextBlockId,
@@ -419,7 +431,24 @@ export function serializePersistedState(state: DcpState): PersistedDcpState {
     lastNudgeTurn: state.lastNudgeTurn,
     lastCompressTurn: state.lastCompressTurn,
   };
-  return persisted;
+}
+
+/**
+ * Serialize runtime state into the legacy v2 fat snapshot shape.
+ *
+ * Used by tests and by the retro vacuum tool when round-tripping old v2
+ * sessions. Not called by the live runtime.
+ */
+export function serializeLegacyV2PersistedState(state: DcpState): PersistedDcpStateV2 {
+  return {
+    schemaVersion: 2,
+    blocks: state.compressionBlocksV2.map(slimInactiveV2Block),
+    nextBlockId: state.nextBlockId,
+    messageAliases: serializeMessageAliasState(state.messageAliases),
+    currentTurn: state.currentTurn,
+    lastNudgeTurn: state.lastNudgeTurn,
+    lastCompressTurn: state.lastCompressTurn,
+  };
 }
 
 /**
@@ -436,6 +465,30 @@ export function restorePersistedState(data: unknown, state: DcpState): void {
   // marker. Restore is cumulative over branch entries, so this means "keep the
   // state restored from the nearest previous DCP snapshot on this branch".
   if (persisted.unchanged === true) return;
+
+  // v3 tiny marker shape (dcp-replay-v3 default for new writes).
+  // Blocks/messageAliases/tokensSaved are reconstructed by replay; only the
+  // scalars and tombstone set are persisted here.
+  if (persisted.schemaVersion === 3) {
+    if (Array.isArray(persisted.prunedToolIds)) {
+      state.prunedToolIds = new Set(
+        persisted.prunedToolIds.filter((value): value is string => typeof value === "string")
+      );
+    }
+    if (isFiniteNumber(persisted.lifetimeTokensSavedRealized)) {
+      state.lifetimeTokensSavedRealized = persisted.lifetimeTokensSavedRealized;
+    }
+    if (isFiniteNumber(persisted.currentTurn)) {
+      state.currentTurn = persisted.currentTurn;
+    }
+    if (isFiniteNumber(persisted.lastNudgeTurn)) {
+      state.lastNudgeTurn = persisted.lastNudgeTurn;
+    }
+    if (isFiniteNumber(persisted.lastCompressTurn)) {
+      state.lastCompressTurn = persisted.lastCompressTurn;
+    }
+    return;
+  }
 
   if (persisted.schemaVersion === 2 || Array.isArray(persisted.blocks)) {
     const blocks = Array.isArray(persisted.blocks)

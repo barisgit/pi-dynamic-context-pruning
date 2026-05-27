@@ -15,6 +15,7 @@ export type {
   PersistedDcpState,
   PersistedDcpStateV1,
   PersistedDcpStateV2,
+  PersistedDcpStateV3,
   ToolRecord,
 } from "./types/state.js";
 

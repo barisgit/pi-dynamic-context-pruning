@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { registerSessionHandlers, saveState } from "../../src/application/session-handler.js";
-import { restorePersistedState, serializePersistedState } from "../../src/infrastructure/persistence.js";
+import {
+  restorePersistedState,
+  serializePersistedState,
+  serializeLegacyV1PersistedState,
+} from "../../src/infrastructure/persistence.js";
 import type { CompressionBlock } from "../../src/types/state.js";
 import { makeConfig, makeState } from "../helpers/dcp-test-utils.js";
 
@@ -74,8 +78,8 @@ describe("DCP session handler", () => {
     const ctx = {
       hasUI: false,
       sessionManager: {
-        getBranch: () => [dcpStateEntry(serializePersistedState(branchState))],
-        getEntries: () => [dcpStateEntry(serializePersistedState(branchState))],
+        getBranch: () => [dcpStateEntry(serializeLegacyV1PersistedState(branchState))],
+        getEntries: () => [dcpStateEntry(serializeLegacyV1PersistedState(branchState))],
         getSessionId: () => "session-test",
         getCwd: () => "/tmp",
         getSessionDir: () => "/tmp",
@@ -108,9 +112,9 @@ describe("DCP session handler", () => {
     staleInactiveState.nextBlockId = 2;
     staleInactiveState.tokensSaved = 0;
 
-    const activeEntry = dcpStateEntry(serializePersistedState(activeState), "active-state");
+    const activeEntry = dcpStateEntry(serializeLegacyV1PersistedState(activeState), "active-state");
     const staleEntry = dcpStateEntry(
-      serializePersistedState(staleInactiveState),
+      serializeLegacyV1PersistedState(staleInactiveState),
       "stale-state",
       "active-state"
     );
@@ -151,7 +155,7 @@ describe("DCP session handler", () => {
 
     const compaction = nativeCompactionEntry([1], "native-compaction");
     const inactiveEntry = dcpStateEntry(
-      serializePersistedState(inactiveState),
+      serializeLegacyV1PersistedState(inactiveState),
       "inactive-state",
       "native-compaction"
     );
@@ -196,7 +200,7 @@ describe("DCP session handler", () => {
 
     const compaction = nativeCompactionEntry([1], "native-compaction");
     const staleEntry = dcpStateEntry(
-      serializePersistedState(staleState),
+      serializeLegacyV1PersistedState(staleState),
       "stale-state",
       "native-compaction"
     );
@@ -235,7 +239,7 @@ describe("DCP session handler", () => {
     liveState.lastCompressTurn = 25;
     liveState.lastNudgeTurn = 25;
 
-    const liveEntry = dcpStateEntry(serializePersistedState(liveState), "live-state", null);
+    const liveEntry = dcpStateEntry(serializeLegacyV1PersistedState(liveState), "live-state", null);
     const state = makeState();
     const handlers = new Map<string, any>();
     const pi = {
@@ -264,7 +268,7 @@ describe("DCP session handler", () => {
     expect(state.lastNudgeTurn).toBe(25);
   });
 
-  test("serializePersistedState slims inactive blocks", () => {
+  test("serializeLegacyV1PersistedState slims inactive blocks", () => {
     const fatActive: CompressionBlock = {
       id: 1,
       topic: "alpha",
@@ -303,7 +307,7 @@ describe("DCP session handler", () => {
     };
 
     const state = makeState([fatActive, fatInactive]);
-    const serialized = serializePersistedState(state) as { compressionBlocks: CompressionBlock[] };
+    const serialized = serializeLegacyV1PersistedState(state);
 
     const [serActive, serInactive] = serialized.compressionBlocks;
     if (!serActive || !serInactive) throw new Error("expected both blocks");

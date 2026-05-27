@@ -198,14 +198,37 @@ export interface PersistedDcpStateV2 {
   lastCompressTurn?: number;
 }
 
+/**
+ * Persisted v3 DCP state — tiny marker shape used by dcp-replay-v3.
+ *
+ * Blocks, messageAliases, and tokensSaved are NOT persisted: they are
+ * reconstructed from the session transcript by `replayDcpState`. Only
+ * scalar counters and the prunedToolIds tombstone set are written, since
+ * dedup/error-purge decisions depend on `currentTurn` cadence and cannot
+ * always be re-derived deterministically from the transcript alone.
+ */
+export interface PersistedDcpStateV3 {
+  schemaVersion: 3;
+  savedAt: number;
+  currentTurn: number;
+  lastNudgeTurn: number;
+  lastCompressTurn: number;
+  prunedToolIds: string[];
+  lifetimeTokensSavedRealized: number;
+}
+
 /** Tiny no-op state entry used by offline maintenance to preserve JSONL shape. */
 export interface PersistedDcpStateUnchanged {
-  schemaVersion: 1 | 2;
+  schemaVersion: 1 | 2 | 3;
   unchanged: true;
 }
 
 /** Any persisted DCP state shape supported during migration. */
-export type PersistedDcpState = PersistedDcpStateV1 | PersistedDcpStateV2 | PersistedDcpStateUnchanged;
+export type PersistedDcpState =
+  | PersistedDcpStateV1
+  | PersistedDcpStateV2
+  | PersistedDcpStateV3
+  | PersistedDcpStateUnchanged;
 
 /**
  * Full runtime state for the DCP extension.

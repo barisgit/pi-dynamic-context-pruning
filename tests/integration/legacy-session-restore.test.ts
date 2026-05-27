@@ -18,7 +18,7 @@
 
 import { describe, expect, test } from "bun:test";
 import { restoreStateFromBranch } from "../../src/application/session-handler.js";
-import { serializePersistedState } from "../../src/infrastructure/persistence.js";
+import { serializeLegacyV1PersistedState } from "../../src/infrastructure/persistence.js";
 import type { CompressionBlock } from "../../src/types/state.js";
 import { makeConfig, makeState } from "../helpers/dcp-test-utils.js";
 
@@ -80,7 +80,7 @@ describe("Legacy session restore (f3)", () => {
     persisted.nextBlockId = 2;
     persisted.tokensSaved = 250;
 
-    const branch = [dcpStateEntry(serializePersistedState(persisted))];
+    const branch = [dcpStateEntry(serializeLegacyV1PersistedState(persisted))];
     const state = makeState();
     const result = restoreStateFromBranch(branch, state, makeConfig());
 
@@ -162,7 +162,7 @@ describe("Legacy session restore (f3)", () => {
 
     const branch = [
       nativeCompactionEntry([1]),
-      dcpStateEntry(serializePersistedState(persisted)),
+      dcpStateEntry(serializeLegacyV1PersistedState(persisted)),
     ];
     const state = makeState();
     const result = restoreStateFromBranch(branch, state, makeConfig());
@@ -182,7 +182,7 @@ describe("Legacy session restore (f3)", () => {
     persisted.tokensSaved = 250;
 
     const branch = [
-      dcpStateEntry(serializePersistedState(persisted)),
+      dcpStateEntry(serializeLegacyV1PersistedState(persisted)),
       messageEntry({
         role: "toolResult",
         toolCallId: "call-orphan",
