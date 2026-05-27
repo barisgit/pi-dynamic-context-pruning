@@ -8,11 +8,10 @@ Automatically reduces token usage in Pi coding agent sessions by managing conver
 - **Deduplication** — automatically removes duplicate tool call outputs (same tool, same args) keeping only the most recent result
 - **Error purging** — cleans up failed tool inputs after a configurable number of logical turns
 - **Context nudges** — injects compression reminders into the context at configurable thresholds: soft housekeeping notices, strong emergency warnings, and iteration reminders after long tool-call chains
-- **Manual mode** — disable autonomous compression nudges; trigger compression only via `/dcp compress` or explicit user request
-- **Session persistence** — compression blocks and pruning state survive session restarts
+- **Session persistence via replay** — compression blocks and pruning state survive session restarts. Restore is replay-first: state is reconstructed from the session transcript, `compress` tool calls/results, and native compaction entries. Each on-disk `dcp-state` entry is a tiny scalar bootstrap (`<4 KiB`) rather than a fat snapshot of every block.
 - **Native pi compaction bridge** — `/dcp compact` can materialize active DCP summaries into a pi-native compaction entry, avoiding pi's default LLM compactor for that run
 - **Debug logging** — optional best-effort JSONL diagnostics at `~/.pi/log/dcp.jsonl`
-- **`/dcp` commands** — inspect context usage, view stats, sweep tool outputs, and manage compression blocks interactively
+- **`/dcp` commands** — inspect context usage, view stats, and trigger compression interactively
 
 ## Installation
 
@@ -59,9 +58,6 @@ DCP uses a layered configuration system (later layers override earlier ones):
 {
   // Disable the extension entirely
   // "enabled": false,
-
-  // Start every session in manual mode
-  // "manualMode": { "enabled": true, "automaticStrategies": true },
 
   // Best-effort JSONL diagnostics at ~/.pi/log/dcp.jsonl
   // "debug": false,
@@ -139,14 +135,8 @@ All commands are available in the pi TUI via `/dcp <subcommand>`:
 | `/dcp` or `/dcp help` | Show command reference                                                      |
 | `/dcp context`        | Show context window usage and session stats                                 |
 | `/dcp stats`          | Show pruning statistics (tokens saved, blocks, operations)                  |
-| `/dcp sweep [N]`      | Mark last N tool outputs for pruning (default: all since last user message) |
-| `/dcp manual`         | Show current manual mode status                                             |
-| `/dcp manual on`      | Enable manual mode — autonomous nudges disabled                             |
-| `/dcp manual off`     | Disable manual mode — autonomous nudges re-enabled                          |
 | `/dcp compress`       | Trigger LLM compression immediately (sends a followUp message)              |
 | `/dcp compact`        | Materialize active DCP blocks into a pi-native compaction entry             |
-| `/dcp decompress`     | List all active compression blocks                                          |
-| `/dcp decompress N`   | Restore compression block `bN` (re-expands it in context)                   |
 
 ## How It Works
 
@@ -220,9 +210,40 @@ Ideas considered for a more cache-stable future policy:
 - keep tombstoning deterministic but batch it into explicit pruning checkpoints so cache breaks are rarer and easier to reason about
 - prefer representation-driven pruning: remove/minify artifacts only once a durable compression block or receipt represents them
 
+## Session persistence (replay-first restore)
+
+DCP reconstructs its in-memory state on restart by **replaying the session transcript** rather than rehydrating a fat snapshot. Each `custom:dcp-state` entry written to the session JSONL is just a tiny scalar bootstrap (schemaVersion 3) with the current turn counters, `prunedToolIds`, and `lifetimeTokensSavedRealized`. Compression blocks, message aliases, and derived statistics are rebuilt by `replayDcpState()` walking assistant `compress` tool calls/results and `dcp-native-compaction` entries in order.
+
+Why this matters in practice:
+
+- Persisted `dcp-state` lines stay under 4 KiB regardless of how many compression blocks the session holds.
+- Restore is deterministic: a session reloaded in any future runtime version produces the same state given the same transcript.
+- Pre-v3 sessions still restore: when the branch contains no replay evidence, restore falls back to the legacy snapshot path and the loaded blocks survive untouched.
+
+### Vacuuming old fat snapshots
+
+Long-lived sessions written before v3 keep their fat block payloads in earlier `dcp-state` lines. Two scripts are bundled to shrink them safely:
+
+```bash
+# Re-serialize every dcp-state entry through restore+serialize (writes the tiny v3 shape).
+# Default is dry-run; --write creates a .bak and atomically rewrites the file.
+bun run scripts/vacuum-dcp-session.ts <session.jsonl> [--write]
+
+# Same, but walks the whole session tree.
+bun run scripts/vacuum-dcp-session.ts --corpus [--session-dir ~/.pi/agent/sessions] [--write]
+
+# Verify-only: replay observables before and after vacuum, assert equivalence.
+bun run vacuum:verify-corpus
+
+# Replay-vs-snapshot equivalence check used by VAL-REPLAY-RESTORES-EQUIVALENT-STATE.
+bun run replay:equivalence
+```
+
+Verifiers compare four observables across restore paths: `activeBlockIds`, `nextBlockId`, `tokensSaved`, `prunedToolIds`. v3 sessions must round-trip exactly; pre-v3 sessions are reported as compatibility notes because their block precision lives only in the fat snapshot, which v3 intentionally drops.
+
 ## Status indicator
 
-A `DCP` badge is shown in the pi status bar. In manual mode it displays `DCP [manual]`.
+A `DCP` badge is shown in the pi status bar.
 
 ## Development
 

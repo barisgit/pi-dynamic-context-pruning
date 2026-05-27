@@ -65,11 +65,11 @@ Notes:
 
 ## Current architecture status
 
-This repo is in a **hybrid state**:
+This repo is post **dcp-replay-v3**: persistence is replay-first, but the in-memory block model is still the legacy block log with source-key anchors.
 
 1. **Active runtime path = legacy blocks with source-key anchors**
 
-- `state.compressionBlocks` is still the live block log used by the extension.
+- `state.compressionBlocks` is still the live block log used by the extension at runtime.
 - `src/application/compress-tool/` resolves stable visible refs through canonical source keys and keeps timestamp fallback for legacy blocks.
 - `src/domain/pruning/` still applies active legacy blocks on each `context` pass, preferring source-key placement when available.
 
@@ -87,10 +87,13 @@ This repo is in a **hybrid state**:
 - assistant tool-call messages plus matching `toolResult` / `bashExecution` are grouped into one `tool-exchange` span
 - this span model now drives several current semantics, not just future v2 work
 
-4. **Full v2 materialization is not active yet**
+4. **Persistence is replay-first (dcp-replay-v3)**
 
-- `compressionBlocksV2` and `src/domain/compression/materialize.ts` are scaffolding / shared renderer support
-- the runtime still materializes legacy blocks, not full v2 span-key blocks
+- on-disk `dcp-state` entries are a tiny scalar bootstrap (`PersistedDcpStateV3`, `<4 KiB`); they no longer carry the block log
+- `src/domain/replay/` reconstructs `state.compressionBlocks`, supersession, savedTokenEstimate, prunedToolIds, etc. from the session transcript + `compress` tool calls/results + `dcp-native-compaction` entries on restore
+- `src/application/session-handler.ts` is replay-first with a snapshot fallback for pre-v3 sessions (`branchIsReplayable()` gating)
+- `scripts/vacuum-dcp-session.ts` and `scripts/replay-equivalence.ts` validate and shrink pre-v3 corpora against the new shape
+- `compressionBlocksV2` and `src/domain/compression/materialize.ts` remain scaffolding / shared renderer support; the runtime still materializes legacy blocks, not full v2 span-key blocks
 
 ---
 
@@ -153,7 +156,7 @@ DCP intentionally changes older rendered context in a few places. Treat these as
 
 Ideas discussed but not currently implemented:
 
-- replace N-turn error purging with compression-driven or explicit-sweep-only pruning
+- replace N-turn error purging with compression-driven or compaction-only pruning
 - make stale error/dedup pruning emergency/context-pressure-driven instead of time/turn-driven
 - batch tombstone transitions into explicit deterministic pruning checkpoints
 - prefer representation-driven artifact pruning, where old artifacts are removed/minified only after a durable block or receipt represents them
@@ -230,12 +233,16 @@ Touch at least:
 
 ### If you change persisted block metadata
 
+Persistence is **replay-first** (dcp-replay-v3): the on-disk `dcp-state` entry is a tiny scalar bootstrap (`PersistedDcpStateV3` shape, `<4 KiB`) and the real block state is reconstructed by `replayDcpState()` from the transcript + `compress` tool calls/results + `dcp-native-compaction` entries on restore. Anything you persist that is NOT also derivable from those branch entries will be lost on the next session reload.
+
 Touch at least:
 
 - `src/state.ts` / `src/types/state.ts`
 - `src/infrastructure/persistence.ts`
-- `src/domain/compression/` and `src/application/compress-tool/`
-- `tests/unit/compression.test.ts`
+- `src/domain/replay/` (replay must be able to reproduce the new field)
+- `src/application/session-handler.ts` (restore branching between replay and snapshot fallback)
+- `scripts/replay-equivalence.ts` and `scripts/vacuum-dcp-session.ts` (the verifiers that gate VAL-REPLAY-RESTORES-EQUIVALENT-STATE and VAL-RETRO-VACUUM-PRESERVES-RESTORE)
+- `tests/unit/compression.test.ts`, `tests/unit/replay.test.ts`, `tests/integration/persistence-budget.test.ts`, `tests/integration/legacy-session-restore.test.ts`, `tests/unit/vacuum.test.ts`
 
 ---
 
