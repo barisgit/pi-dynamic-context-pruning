@@ -36,7 +36,7 @@ import { replayDcpState } from "../src/domain/replay/index.js";
 // without those strategies enabled.
 // ---------------------------------------------------------------------------
 
-const EQUIVALENCE_CONFIG: DcpConfig = {
+export const EQUIVALENCE_CONFIG: DcpConfig = {
   enabled: true,
   debug: false,
   compress: {
@@ -66,13 +66,15 @@ const EQUIVALENCE_CONFIG: DcpConfig = {
     deduplication: { enabled: false, protectedTools: [] },
     purgeErrors: { enabled: false, turns: 4, protectedTools: [] },
   },
+  protectedFilePatterns: [],
+  pruneNotification: "off",
 };
 
 // ---------------------------------------------------------------------------
 // JSONL helpers
 // ---------------------------------------------------------------------------
 
-function parseJsonlEntries(text: string): any[] {
+export function parseJsonlEntries(text: string): any[] {
   const entries: any[] = [];
   for (const line of text.split("\n")) {
     const trimmed = line.trim();
@@ -86,7 +88,7 @@ function parseJsonlEntries(text: string): any[] {
   return entries;
 }
 
-function isDcpStateEntry(entry: any): boolean {
+export function isDcpStateEntry(entry: any): boolean {
   return entry?.type === "custom" && entry.customType === "dcp-state";
 }
 
@@ -179,14 +181,14 @@ function snapshotRestoreForEquivalence(branchEntries: readonly any[]): ReturnTyp
 // Observables comparison
 // ---------------------------------------------------------------------------
 
-interface Observables {
+export interface Observables {
   activeBlockIds: number[];
   nextBlockId: number;
   tokensSaved: number;
   prunedToolIds: string[];
 }
 
-function extractObservables(state: ReturnType<typeof createState>): Observables {
+export function extractObservables(state: ReturnType<typeof createState>): Observables {
   return {
     activeBlockIds: state.compressionBlocks
       .filter((b) => b.active)
@@ -202,13 +204,13 @@ function arraysEqual<T>(a: T[], b: T[]): boolean {
   return a.length === b.length && a.every((v, i) => v === b[i]);
 }
 
-interface BranchMismatch {
+export interface BranchMismatch {
   field: string;
   snapshot: unknown;
   replay: unknown;
 }
 
-function diffObservables(snapshot: Observables, replay: Observables): BranchMismatch[] {
+export function diffObservables(snapshot: Observables, replay: Observables): BranchMismatch[] {
   const mismatches: BranchMismatch[] = [];
   if (!arraysEqual(snapshot.activeBlockIds, replay.activeBlockIds)) {
     mismatches.push({ field: "activeBlockIds", snapshot: snapshot.activeBlockIds, replay: replay.activeBlockIds });
@@ -469,4 +471,6 @@ async function main(): Promise<void> {
   console.log("\nPASSED: all in-contract replayable branches are equivalent.");
 }
 
-await main();
+if (import.meta.main) {
+  await main();
+}
