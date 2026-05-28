@@ -1,12 +1,10 @@
 ## Purpose
 
 Defines the current accepted behavior for `stable-visible-references`.
-
 ## Requirements
-
 ### Requirement: Stable message references
 
-The system SHALL render model-facing message references as stable session-scoped aliases derived from durable source message keys.
+The system SHALL render model-facing message references as stable session-scoped aliases derived from durable source message keys, and the same logical source message SHALL produce the same visible message reference whenever DCP runs over the same in-memory message buffer.
 
 #### Scenario: Reference remains stable across context passes
 
@@ -17,6 +15,11 @@ The system SHALL render model-facing message references as stable session-scoped
 
 - **WHEN** a source message without an existing alias becomes visible
 - **THEN** the system allocates the next available visible message reference and persists the alias mapping
+
+#### Scenario: Reference remains stable across session restart
+
+- **WHEN** a session restarts and pi delivers its working message buffer to the first `context` event
+- **THEN** lazy replay reconstructs visible references against the same buffer the live agent used at compress time, so compress arguments composed before the restart resolve identically after the restart
 
 ### Requirement: Visible compression refs are the only model-facing DCP protocol
 
@@ -59,3 +62,4 @@ The system SHALL support a migration period where legacy message refs can be par
 
 - **WHEN** DCP prompt/tool documentation is rendered for new sessions
 - **THEN** examples use stable `m0001`-style message refs and `bN` block refs, without implying a `m9999` ceiling
+

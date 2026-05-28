@@ -40,9 +40,9 @@ This isolation ensures the core pruning/compression semantics are testable, dete
 
 **Purpose:** Filter stale hidden artifacts from provider payloads using canonical owner keys.
 
-| File                | Responsibility                                                                                                                                                                                                                                                                                                                        |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `payload-filter.ts` | Extract owner keys from rendered transcript text (`mXXXX</dcp-id>`, `bN</dcp-block-id>` tags). Build represented compress receipts. Minify the newest live represented compress exchange to a compact receipt; suppress older represented pairs. Filter `reasoning`, `function_call`, `function_call_output` items by live owner key. |
+| File                | Responsibility                                                                                                                                                                                                                                                                                                                       |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `payload-filter.ts` | Derive owner keys from `__dcpOwnerKey` Symbol attached to assistant message objects. Build represented compress receipts. Minify the newest live represented compress exchange to a compact receipt; suppress older represented pairs. Filter `reasoning`, `function_call`, `function_call_output` items by live owner key. No rendered tag dependency. |
 
 **Key types:** `RepresentedCompressCallReceipt`, `RepresentedCompressArtifacts`.
 
@@ -62,7 +62,7 @@ This isolation ensures the core pruning/compression semantics are testable, dete
 - `repairOrphanedToolPairs` — safety net: remove orphaned tool results, strip orphaned tool calls
 - `applyDeduplication` — bucket-gated tombstoning of duplicate tool outputs
 - `applyErrorPurging` — bucket-gated tombstoning of old error outputs
-- `injectMessageIds` — assign stable `mXXXX` refs, update snapshots
+- `injectMessageIds` — assign stable `mXXXX` refs to non-assistant messages only; assistant role is skipped entirely (no allocation, no snapshot, no content tag) to preserve last-turn prefix cache
 - `getNudgeType` — nudge firing logic (debounced by logical turns)
 
 ---
@@ -74,9 +74,19 @@ This isolation ensures the core pruning/compression semantics are testable, dete
 | File          | Responsibility                                                                                                                                              |
 | ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `index.ts`    | Parse `mXXXX` message refs and `bN` block refs. Allocate sequential message refs. Serialize/deserialize `MessageAliasState`.                                |
-| `metadata.ts` | Strip visible DCP metadata tags (`<dcp-id>`, `<dcp-owner>`, `<dcp-block-id>`) from text. Strip generated DCP/protocol hallucination tags from model output. |
+| `metadata.ts` | Strip visible DCP metadata tags (`` ` ``, `` ` ``, `` ` ``) from text. Strip generated DCP/protocol hallucination tags from model output. |
 
 **Key types:** `ParsedVisibleRef`, `MessageAliasState`, `MessageRefSnapshotEntry`.
+
+---
+
+### `replay/`
+
+**Purpose:** Reconstruct `DcpState` from session transcript and branch entries (replay-first, dcp-replay-v3). Used on session restore instead of loading a full serialized block log.
+
+| File     | Responsibility                                                                                                                                                                                                                                                                                                                  |
+| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `index.ts` | `replayDcpState(branchEntries, config, {state}) -> DcpState`. Walks branch entries (or live `event.messages` buffer), reconstructs `CompressionBlock`s from assistant `compress` toolCalls + matching `toolResult`s, applies native-compaction deactivations, runs `applyPruning` at bucket boundaries to populate refs and snapshots. Fallback snapshot path for pre-v3 sessions gated by `branchIsReplayable()`. |
 
 ---
 
@@ -97,6 +107,17 @@ This isolation ensures the core pruning/compression semantics are testable, dete
 | File       | Responsibility                                                                                                                                                                                                                                                                                               |
 | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `index.ts` | Build deterministic `TranscriptSnapshot` (source items + spans). Group assistant tool calls + matching tool results into `tool-exchange` spans. Count logical turns. Resolve block coverage via exact metadata or timestamp fallback. Build live owner key sets. Resolve protected hot-tail start timestamp. |
+
+**Source-key ordinal scheme** (stable canonical anchors):
+
+```
+raw:<id>                       → assistant tool-call / toolResult messages
+synth:nudge:<turn>             → injected nudge messages
+synth:block:b<id>              → synthetic compressed block messages
+msg:<ts>:<role>[:<toolCallId>]:<ordinal>  → non-tool-call non-nudge messages
+```
+
+`buildSourceItemKey` implements this scheme. `INTERNAL_BLOCK_ID` and `INTERNAL_NUDGE_TURN` Symbol exports remain available for synthetic message keying.
 
 **Key types:** `TranscriptSourceItem`, `TranscriptSpan`, `TranscriptSnapshot`, `TranscriptSpanKind` (`"message"` | `"tool-exchange"`).
 
@@ -130,7 +151,7 @@ New blocks persist `startSourceKey`, `endSourceKey`, and `anchorSourceKey` for s
 
 ### 7. Owner Key Derivation
 
-Owner keys are derived from rendered transcript metadata tags for visible non-assistant messages and compressed blocks, plus the non-enumerable `__dcpOwnerKey` attached to assistant messages during context materialization. Assistant messages do not receive visible refs, preserving provider prefix cache. `provider/payload-filter.ts` uses these keys to filter stale artifacts.
+Owner keys are derived from rendered transcript metadata tags for visible non-assistant messages and compressed blocks, plus the non-enumerable `__dcpOwnerKey` Symbol attached to assistant message objects during context materialization. Assistant messages do not receive visible refs, preserving provider prefix cache. `provider/payload-filter.ts` reads `__dcpOwnerKey` directly from assistant message objects — no rendered tag dependency.
 
 ### 8. Passthrough Roles
 
@@ -146,14 +167,17 @@ application/ (orchestration)
   └─> domain/compression  buildCompressionArtifacts*() — compress tool
   └─> domain/nudge        getNudgeType()          — nudge decision
   └─> domain/provider     filterProviderPayloadInput() — hidden artifact filtering
+  └─> domain/replay       replayDcpState()        — session restore
 
 domain/transcript      buildTranscriptSnapshot() — canonical snapshot
   └─> domain/compression (tooling.ts) resolveCompressionBlockCoveredSourceKeys
   └─> domain/pruning    countLogicalTurns, buildLiveOwnerKeys
+  └─> domain/replay     walk entries, reconstruct blocks
 
 domain/refs            parseVisibleRef, allocateMessageRef, stripDcpMetadataTags
   └─> domain/compression (tooling.ts)
   └─> domain/provider   (payload-filter.ts)
+  └─> domain/replay     populate snapshots at bucket boundaries
 
 domain/tokens          estimateTokens, estimateMessageTokens
   └─> domain/compression (range.ts, tooling.ts)
@@ -163,3 +187,5 @@ domain/tokens          estimateTokens, estimateMessageTokens
 The `transcript/` snapshot is the canonical source of truth for source items and spans. It feeds `compression/tooling.ts` for exact coverage resolution, `pruning/index.ts` for logical turn counting and live owner keys, and will eventually drive the v2 materialization path in `compression/materialize.ts`.
 
 **Application layer** owns: pi hook registration, tool registration, command registration, config loading, state persistence, debug logging, and provider-payload adaptation.
+
+**Persistence is replay-first (dcp-replay-v3):** on-disk `PersistedDcpStateV3` is a tiny scalar bootstrap; `replayDcpState()` reconstructs the full block log from transcript + `compress` calls/results + `dcp-native-compaction` entries. Pre-v3 sessions fall back to snapshot restore, gated by `branchIsReplayable()`.
