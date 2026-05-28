@@ -92,6 +92,19 @@ describe("vacuumLines (f6)", () => {
     expect(vacuumedEntries[0]!.data.unchanged).toBeUndefined();
   });
 
+  test("material key ignores savedAt: identical v4 payloads collapse to a v4 marker", () => {
+    const state = makeState([makeFatV1Block(1, true)]) as DcpState;
+    state.nextBlockId = 2;
+    const first = serializePersistedState(state) as any;
+    const second = { ...first, savedAt: first.savedAt + 1 };
+
+    const lines = [dcpEntry("a", null, first), dcpEntry("b", "a", second)];
+    const { vacuumedEntries, stats } = vacuumLines(lines, /*markers=*/ true);
+    expect(stats.dcpEntries).toBe(2);
+    expect(stats.unchangedMarkers).toBe(1);
+    expect(vacuumedEntries[1]!.data).toEqual({ schemaVersion: 4, unchanged: true });
+  });
+
   test("branch isolation: a sibling on a different ancestor does NOT become a marker", () => {
     // a -> b  (same material as a's vacuumed shape)
     // a -> c  (different material from a's vacuumed shape)
@@ -122,11 +135,9 @@ describe("vacuumLines (f6)", () => {
     expect(vacuumedEntries[1]!.data.unchanged).toBeUndefined();
   });
 
-  test("v3 vacuum preserves scalar observables and drops snapshot-only block payload", () => {
-    // v3 contract: blocks come from replay (transcript), not from the
-    // snapshot. So a fat-v1 entry losing its inline blocks after vacuum is
-    // intentional. Scalars that survive in the tiny v3 marker (prunedToolIds,
-    // lifetimeTokensSavedRealized, turn counters) must round-trip exactly.
+  test("vacuum preserves scalar observables and converts fat v1 blocks to v4 metadata", () => {
+    // v4 keeps a lightweight block list while still dropping heavyweight
+    // v1 coverage/log/stat fields.
     const state = makeState() as DcpState;
     state.compressionBlocks.push(makeFatV1Block(1, true));
     state.nextBlockId = 2;
@@ -145,19 +156,22 @@ describe("vacuumLines (f6)", () => {
     restorePersistedState(vacuumedEntries[0]!.data, vacuumed);
     const vacuumedObs = extractObservables(vacuumed);
 
-    // Block-derived fields are intentionally empty after v3 vacuum.
-    expect(vacuumedObs.activeBlockIds).toEqual([]);
-    expect(vacuumedObs.nextBlockId).toBe(1);
-    expect(vacuumedObs.tokensSaved).toBe(0);
+    expect(vacuumedEntries[0]!.data.schemaVersion).toBe(4);
+    expect(vacuumedEntries[0]!.data.blocks).toHaveLength(1);
+    expect(vacuumedEntries[0]!.data.blocks[0].metadata).toBeUndefined();
+    expect(vacuumedEntries[0]!.data.blocks[0].activityLog).toBeUndefined();
 
-    // Scalars round-trip via the v3 marker shape.
+    expect(vacuumedObs.activeBlockIds).toEqual([1]);
+    expect(vacuumedObs.nextBlockId).toBe(2);
+    expect(vacuumedObs.tokensSaved).toBe(250);
+
     expect(vacuumedObs.prunedToolIds).toEqual(["call-1"]);
     expect(vacuumed.currentTurn).toBe(7);
     expect(vacuumed.lastCompressTurn).toBe(6);
     expect(vacuumed.lifetimeTokensSavedRealized).toBe(999);
   });
 
-  test("vacuumed v3 entries are dramatically smaller than fat v1 entries", () => {
+  test("vacuumed v4 entries are dramatically smaller than fat v1 entries", () => {
     const state = makeState() as DcpState;
     for (let i = 1; i <= 20; i++) state.compressionBlocks.push(makeFatV1Block(i, i % 2 === 0));
     state.nextBlockId = 21;
@@ -169,8 +183,8 @@ describe("vacuumLines (f6)", () => {
     const before = Buffer.byteLength(lines[0]!, "utf8");
     const after = Buffer.byteLength(outLines[0]!, "utf8");
     expect(after).toBeLessThan(before);
-    // v3 envelope is tiny — well under the 4 KiB persistence budget.
-    expect(after).toBeLessThan(4096);
+    // v4 carries block metadata, but still drops fat coverage/log/stat fields.
+    expect(after).toBeLessThan(10_000);
   });
 });
 

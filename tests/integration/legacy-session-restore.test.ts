@@ -18,7 +18,10 @@
 
 import { describe, expect, test } from "bun:test";
 import { restoreStateFromBranch } from "../../src/application/session-handler.js";
-import { serializeLegacyV1PersistedState } from "../../src/infrastructure/persistence.js";
+import {
+  serializeLegacyV1PersistedState,
+  serializePersistedState,
+} from "../../src/infrastructure/persistence.js";
 import type { CompressionBlock } from "../../src/types/state.js";
 import { makeConfig, makeState } from "../helpers/dcp-test-utils.js";
 
@@ -151,6 +154,34 @@ describe("Legacy session restore (f3)", () => {
     expect(result.mode).toBe("replay-pending");
     expect(state.replayPending).toBe(true);
     expect(state.compressionBlocks).toHaveLength(0);
+  });
+
+  test("latest v4 dcp-state entry -> persisted mode without lazy replay", () => {
+    const persisted = makeState([block(3, true)]);
+    persisted.nextBlockId = 4;
+    persisted.currentTurn = 12;
+
+    const branch = [
+      messageEntry({
+        role: "toolResult",
+        toolCallId: "call-c1",
+        toolName: "compress",
+        content: [{ type: "text", text: "ok" }],
+        isError: false,
+        timestamp: 5000,
+      }),
+      dcpStateEntry(serializePersistedState(persisted)),
+    ];
+    const state = makeState();
+    const result = restoreStateFromBranch(branch, state, makeConfig());
+
+    expect(result.mode).toBe("persisted");
+    expect(state.replayPending).toBe(false);
+    expect(state.currentTurn).toBe(12);
+    expect(state.nextBlockId).toBe(4);
+    expect(state.compressionBlocks).toHaveLength(1);
+    expect(state.compressionBlocks[0]?.id).toBe(3);
+    expect(state.compressionBlocks[0]?.active).toBe(true);
   });
 
   test("compaction entry + snapshot + no compress transcript -> snapshot-fallback", () => {

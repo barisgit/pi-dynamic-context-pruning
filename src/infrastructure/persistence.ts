@@ -13,10 +13,12 @@ import {
   type CompressionFileWriteStat,
   type CompressionLogEntry,
   type DcpState,
+  type PersistedCompressionBlockV4,
   type PersistedDcpState,
   type PersistedDcpStateV1,
   type PersistedDcpStateV2,
   type PersistedDcpStateV3,
+  type PersistedDcpStateV4,
 } from "../state.js";
 import { normalizeMessageAliasState, serializeMessageAliasState } from "../message-refs.js";
 import type { TranscriptSnapshot } from "../transcript.js";
@@ -222,6 +224,51 @@ function normalizeV2Block(value: unknown): CompressionBlockV2 | null {
   };
 }
 
+function persistCompressionBlockV4(block: CompressionBlock): PersistedCompressionBlockV4 {
+  return {
+    id: block.id,
+    topic: block.topic,
+    summary: block.summary,
+    active: block.active,
+    createdAt: block.createdAt,
+    savedTokenEstimate: block.savedTokenEstimate ?? 0,
+    summaryTokenEstimate: block.summaryTokenEstimate,
+    compressCallId: block.compressCallId,
+    supersededBlockIds: block.metadata?.supersededBlockIds ?? [],
+  };
+}
+
+function normalizePersistedCompressionBlockV4(value: unknown): CompressionBlock | null {
+  const block = asObject(value);
+  if (!block) return null;
+
+  if (!isFiniteNumber(block.id) || typeof block.topic !== "string" || typeof block.summary !== "string") {
+    return null;
+  }
+
+  return {
+    id: block.id,
+    topic: block.topic,
+    summary: block.summary,
+    startTimestamp: Infinity,
+    endTimestamp: Infinity,
+    anchorTimestamp: Infinity,
+    active: typeof block.active === "boolean" ? block.active : true,
+    summaryTokenEstimate: isFiniteNumber(block.summaryTokenEstimate)
+      ? block.summaryTokenEstimate
+      : 0,
+    savedTokenEstimate: isFiniteNumber(block.savedTokenEstimate) ? block.savedTokenEstimate : 0,
+    createdAt: isFiniteNumber(block.createdAt) ? block.createdAt : Date.now(),
+    compressCallId: typeof block.compressCallId === "string" ? block.compressCallId : undefined,
+    metadata: {
+      ...createEmptyCompressionBlockMetadata(),
+      supersededBlockIds: Array.isArray(block.supersededBlockIds)
+        ? block.supersededBlockIds.filter(isFiniteNumber)
+        : [],
+    },
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
@@ -386,27 +433,35 @@ function slimInactiveV2Block(block: CompressionBlockV2): CompressionBlockV2 {
 }
 
 /**
- * Serialize runtime state into the tiny v3 marker shape.
+ * Serialize runtime state into the v3/v4 replay bootstrap shapes.
  *
- * dcp-replay-v3 stops persisting compression blocks, messageAliases, and
- * derived statistics because they are reconstructed from the session
- * transcript by `replayDcpState`. Only scalar counters and the
- * `prunedToolIds` tombstone set are written: dedup/error-purge cadence
- * depends on `currentTurn` and the active tombstone set, which would be
- * costly to re-derive deterministically on every restore.
- *
- * Legacy v1/v2 fat snapshots are still tolerated by `restorePersistedState`,
- * but new writes are always tiny.
+ * Empty sessions keep the tiny v3 scalar marker. Once blocks exist, v4 adds a
+ * light block list so post-compaction block records survive restarts without
+ * reintroducing legacy fat snapshots.
  */
 export function serializePersistedState(state: DcpState): PersistedDcpState {
-  const persisted: PersistedDcpStateV3 = {
-    schemaVersion: 3,
+  const scalars = {
     savedAt: Date.now(),
     currentTurn: state.currentTurn,
     lastNudgeTurn: state.lastNudgeTurn,
     lastCompressTurn: state.lastCompressTurn,
     prunedToolIds: Array.from(state.prunedToolIds),
     lifetimeTokensSavedRealized: state.lifetimeTokensSavedRealized,
+  };
+
+  if (state.compressionBlocks.length === 0) {
+    const persisted: PersistedDcpStateV3 = {
+      schemaVersion: 3,
+      ...scalars,
+    };
+    return persisted;
+  }
+
+  const persisted: PersistedDcpStateV4 = {
+    schemaVersion: 4,
+    ...scalars,
+    blocks: state.compressionBlocks.map(persistCompressionBlockV4),
+    nextBlockId: state.nextBlockId,
   };
   return persisted;
 }
@@ -451,6 +506,26 @@ export function serializeLegacyV2PersistedState(state: DcpState): PersistedDcpSt
   };
 }
 
+function restorePersistedScalars(persisted: Record<string, unknown>, state: DcpState): void {
+  if (Array.isArray(persisted.prunedToolIds)) {
+    state.prunedToolIds = new Set(
+      persisted.prunedToolIds.filter((value): value is string => typeof value === "string")
+    );
+  }
+  if (isFiniteNumber(persisted.lifetimeTokensSavedRealized)) {
+    state.lifetimeTokensSavedRealized = persisted.lifetimeTokensSavedRealized;
+  }
+  if (isFiniteNumber(persisted.currentTurn)) {
+    state.currentTurn = persisted.currentTurn;
+  }
+  if (isFiniteNumber(persisted.lastNudgeTurn)) {
+    state.lastNudgeTurn = persisted.lastNudgeTurn;
+  }
+  if (isFiniteNumber(persisted.lastCompressTurn)) {
+    state.lastCompressTurn = persisted.lastCompressTurn;
+  }
+}
+
 /**
  * Restore one persisted DCP state entry into runtime state.
  *
@@ -466,27 +541,36 @@ export function restorePersistedState(data: unknown, state: DcpState): void {
   // state restored from the nearest previous DCP snapshot on this branch".
   if (persisted.unchanged === true) return;
 
-  // v3 tiny marker shape (dcp-replay-v3 default for new writes).
+  // v4 scalar bootstrap plus a light legacy-block list. Heavy coverage/log
+  // metadata is intentionally not persisted; restored blocks are still useful
+  // to native compaction tier rendering across restarts.
+  if (persisted.schemaVersion === 4) {
+    const blocks = Array.isArray(persisted.blocks)
+      ? persisted.blocks
+          .map(normalizePersistedCompressionBlockV4)
+          .filter((b): b is CompressionBlock => b !== null)
+      : [];
+
+    restorePersistedScalars(persisted, state);
+    state.schemaVersion = 1;
+    state.compressionBlocks = blocks;
+    state.compressionBlocksV2 = [];
+    state.nextBlockId = isFiniteNumber(persisted.nextBlockId)
+      ? persisted.nextBlockId
+      : blocks.length > 0
+        ? Math.max(0, ...blocks.map((b) => b.id)) + 1
+        : 1;
+    state.tokensSaved = blocks
+      .filter((block) => block.active)
+      .reduce((sum, block) => sum + (block.savedTokenEstimate ?? 0), 0);
+    return;
+  }
+
+  // v3 tiny marker shape (dcp-replay-v3 default for empty/new writes).
   // Blocks/messageAliases/tokensSaved are reconstructed by replay; only the
   // scalars and tombstone set are persisted here.
   if (persisted.schemaVersion === 3) {
-    if (Array.isArray(persisted.prunedToolIds)) {
-      state.prunedToolIds = new Set(
-        persisted.prunedToolIds.filter((value): value is string => typeof value === "string")
-      );
-    }
-    if (isFiniteNumber(persisted.lifetimeTokensSavedRealized)) {
-      state.lifetimeTokensSavedRealized = persisted.lifetimeTokensSavedRealized;
-    }
-    if (isFiniteNumber(persisted.currentTurn)) {
-      state.currentTurn = persisted.currentTurn;
-    }
-    if (isFiniteNumber(persisted.lastNudgeTurn)) {
-      state.lastNudgeTurn = persisted.lastNudgeTurn;
-    }
-    if (isFiniteNumber(persisted.lastCompressTurn)) {
-      state.lastCompressTurn = persisted.lastCompressTurn;
-    }
+    restorePersistedScalars(persisted, state);
     return;
   }
 

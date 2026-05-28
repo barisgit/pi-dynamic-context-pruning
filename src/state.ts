@@ -12,10 +12,12 @@ export type {
   CompressionFileWriteStat,
   CompressionLogEntry,
   DcpState,
+  PersistedCompressionBlockV4,
   PersistedDcpState,
   PersistedDcpStateV1,
   PersistedDcpStateV2,
   PersistedDcpStateV3,
+  PersistedDcpStateV4,
   ToolRecord,
 } from "./types/state.js";
 

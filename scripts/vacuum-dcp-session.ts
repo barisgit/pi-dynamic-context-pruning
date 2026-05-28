@@ -99,7 +99,10 @@ function materialKeyOf(data: any): string {
 }
 
 function markerForSchemaVersion(version: unknown): { schemaVersion: number; unchanged: true } {
-  const v = typeof version === "number" && (version === 1 || version === 2 || version === 3) ? version : 1;
+  const v =
+    typeof version === "number" && (version === 1 || version === 2 || version === 3 || version === 4)
+      ? version
+      : 1;
   return { schemaVersion: v, unchanged: true };
 }
 

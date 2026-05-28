@@ -2,17 +2,9 @@
 // Integration test: dcp-state JSONL persistence budget (f4).
 // ---------------------------------------------------------------------------
 //
-// dcp-replay-v3 stops persisting compression blocks, messageAliases, and
-// derived statistics: replay reconstructs them from the session transcript.
-// What persists on every dcp-state entry is the tiny v3 marker shape:
-//
-//   { schemaVersion, savedAt, currentTurn, lastNudgeTurn, lastCompressTurn,
-//     prunedToolIds, lifetimeTokensSavedRealized }
-//
-// VAL-PERSISTED-DCP-STATE-IS-TINY requires every written dcp-state entry to
-// stay under 4 KiB regardless of how many compression blocks or message
-// aliases the live state holds. These tests build pathological live states
-// and assert the serialized JSONL line is small.
+// Empty states still write the tiny v3 scalar marker. Once compression blocks
+// exist, v4 persists a light block list so block records survive restarts while
+// dropping heavyweight coverage/log/stat metadata.
 
 import { describe, expect, test } from "bun:test";
 import { serializePersistedState } from "../../src/infrastructure/persistence.js";
@@ -20,15 +12,15 @@ import type { CompressionBlock, DcpState } from "../../src/types/state.js";
 import { createEmptyCompressionBlockMetadata } from "../../src/domain/compression/metadata.js";
 import { makeState } from "../helpers/dcp-test-utils.js";
 
-const BUDGET_BYTES = 4096;
+const EMPTY_STATE_BUDGET_BYTES = 4096;
+const POPULATED_STATE_BUDGET_BYTES = 30_000;
+const PER_BLOCK_BUDGET_BYTES = 300;
 
 function makeFatBlock(id: number, active: boolean): CompressionBlock {
   return {
     id,
-    topic: `topic ${id} with extra context label for size`,
-    summary:
-      "x".repeat(2000) +
-      ` block ${id} long summary text describing many actions and decisions`,
+    topic: `topic ${id}`,
+    summary: `summary ${id} with preserved block context`,
     startTimestamp: 1000 + id,
     endTimestamp: 2000 + id,
     anchorTimestamp: 1500 + id,
@@ -76,36 +68,48 @@ describe("dcp-state persistence budget (f4)", () => {
     const persisted = serializePersistedState(state) as { schemaVersion: number };
 
     expect(persisted.schemaVersion).toBe(3);
-    expect(serializedByteLength(state)).toBeLessThan(BUDGET_BYTES);
+    expect(serializedByteLength(state)).toBeLessThan(EMPTY_STATE_BUDGET_BYTES);
   });
 
-  test("100 active compression blocks do not enter the persisted payload", () => {
+  test("100 compression blocks persist only bounded light metadata", () => {
     const state = makeState();
     state.compressionBlocks = Array.from({ length: 100 }, (_, i) => makeFatBlock(i + 1, true));
     state.nextBlockId = 101;
     state.tokensSaved = 200_000;
 
     const bytes = serializedByteLength(state);
-    expect(bytes).toBeLessThan(BUDGET_BYTES);
+    expect(bytes).toBeLessThan(POPULATED_STATE_BUDGET_BYTES);
+    expect(bytes / state.compressionBlocks.length).toBeLessThan(PER_BLOCK_BUDGET_BYTES);
 
-    // Confirm nothing block-shaped leaked through.
     const persisted = JSON.parse(JSON.stringify(serializePersistedState(state)));
+    expect(persisted.schemaVersion).toBe(4);
+    expect(persisted.blocks).toHaveLength(100);
     expect(persisted.compressionBlocks).toBeUndefined();
-    expect(persisted.blocks).toBeUndefined();
     expect(persisted.messageAliases).toBeUndefined();
     expect(persisted.tokensSaved).toBeUndefined();
+
+    const sample = persisted.blocks[0];
+    expect(sample.id).toBe(1);
+    expect(sample.topic).toBe("topic 1");
+    expect(sample.summary).toBe("summary 1 with preserved block context");
+    expect(sample.active).toBe(true);
+    expect(sample.metadata).toBeUndefined();
+    expect(sample.activityLog).toBeUndefined();
+    expect(sample.coveredSourceKeys).toBeUndefined();
+    expect(sample.fileReadStats).toBeUndefined();
+    expect(sample.commandStats).toBeUndefined();
   });
 
-  test("many blocks still tiny: 1000 mixed active/inactive blocks", () => {
+  test("100 mixed active/inactive blocks stay under the v4 budget", () => {
     const state = makeState();
-    state.compressionBlocks = Array.from({ length: 1000 }, (_, i) =>
+    state.compressionBlocks = Array.from({ length: 100 }, (_, i) =>
       makeFatBlock(i + 1, i % 3 === 0)
     );
-    state.nextBlockId = 1001;
+    state.nextBlockId = 101;
     state.tokensSaved = 5_000_000;
     state.lifetimeTokensSavedRealized = 12_000_000;
 
-    expect(serializedByteLength(state)).toBeLessThan(BUDGET_BYTES);
+    expect(serializedByteLength(state)).toBeLessThan(POPULATED_STATE_BUDGET_BYTES);
   });
 
   test("massive messageAliases registry is not persisted", () => {
@@ -118,7 +122,7 @@ describe("dcp-state persistence budget (f4)", () => {
     }
     state.messageAliases.nextRef = 500;
 
-    expect(serializedByteLength(state)).toBeLessThan(BUDGET_BYTES);
+    expect(serializedByteLength(state)).toBeLessThan(EMPTY_STATE_BUDGET_BYTES);
   });
 
   test("scalars + modest prunedToolIds round-trip in the tiny shape", () => {
@@ -144,7 +148,7 @@ describe("dcp-state persistence budget (f4)", () => {
     expect(persisted.lastCompressTurn).toBe(172);
     expect(persisted.prunedToolIds.length).toBe(50);
     expect(persisted.lifetimeTokensSavedRealized).toBe(850_000);
-    expect(serializedByteLength(state)).toBeLessThan(BUDGET_BYTES);
+    expect(serializedByteLength(state)).toBeLessThan(EMPTY_STATE_BUDGET_BYTES);
   });
 
   test("prunedToolIds at realistic steady-state (~200 ids) stays under budget", () => {
@@ -157,6 +161,6 @@ describe("dcp-state persistence budget (f4)", () => {
       // Tool call IDs from the host runtime are typically <= 40 chars.
       state.prunedToolIds.add(`call-${i.toString().padStart(6, "0")}`);
     }
-    expect(serializedByteLength(state)).toBeLessThan(BUDGET_BYTES);
+    expect(serializedByteLength(state)).toBeLessThan(EMPTY_STATE_BUDGET_BYTES);
   });
 });

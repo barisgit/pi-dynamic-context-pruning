@@ -217,9 +217,29 @@ export interface PersistedDcpStateV3 {
   lifetimeTokensSavedRealized: number;
 }
 
+/** Minimal persisted legacy block metadata carried by v4 DCP state entries. */
+export interface PersistedCompressionBlockV4 {
+  id: number;
+  topic: string;
+  summary: string;
+  active: boolean;
+  createdAt: number;
+  savedTokenEstimate: number;
+  summaryTokenEstimate: number;
+  compressCallId?: string;
+  supersededBlockIds: number[];
+}
+
+/** Persisted v4 DCP state — v3 scalar bootstrap plus a light block list. */
+export interface PersistedDcpStateV4 extends Omit<PersistedDcpStateV3, "schemaVersion"> {
+  schemaVersion: 4;
+  blocks: PersistedCompressionBlockV4[];
+  nextBlockId: number;
+}
+
 /** Tiny no-op state entry used by offline maintenance to preserve JSONL shape. */
 export interface PersistedDcpStateUnchanged {
-  schemaVersion: 1 | 2 | 3;
+  schemaVersion: 1 | 2 | 3 | 4;
   unchanged: true;
 }
 
@@ -228,6 +248,7 @@ export type PersistedDcpState =
   | PersistedDcpStateV1
   | PersistedDcpStateV2
   | PersistedDcpStateV3
+  | PersistedDcpStateV4
   | PersistedDcpStateUnchanged;
 
 /**

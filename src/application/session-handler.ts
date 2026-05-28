@@ -12,7 +12,7 @@ export function initializeSessionState(_state: DcpState, _config: DcpConfig): vo
   // No-op: manual mode was removed in dcp-replay-v3.
 }
 
-export type RestoreMode = "replay-pending" | "snapshot-fallback";
+export type RestoreMode = "persisted" | "replay-pending" | "snapshot-fallback";
 
 interface RestoreStateFromBranchResult {
   branchEntryCount: number;
@@ -25,6 +25,20 @@ interface RestoreStateFromBranchResult {
 
 function isDcpStateEntry(entry: any): boolean {
   return entry?.type === "custom" && entry.customType === "dcp-state";
+}
+
+function latestMaterialDcpStateSchemaVersion(branchEntries: readonly any[]): number | null {
+  for (let index = branchEntries.length - 1; index >= 0; index--) {
+    const entry = branchEntries[index];
+    if (!isDcpStateEntry(entry)) continue;
+    const data = entry.data;
+    if (!data || typeof data !== "object") continue;
+    if ((data as { unchanged?: unknown }).unchanged === true) continue;
+    const schemaVersion = (data as { schemaVersion?: unknown }).schemaVersion;
+    if (typeof schemaVersion === "number") return schemaVersion;
+    return 1;
+  }
+  return null;
 }
 
 /**
@@ -228,6 +242,30 @@ export function restoreStateFromBranch(
   config: DcpConfig,
   allEntries: readonly any[] = branchEntries
 ): RestoreStateFromBranchResult {
+  if (latestMaterialDcpStateSchemaVersion(branchEntries) === 4) {
+    resetState(state);
+    initializeSessionState(state, config);
+
+    let restoredStateEntries = 0;
+    for (const entry of branchEntries) {
+      if (isDcpStateEntry(entry)) {
+        restorePersistedState(entry.data, state);
+        restoredStateEntries++;
+      }
+    }
+    state.replayPending = false;
+
+    const repairedNudgeWatermarks = repairStaleNudgeWatermarks(branchEntries, state);
+
+    return {
+      branchEntryCount: branchEntries.length,
+      restoredStateEntries,
+      repairedBlockIds: [],
+      repairedNudgeWatermarks,
+      mode: "persisted",
+    };
+  }
+
   if (branchIsReplayable(branchEntries)) {
     resetState(state);
     initializeSessionState(state, config);
