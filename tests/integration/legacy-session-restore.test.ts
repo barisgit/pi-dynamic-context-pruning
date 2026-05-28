@@ -144,11 +144,13 @@ describe("Legacy session restore (f3)", () => {
     const state = makeState();
     const result = restoreStateFromBranch(branch, state, makeConfig());
 
-    expect(result.mode).toBe("replay");
-    expect(state.compressionBlocks).toHaveLength(1);
-    expect(state.compressionBlocks[0]?.active).toBe(true);
-    expect(state.compressionBlocks[0]?.topic).toBe("intro pair");
-    expect(state.tokensSaved).toBeGreaterThan(0);
+    // dcp-replay-v3 + replay-on-context: restoreStateFromBranch is now
+    // scalar-only. Block reconstruction happens lazily on the first context
+    // event against pi's live message buffer. Verify the scalar restore
+    // marked replayPending and didn't reconstruct blocks here.
+    expect(result.mode).toBe("replay-pending");
+    expect(state.replayPending).toBe(true);
+    expect(state.compressionBlocks).toHaveLength(0);
   });
 
   test("compaction entry + snapshot + no compress transcript -> snapshot-fallback", () => {
@@ -167,9 +169,13 @@ describe("Legacy session restore (f3)", () => {
     const state = makeState();
     const result = restoreStateFromBranch(branch, state, makeConfig());
 
-    expect(result.mode).toBe("snapshot-fallback");
-    expect(state.compressionBlocks).toHaveLength(1);
-    expect(state.compressionBlocks[0]?.active).toBe(false);
+    // A native-compaction entry makes this branch replayable, so restore
+    // marks replayPending. Block reconstruction (which would deactivate b1
+    // and account for the lifetime savings) happens lazily on the first
+    // context event. Verify scalar fields restored from the persisted v1
+    // snapshot and replayPending is set.
+    expect(result.mode).toBe("replay-pending");
+    expect(state.replayPending).toBe(true);
     expect(state.lifetimeTokensSavedRealized).toBe(999);
   });
 
@@ -198,9 +204,15 @@ describe("Legacy session restore (f3)", () => {
     // Replay sees the compress success, tries to find the matching call,
     // gets null, skips. Then state.compressionBlocks is empty AND a
     // snapshot exists, so we take the fallback.
-    expect(result.mode).toBe("snapshot-fallback");
-    expect(state.compressionBlocks).toHaveLength(1);
-    expect(state.compressionBlocks[0]?.id).toBe(7);
-    expect(state.compressionBlocks[0]?.active).toBe(true);
+    // The dangling compress success makes the branch "replayable" by
+    // signature, so restoreStateFromBranch goes scalar-only and sets
+    // replayPending. The orphan toolCallId will be a no-op when lazy replay
+    // runs (no matching assistant call to parse args from), so the next
+    // context event leaves state.compressionBlocks empty. That's the
+    // expected v3 behaviour: the persisted v1 snapshot's blocks survive
+    // ONLY if the branch is non-replayable (pre-v3). Here the branch is
+    // technically replayable, so we accept losing the stale block.
+    expect(result.mode).toBe("replay-pending");
+    expect(state.replayPending).toBe(true);
   });
 });

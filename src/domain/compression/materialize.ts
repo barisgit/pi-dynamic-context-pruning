@@ -3,6 +3,7 @@
 // ---------------------------------------------------------------------------
 
 import { stripDcpMetadataTags } from "../refs/metadata.js";
+import { INTERNAL_BLOCK_ID } from "../transcript/index.js";
 import type { CompressionBlockV2, CompressionLogEntry } from "../../types/state.js";
 import type { DcpMessage } from "../../types/message.js";
 import { buildBlockOwnerKey, buildSourceOwnerKey } from "../transcript/index.js";
@@ -133,9 +134,14 @@ export function renderCompressedBlockText(block: CompressionBlockRenderData): st
  *
  * Shared by the legacy v1 runtime path and the draft v2 materializer so the
  * visible block shape can evolve in one place.
+ *
+ * Stamps the `INTERNAL_BLOCK_ID` Symbol on the synthesized message so
+ * `buildSourceItemKey` produces a stable `synth:block:bN` key regardless of
+ * where the block sits in the materialized buffer (decisions in
+ * openspec/changes/stable-source-keys).
  */
 export function renderCompressedBlockMessage(block: CompressionBlockRenderData): DcpMessage {
-  return {
+  const msg: DcpMessage = {
     role: "user",
     content: [
       {
@@ -144,6 +150,8 @@ export function renderCompressedBlockMessage(block: CompressionBlockRenderData):
       },
     ],
   };
+  (msg as any)[INTERNAL_BLOCK_ID] = block.id;
+  return msg;
 }
 
 /**

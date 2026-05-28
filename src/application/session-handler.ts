@@ -12,7 +12,7 @@ export function initializeSessionState(_state: DcpState, _config: DcpConfig): vo
   // No-op: manual mode was removed in dcp-replay-v3.
 }
 
-export type RestoreMode = "replay" | "snapshot-fallback";
+export type RestoreMode = "replay-pending" | "snapshot-fallback";
 
 interface RestoreStateFromBranchResult {
   branchEntryCount: number;
@@ -199,21 +199,28 @@ function snapshotRestore(
 
   const repairedNudgeWatermarks = repairStaleNudgeWatermarks(branchEntries, state);
 
+  // Pre-v3 snapshot fallback already produces fully-formed block state on
+  // disk; lazy replay would re-run reconstruction unnecessarily (and would
+  // probably fail because the branch is non-replayable). Clear the flag.
+  state.replayPending = false;
+
   return { restoredStateEntries, repairedBlockIds, repairedNudgeWatermarks };
 }
 
 /**
  * Restore runtime state from the active branch.
  *
- * dcp-replay-v3: replay-first when the branch carries DCP-relevant
- * transcript evidence (successful compress tool results or native
- * compaction entries). Old sessions that pre-date v3 only carry persisted
- * `dcp-state` snapshots and no transcript evidence; those fall back to
- * the legacy snapshot walk so existing state survives the upgrade.
+ * dcp-replay-v3 + replay-on-context: when the branch carries DCP-relevant
+ * transcript evidence (successful compress tool results or native compaction
+ * entries), do a SCALAR-ONLY restore here (turn counters, prunedToolIds,
+ * lifetimeTokensSavedRealized) and set `state.replayPending = true`. The
+ * next `context` event runs the actual block reconstruction against pi's
+ * live message buffer, which guarantees ref-allocation parity with the
+ * agent at compress time.
  *
- * Crashes are never propagated outwards — if replay throws on a branch we
- * thought was replayable, we degrade to snapshot fallback rather than
- * letting the session_start hook fail.
+ * Old sessions that pre-date v3 only carry persisted `dcp-state` snapshots
+ * and no transcript evidence; those fall back to the legacy snapshot walk
+ * here so existing state survives the upgrade.
  */
 export function restoreStateFromBranch(
   branchEntries: readonly any[],
@@ -221,56 +228,32 @@ export function restoreStateFromBranch(
   config: DcpConfig,
   allEntries: readonly any[] = branchEntries
 ): RestoreStateFromBranchResult {
-  const hasSnapshot = branchEntries.some(isDcpStateEntry);
   if (branchIsReplayable(branchEntries)) {
-    try {
-      resetState(state);
-      initializeSessionState(state, config);
-      replayDcpState(branchEntries, config, { state });
-      // Cross-branch native-compaction repair still applies on top of
-      // replay for branches that diverged after a native compaction in a
-      // different branch.
-      const repairedBlockIds = repairOffBranchNativeCompactionState(
-        branchEntries,
-        allEntries,
-        state,
-        config
-      );
-      const repairedNudgeWatermarks = repairStaleNudgeWatermarks(branchEntries, state);
+    resetState(state);
+    initializeSessionState(state, config);
 
-      // Soft-compat: replay produced nothing but the branch carries
-      // dcp-state snapshots. This happens for upgrade-window sessions
-      // where the compress transcript is missing (off-branch or pruned)
-      // but the snapshot still holds useful block state. Prefer snapshot.
-      if (state.compressionBlocks.length === 0 && hasSnapshot) {
-        const fallback = snapshotRestore(branchEntries, state, config, allEntries);
-        return {
-          branchEntryCount: branchEntries.length,
-          restoredStateEntries: fallback.restoredStateEntries,
-          repairedBlockIds: fallback.repairedBlockIds,
-          repairedNudgeWatermarks: fallback.repairedNudgeWatermarks,
-          mode: "snapshot-fallback",
-        };
+    // Scalar-only restore: walk dcp-state entries through restorePersistedState
+    // so the persisted scalars (currentTurn, lastNudgeTurn, lastCompressTurn,
+    // prunedToolIds, lifetimeTokensSavedRealized) end up on `state`. We do NOT
+    // call replayDcpState here — that happens lazily on the first context event.
+    let restoredStateEntries = 0;
+    for (const entry of branchEntries) {
+      if (isDcpStateEntry(entry)) {
+        restorePersistedState(entry.data, state);
+        restoredStateEntries++;
       }
-
-      return {
-        branchEntryCount: branchEntries.length,
-        restoredStateEntries: 0,
-        repairedBlockIds,
-        repairedNudgeWatermarks,
-        mode: "replay",
-      };
-    } catch (error) {
-      const fallback = snapshotRestore(branchEntries, state, config, allEntries);
-      return {
-        branchEntryCount: branchEntries.length,
-        restoredStateEntries: fallback.restoredStateEntries,
-        repairedBlockIds: fallback.repairedBlockIds,
-        repairedNudgeWatermarks: fallback.repairedNudgeWatermarks,
-        mode: "snapshot-fallback",
-        replayError: error instanceof Error ? error.message : String(error),
-      };
     }
+    state.replayPending = true;
+
+    const repairedNudgeWatermarks = repairStaleNudgeWatermarks(branchEntries, state);
+
+    return {
+      branchEntryCount: branchEntries.length,
+      restoredStateEntries,
+      repairedBlockIds: [],
+      repairedNudgeWatermarks,
+      mode: "replay-pending",
+    };
   }
 
   const fallback = snapshotRestore(branchEntries, state, config, allEntries);

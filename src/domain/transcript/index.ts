@@ -10,6 +10,16 @@
 import type { CompressionBlock } from "../../types/state.js"
 import type { DcpMessage } from "../../types/message.js"
 
+// ---------------------------------------------------------------------------
+// Internal markers used to give DCP-synthesized messages a stable, buffer-
+// independent source-key (decisions in openspec/changes/stable-source-keys).
+// They are non-enumerable Symbols on the message object so they never leak
+// into the rendered transcript.
+// ---------------------------------------------------------------------------
+
+export const INTERNAL_NUDGE_TURN = Symbol.for("dcp.internal.nudgeTurn")
+export const INTERNAL_BLOCK_ID = Symbol.for("dcp.internal.blockId")
+
 /** One source item in the canonical transcript snapshot. */
 export interface TranscriptSourceItem {
   /** Stable-ish internal key derived from source order and message metadata */
@@ -102,8 +112,16 @@ function createSpan(kind: TranscriptSpanKind, items: TranscriptSourceItem[]): Tr
 /**
  * Build a deterministic source-item key.
  *
- * This is only a Phase 1 fallback key scheme. If pi later exposes durable
- * session-entry IDs, v2 should switch to those.
+ * Chain:
+ *   1. `raw:<id>` when the message carries a durable id field (e.g. custom
+ *      message entries, replay's own synthesized objects).
+ *   2. `synth:nudge:<turn>` for DCP-injected nudges (INTERNAL_NUDGE_TURN).
+ *   3. `synth:block:b<id>` for materialized compression block messages
+ *      (INTERNAL_BLOCK_ID) so block placement stays stable in the buffer.
+ *   4. `msg:<ts>:<role>[:<toolCallId>]:<ordinal>` fallback. Buffer-position
+ *      dependent but works when the same buffer is used by both producer
+ *      and consumer of the source-key (which dcp-replay-v3's lazy replay
+ *      guarantees by running replay against pi's live message buffer).
  */
 export function buildSourceItemKey(message: DcpMessage, ordinal: number): string {
   const rawId = typeof message?.id === "string" && message.id.length > 0
@@ -114,6 +132,16 @@ export function buildSourceItemKey(message: DcpMessage, ordinal: number): string
         ? message.entryId
         : null
   if (rawId) return `raw:${rawId}`
+
+  const nudgeTurn = (message as any)?.[INTERNAL_NUDGE_TURN]
+  if (typeof nudgeTurn === "number" && Number.isFinite(nudgeTurn)) {
+    return `synth:nudge:${nudgeTurn}`
+  }
+
+  const blockId = (message as any)?.[INTERNAL_BLOCK_ID]
+  if (typeof blockId === "number" && Number.isFinite(blockId)) {
+    return `synth:block:b${blockId}`
+  }
 
   const role = getRole(message)
   const timestamp = getTimestamp(message)

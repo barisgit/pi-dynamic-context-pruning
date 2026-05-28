@@ -95,9 +95,10 @@ describe("DCP replay engine", () => {
   // -------------------------------------------------------------------------
   test("R1 — single compress produces one active block with non-zero savings", () => {
     // Build a transcript with three messages, then a compress targeting the
-    // visible non-assistant boundaries around the assistant reply. The replay
-    // engine must allocate message refs for those eligible entries and
-    // reconstruct the block.
+    // visible ref boundaries.
+    // Live runtime allocates `m0001`=m1(user), `m0002`=m3(user); assistants
+    // get no ref (commit a236b59). Range m0001..m0002 covers m1+m3, and the
+    // atomic-pair expansion pulls in m2 (assistant) automatically — 3 keys.
     const m1 = makeUser(LONG_BODY + " alpha", 1000);
     const m2 = makeAssistantText(LONG_BODY + " beta", 2000);
     const m3 = makeUser("Now compress the first two messages.", 3000);
@@ -299,4 +300,5 @@ describe("DCP replay engine", () => {
     expect(r1Record?.inputFingerprint).toBe(r2Record?.inputFingerprint);
     expect(r1Record?.toolName).toBe("bash");
   });
+
 });

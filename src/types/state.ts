@@ -298,6 +298,17 @@ export interface DcpState {
    */
   pendingSave: boolean;
 
+  // ── Lazy replay ────────────────────────────────────────────────────────────
+  /**
+   * When true, the next `context` event will lazily reconstruct
+   * `state.compressionBlocks` (and related fields) from the live message
+   * buffer pi delivers. Set by `session_start` for v3 sessions that have
+   * replay-eligible transcript evidence; cleared after the first context
+   * event runs replay. Not persisted: it's a runtime-only flag that
+   * defaults to true on a freshly constructed state.
+   */
+  replayPending: boolean;
+
   // ── Nudge state ────────────────────────────────────────────────────────────
   /**
    * The value of `currentTurn` at the time the last nudge was emitted.

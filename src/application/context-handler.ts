@@ -10,6 +10,7 @@ import {
   finalizeMaterializedMessages,
   getNudgeType,
 } from "../domain/pruning/index.js";
+import { replayDcpState } from "../domain/replay/index.js";
 import { materializeTranscript } from "../domain/compression/materialize.js";
 import {
   buildCompressionPlanningHints,
@@ -200,6 +201,41 @@ export function materializeContextMessages(
 /** Register the context pass handler that applies pruning and DCP nudges. */
 export function registerContextHandler(pi: ExtensionAPI, state: DcpState, config: DcpConfig): void {
   pi.on("context", async (event, ctx) => {
+    // Lazy replay: reconstruct compressionBlocks from the live message buffer
+    // before the first context evaluation after restore. This guarantees ref
+    // allocation parity with the agent at compress time (same buffer → same
+    // ordinals → same `mNNNN` refs → compress arguments resolve correctly).
+    if (state.replayPending) {
+      const replayEntries = (event.messages as any[]).map((message) => ({
+        type: "message" as const,
+        message,
+      }));
+      const before = {
+        active: state.compressionBlocks.filter((b) => b.active).length,
+        total: state.compressionBlocks.length,
+        saved: state.tokensSaved,
+      };
+      try {
+        replayDcpState(replayEntries, config, { state });
+      } catch (error) {
+        appendDebugLog(config, "lazy_replay_failed", {
+          ...buildSessionDebugPayload(ctx.sessionManager),
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+      state.replayPending = false;
+      appendDebugLog(config, "lazy_replay_completed", {
+        ...buildSessionDebugPayload(ctx.sessionManager),
+        messagesScanned: event.messages.length,
+        activeBlocksBefore: before.active,
+        activeBlocksAfter: state.compressionBlocks.filter((b) => b.active).length,
+        totalBlocksBefore: before.total,
+        totalBlocksAfter: state.compressionBlocks.length,
+        tokensSavedBefore: before.saved,
+        tokensSavedAfter: state.tokensSaved,
+      });
+    }
+
     const materializedContext = materializeContextMessages(
       event.messages as DcpMessage[],
       state,
