@@ -33,17 +33,20 @@ Domain modules must not import from `@mariozechner/pi-coding-agent`, filesystem 
 - `compressionBlocksV2: CompressionBlockV2[]` — scaffolding only; not yet materialized at runtime
 - `messageAliases` / `messageRefSnapshot` / `messageOwnerSnapshot` — stable visible-ref bookkeeping
 - `currentTurn`, `tokensSaved`, `lastNudgeTurn`, `lastCompressTurn` — session metrics and debounce watermarks
+- `pendingSave: boolean` — dirty flag; mutation sites (compress success, prune tombstones, native-compaction commit) set it; `saveState()` no-ops when false
+- `replayPending: boolean` — runtime-only flag; set during `session_start`/`session_tree` on replayable branches until the first `context` event runs `replayDcpState()` against pi's live message buffer. Cleared after lazy replay completes or on snapshot / v4 non-replayable restore.
 
-Two schema versions coexist during migration: v1 (timestamp-backed blocks, full runtime) and v2 (span-key blocks, scaffolding only).
+On disk, `serializePersistedState()` writes **v3** (scalar-only) when no blocks exist, or **v4** (scalars + light `PersistedCompressionBlockV4[]` without coverage anchors/activity logs). Coverage metadata, tool-call map, and alias snapshots are still reconstructed by replay on replayable branches; v4 light blocks are for non-replayable restart continuity and native-compaction tier rendering only.
 
-### Compression block lifecycle
+### Persistence model (dcp-replay-v3 + v4 light blocks)
 
-1. Agent calls `compress` tool with `ranges[]` (startId/endId pairs)
-2. `compress-tool/registration.ts` validates boundaries, resolves timestamps/source keys, builds artifacts
-3. A `CompressionBlock` is created with exact `coveredSourceKeys`/`coveredSpanKeys` metadata plus an activity log
-4. Blocks are appended to `state.compressionBlocks` and `state.nextBlockId` advances
-5. Each `context` pass calls `applyPruning` → `applyCompressionBlocks`, which splice ranges out and insert synthetic `bN` messages
-6. Native compaction (`session_before_compact` / `session_compact` hooks) permanently absorbs represented blocks into the pi-native summary and moves their savings into `lifetimeTokensSavedRealized`
+`session_start` / `session_tree` restore via `restoreStateFromBranch()`:
+
+1. **Replayable branch** (successful `compress` tool results or `dcp-native-compaction` entries): scalar-only restore via `restorePersistedStateScalars()`; set `replayPending = true`; defer block reconstruction to the first `context` event (`replayDcpState()` against pi's live buffer). Restoring v4 light blocks here would leave active blocks without coverage anchors and resurrect raw transcript tokens after reload.
+2. **v4 non-replayable branch** (latest material entry is schema v4, no transcript evidence): full `restorePersistedState()` loads light blocks + scalars; `replayPending = false`.
+3. **Legacy snapshot fallback** (pre-v3 or non-replayable without v4): walks all `dcp-state` entries, restores full block state from fat snapshots where present; runs `repairOffBranchNativeCompactionState()` and `repairStaleNudgeWatermarks()`.
+
+`saveState()` appends a `dcp-state` entry only when `state.pendingSave` is true (avoids hundreds-of-MB JSONL growth from per-turn `agent_end` writes). `session_compact` deactivates represented blocks and adjusts watermarks.
 
 ### Turn model
 
@@ -55,21 +58,11 @@ Visible IDs (`m0001`, `bN`) are agent-facing boundaries only. Canonical owner ke
 
 ### Nudge strategy
 
-Nudges fire from the `context` hook when:
-
-- Context usage exceeds `minContextPercent` (or `minContextTokens`)
-- At least `nudgeDebounceTurns` logical turns have passed since the last nudge
-- Not in the same turn as a compress, and not immediately post-compress
-
-Nudge types: `context-strong` (hard emergency), `context-soft` (soft emergency), `iteration` (long tool run), `turn` (periodic). Planning hints surface safe candidate ranges, protected tail start, and protected IDs.
-
-### Persistence
-
-`session_start` / `session_tree` restores state from the active branch's `dcp-state` custom entries. `session_shutdown` / `agent_end` saves the current runtime state. `session_compact` deactivates represented blocks and adjusts watermarks.
+Nudges fire from the `context` hook when context usage exceeds `minContextPercent` (or `minContextTokens`), at least `nudgeDebounceTurns` logical turns have passed since the last nudge, not in the same turn as a compress, and not immediately post-compress. Nudge types: `context-strong` (hard emergency), `context-soft` (soft emergency), `iteration` (long tool run), `turn` (periodic). Planning hints surface safe candidate ranges, protected tail start, and protected IDs.
 
 ### Native compaction bridge
 
-DCP can override pi's native compaction summary. On `session_before_compact`, it computes DCP-hidden coverage ratio; if above `minHiddenCoverageRatio`, it renders tiered block summaries (full / compact / archived) into a `<dcp-summary>` envelope and returns a `CompactionResult`. On `session_compact`, it deactivates represented blocks and resets nudge debounce watermarks.
+On `session_before_compact`, DCP computes DCP-hidden coverage ratio; if above `minHiddenCoverageRatio`, it renders tiered block summaries into a ``envelope and returns a`CompactionResult`. On `session_compact`, it deactivates represented blocks and resets nudge debounce watermarks.
 
 ---
 
@@ -78,25 +71,26 @@ DCP can override pi's native compaction summary. On `session_before_compact`, it
 ```
 src/
 ├── index.ts                     # Extension entry point — wires all registrations
-├── state.ts                     # DcpState factory, reset, input fingerprint
+├── state.ts                     # DcpState factory, reset (pendingSave/replayPending), input fingerprint
 ├── types/
-│   ├── state.ts                 # DcpState, CompressionBlock, ToolRecord, PersistedDcpState
+│   ├── state.ts                 # DcpState, CompressionBlock (v1), CompressionBlockV2 (scaffold),
+│   │                              ToolRecord, PersistedDcpStateV3/V4, pendingSave, replayPending
 │   ├── config.ts                # DcpConfig shape
 │   ├── message.ts               # DcpMessage, DcpContentPart normalized shapes
 │   └── api.ts                   # Host/provider boundary types (DcpMessageEvent, etc.)
 ├── domain/
 │   ├── pruning/
 │   │   └── index.ts             # applyPruning, applyCompressionBlocks, deduplication,
-│   │                              # error purging, tool-output pruning, message ID injection,
-│   │                              # nudge type decision, hot-tail helpers
+│   │                              error purging, tool-output pruning, message ID injection,
+│   │                              nudge type decision, hot-tail helpers
 │   ├── compression/
 │   │   ├── index.ts             # Re-exports
 │   │   ├── materialize.ts       # renderCompressedBlockText/Message (shared v1/v2),
-│   │   │                          # materializeTranscript (v2 scaffolding)
-│   │   ├── range.ts             # expandCompressionIndexRange, resolveCompressionRangeIndices
-│   │   ├── tooling.ts           # buildCompressionPlanningHints, resolveIdToTimestamp,
-│   │   │                          # resolveSupersededBlockIdsForRange, expandBlockPlaceholders,
-│   │   │                          # buildCompressionArtifactsForRange, protected-tail helpers
+│   │   │                          materializeTranscript (v2 scaffolding)
+│   │   ├── range.ts            # expandCompressionIndexRange, resolveCompressionRangeIndices
+│   │   ├── tooling.ts          # buildCompressionPlanningHints, resolveIdToTimestamp,
+│   │   │                          resolveSupersededBlockIdsForRange, expandBlockPlaceholders,
+│   │   │                          buildCompressionArtifactsForRange, protected-tail helpers
 │   │   └── metadata.ts          # createEmptyCompressionBlockMetadata
 │   ├── transcript/
 │   │   └── index.ts             # TranscriptSnapshot, TranscriptSpan, TranscriptSourceItem;
@@ -109,29 +103,32 @@ src/
 │   │   │                          allocateMessageRef, MessageAliasState, normalize/serialize
 │   │   └── metadata.ts          # stripDcpMetadataTags, stripDcpHallucinationsFromString
 │   ├── provider/
-│   │   └── payload-filter.ts    # filterProviderPayloadInput — stale artifact suppression
+│   │   └── payload-filter.ts   # filterProviderPayloadInput — stale artifact suppression
 │   │                              using canonical owner keys; compress receipt minification
 │   ├── nudge/
 │   │   └── index.ts             # Re-exports getNudgeType from pruning
+│   ├── replay/
+│   │   └── index.ts             # replayDcpState — reconstructs DcpState from branch entries
+│   │                              (compress tool-results, dcp-native-compaction entries) OR
+│   │                              live context messages buffer; finalizes via applyPruning
 │   └── tokens/
 │       └── estimate.ts          # estimateTokens, estimateMessageTokens via gpt-tokenizer
 ├── application/
 │   ├── context-handler.ts       # registerContextHandler — context hook, nudge emission,
 │   │                              materializeContextMessages dispatch (v1/v2)
 │   ├── session-handler.ts       # registerSessionHandlers, restoreStateFromBranch,
-│   │                              saveState — session lifecycle persistence
-│   ├── provider-handler.ts      # registerProviderHandler — before_provider_request hook,
+│   │                              saveState — three restore modes; dirty-flag persistence
+│   ├── provider-handler.ts       # registerProviderHandler — before_provider_request hook,
 │   │                              calls payload-filter
 │   ├── compress-tool/
 │   │   ├── index.ts             # Re-exports
-│   │   ├── registration.ts      # registerCompressTool — tool schema, execute logic,
-│   │   │                          native-compaction auto-trigger decision
-│   │   ├── validation.ts        # resolveAnchorSourceKey, resolveIdToTimestamp, etc.
+│   │   ├── registration.ts      # registerCompressTool — execute, post-compress hints,
+│   │   │                          passthrough-aware native-compaction auto-trigger
+│   │   ├── validation.ts       # resolveAnchorSourceKey, resolveIdToTimestamp, etc.
 │   │   └── artifacts.ts         # buildCompressionPlanningHints, expandBlockPlaceholders,
 │   │                              buildCompressionArtifactsForRange, supersession helpers
 │   ├── commands/
-│   │   └── dcp.ts               # registerCommands — /dcp help|context|stats|sweep|manual|
-│   │                              decompress|compress|compact
+│   │   └── dcp.ts               # registerCommands — /dcp help|context|stats|compress|compact
 │   ├── native-compaction.ts     # registerDcpNativeCompactionBridge — session_before_compact,
 │   │                              session_compact, turn_end hooks; buildDcpNativeCompactionResult,
 │   │                              triggerDcpNativeCompaction, queueDcpAutoNativeCompaction
@@ -152,18 +149,18 @@ src/
 │   ├── system.ts                # Re-exports SYSTEM_PROMPT, MANUAL_MODE_SYSTEM_PROMPT
 │   ├── compress-tool.ts         # Re-exports COMPRESS_RANGE_DESCRIPTION
 │   └── nudge.ts                 # Re-exports legacy nudge text constants
-├── compress-tool.ts             # Shim → application/compress-tool/index.js
-├── commands.ts                  # Shim → application/commands/dcp.js
-├── config.ts                    # Shim → infrastructure/config.js
-├── debug-log.ts                 # Shim → infrastructure/debug-log.js
-├── pruner.ts                    # Shim → domain/pruning/index.js
-├── payload-filter.ts            # Shim → domain/provider/payload-filter.js
-├── prompts.ts                   # Shim → prompts/index.js
-├── materialize.ts               # Shim → domain/compression/materialize.js
-├── transcript.ts                # Shim → domain/transcript/index.js
-├── message-refs.ts              # Shim → domain/refs/index.js
-├── dcp-metadata.ts             # Shim → domain/refs/metadata.js
-└── migration.ts                 # Shim → infrastructure/persistence.js
+├── compress-tool.ts              # Shim → application/compress-tool/index.js
+├── commands.ts                   # Shim → application/commands/dcp.js
+├── config.ts                     # Shim → infrastructure/config.js
+├── debug-log.ts                  # Shim → infrastructure/debug-log.js
+├── pruner.ts                     # Shim → domain/pruning/index.js
+├── payload-filter.ts             # Shim → domain/provider/payload-filter.js
+├── prompts.ts                    # Shim → prompts/index.js
+├── materialize.ts                # Shim → domain/compression/materialize.js
+├── transcript.ts                 # Shim → domain/transcript/index.js
+├── message-refs.ts               # Shim → domain/refs/index.js
+├── dcp-metadata.ts               # Shim → domain/refs/metadata.js
+└── migration.ts                  # Shim → infrastructure/persistence.js
 ```
 
 ---
@@ -172,20 +169,20 @@ src/
 
 ### Entry point
 
-| File           | Role                                                                                                                                                                       |
-| -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `src/index.ts` | Wires all `register*` calls. Loads config, creates state, registers tools/commands/session hooks/provider handler/context handler. Entry point pi calls on extension load. |
+| File           | Role                                                                                                                               |
+| -------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `src/index.ts` | Wires all `register*` calls. Loads config, creates state, registers tools/commands/session hooks/provider handler/context handler. |
 
 ### State and config
 
-| File                                | Role                                                                                                           |
-| ----------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| `src/state.ts`                      | `createState()`, `resetState()`, `createInputFingerprint()`. Exported types re-exported from `types/state.ts`. |
-| `src/types/state.ts`                | `DcpState`, `CompressionBlock` (v1), `CompressionBlockV2` (scaffold), `ToolRecord`, `PersistedDcpStateV1/V2`.  |
-| `src/types/config.ts`               | `DcpConfig` — all knobs: thresholds, cadence, rendering, native-compaction, strategies.                        |
-| `src/types/message.ts`              | `DcpMessage` normalized shape; `DcpContentPart` union.                                                         |
-| `src/infrastructure/config.ts`      | `loadConfig()` — layered merge of defaults + global + env + project configs.                                   |
-| `src/infrastructure/persistence.ts` | `serializePersistedState()`, `restorePersistedState()`, `migrateLegacyCompressionBlocksToV2()`.                |
+| File                                | Role                                                                                                                                                             |
+| ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/state.ts`                      | `createState()`, `resetState()` (includes `pendingSave`, `replayPending`), `createInputFingerprint()`. Exported types re-exported from `types/state.ts`.         |
+| `src/types/state.ts`                | `DcpState`, `CompressionBlock` (v1), `CompressionBlockV2` (scaffold), `ToolRecord`, `PersistedDcpStateV3`. `replayPending` runtime flag.                         |
+| `src/types/config.ts`               | `DcpConfig` — all knobs: thresholds, cadence, rendering, native-compaction, strategies.                                                                          |
+| `src/types/message.ts`              | `DcpMessage` normalized shape; `DcpContentPart` union.                                                                                                           |
+| `src/infrastructure/config.ts`      | `loadConfig()` — layered merge of defaults + global + env + project configs.                                                                                     |
+| `src/infrastructure/persistence.ts` | `serializePersistedState()` (v3 empty / v4 with blocks), `restorePersistedState()`, `restorePersistedStateScalars()`, legacy v1/v2 serializers for tests/vacuum. |
 
 ### Core domain
 
@@ -194,25 +191,26 @@ src/
 | `src/domain/pruning/index.ts`           | `applyPruning()` — the main transform. Calls `applyCompressionBlocks`, `repairOrphanedToolPairs`, `applyDeduplication`, `applyErrorPurging`, `applyToolOutputPruning`, `injectMessageIds`. Also exports `getNudgeType()`, `exceedsMaxContextLimit()`. |
 | `src/domain/compression/range.ts`       | `expandCompressionIndexRange()`, `resolveCompressionRangeIndices()`. Atomic assistant+tool-result expansion rules.                                                                                                                                    |
 | `src/domain/compression/materialize.ts` | `renderCompressedBlockText()`, `renderCompressedBlockMessage()` (shared v1/v2). `materializeTranscript()` — v2 span-key materialization scaffold.                                                                                                     |
-| `src/domain/compression/tooling.ts`     | `buildCompressionPlanningHints()`, `renderCompressionPlanningHints()`, `resolveIdToTimestamp()`, `resolveSupersededBlockIdsForRange()`, `expandBlockPlaceholders()`, `buildCompressionArtifactsForRange()`, `resolveProtectedTailStartTimestamp()`.   |
+| `src/domain/compression/tooling.ts`     | Planning hints with passthrough-span absorption; boundary validation for refs inside compressed blocks; `resolveSupersededBlockIdsForRange()`, `buildCompressionArtifactsForRange()`, protected-tail helpers.                                         |
 | `src/domain/transcript/index.ts`        | `buildTranscriptSnapshot()` — source items + tool-exchange spans. `buildLiveOwnerKeys()`, `countLogicalTurns()`, `resolveLogicalTurnTailStartTimestamp()`. `buildSourceItemKey()`, `buildSourceOwnerKey()`, `buildBlockOwnerKey()`.                   |
 | `src/domain/refs/index.ts`              | `parseVisibleRef()`, `formatMessageRef()`, `formatBlockRef()`, `allocateMessageRef()`. `MessageAliasState`, `MessageRefSnapshotEntry`.                                                                                                                |
 | `src/domain/provider/payload-filter.ts` | `filterProviderPayloadInput()` — canonical owner-key-based stale artifact suppression in provider payload. Minifies represented compress success artifacts.                                                                                           |
+| `src/domain/replay/index.ts`            | `replayDcpState()` — reconstructs DcpState from branch entries OR live context messages buffer. Walks entries, rebuilds compress blocks, deactivates compacted blocks, finalizes via `applyPruning()`.                                                |
 | `src/domain/tokens/estimate.ts`         | `estimateTokens()`, `estimateMessageTokens()` via gpt-tokenizer with chars/4 fallback.                                                                                                                                                                |
 
 ### Application orchestration
 
-| File                                            | Role                                                                                                                                                                      |
-| ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- | ----- | ----- | ------ | ---------- | -------- | --------- |
-| `src/application/context-handler.ts`            | `registerContextHandler()`. The `context` event handler — calls `materializeContextMessages`, applies pruning, emits nudges via `REMINDER_UPSERT_EVENT`.                  |
-| `src/application/session-handler.ts`            | `registerSessionHandlers()`, `restoreStateFromBranch()`, `saveState()`. Session lifecycle: `session_start`, `session_tree`, `session_shutdown`, `agent_end`.              |
-| `src/application/compress-tool/registration.ts` | `registerCompressTool()`. Tool schema, `execute()` body, native-compaction auto-trigger logic, debug metrics.                                                             |
-| `src/application/native-compaction.ts`          | `registerDcpNativeCompactionBridge()`. `session_before_compact`, `session_compact`, `turn_end` hooks. `buildDcpNativeCompactionResult()`, `triggerDcpNativeCompaction()`. |
-| `src/application/commands/dcp.ts`               | `registerCommands()`. `/dcp help                                                                                                                                          | context | stats | sweep | manual | decompress | compress | compact`. |
-| `src/application/provider-handler.ts`           | `registerProviderHandler()`. `before_provider_request` hook — calls `filterProviderPayloadInput()`.                                                                       |
-| `src/application/tool-recording.ts`             | `registerToolRecordingHandlers()`. `tool_call` / `tool_result` hooks — populates `state.toolCalls`.                                                                       |
-| `src/application/system-prompt-handler.ts`      | `registerSystemPromptHandler()`. `before_agent_start` hook — appends system prompt addition.                                                                              |
-| `src/application/status.ts`                     | `updateDcpStatus()`, `buildDcpStatusText()`, `computeDisplayedTokensSaved()`. Pi footer status integration.                                                               |
+| File                                            | Role                                                                                                                                                                                        |
+| ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- | ----- | -------- | --------- |
+| `src/application/context-handler.ts`            | `registerContextHandler()`. The `context` event handler — calls `materializeContextMessages`, applies pruning, emits nudges via `REMINDER_UPSERT_EVENT`.                                    |
+| `src/application/session-handler.ts`            | `registerSessionHandlers()`, `restoreStateFromBranch()`, `saveState()`. Three restore modes (`replay-pending`, `persisted`, `snapshot-fallback`); dirty-flag persistence via `pendingSave`. |
+| `src/application/compress-tool/registration.ts` | `registerCompressTool()`. Tool schema, `execute()` body, passthrough-aware native-compaction auto-trigger, post-compress planning hints, sets `pendingSave`.                                |
+| `src/application/native-compaction.ts`          | `registerDcpNativeCompactionBridge()`. `session_before_compact`, `session_compact`, `turn_end` hooks. `buildDcpNativeCompactionResult()`, `triggerDcpNativeCompaction()`.                   |
+| `src/application/commands/dcp.ts`               | `registerCommands()`. `/dcp help                                                                                                                                                            | context | stats | compress | compact`. |
+| `src/application/provider-handler.ts`           | `registerProviderHandler()`. `before_provider_request` hook — calls `filterProviderPayloadInput()`.                                                                                         |
+| `src/application/tool-recording.ts`             | `registerToolRecordingHandlers()`. `tool_call` / `tool_result` hooks — populates `state.toolCalls`.                                                                                         |
+| `src/application/system-prompt-handler.ts`      | `registerSystemPromptHandler()`. `before_agent_start` hook — appends system prompt addition.                                                                                                |
+| `src/application/status.ts`                     | `updateDcpStatus()`, `buildDcpStatusText()`, `computeDisplayedTokensSaved()`. Pi footer status integration.                                                                                 |
 
 ### Prompts
 
@@ -249,20 +247,20 @@ pi loads src/index.ts
 
 ### Event hooks
 
-| Hook                      | Handler                    | Effect                                                          |
-| ------------------------- | -------------------------- | --------------------------------------------------------------- |
-| `tool_call`               | `tool-recording.ts`        | Populates `state.toolCalls` for dedup/fingerprint               |
-| `tool_result`             | `tool-recording.ts`        | Updates `ToolRecord.isError`, `timestamp`, `tokenEstimate`      |
-| `session_start`           | `session-handler.ts`       | Restores state from active branch's `dcp-state` entries         |
-| `session_tree`            | `session-handler.ts`       | Restores state; handles branch switching                        |
-| `before_agent_start`      | `system-prompt-handler.ts` | Appends `SYSTEM_PROMPT` or `MANUAL_MODE_SYSTEM_PROMPT`          |
-| `context`                 | `context-handler.ts`       | Materializes transcript, applies pruning, emits nudge reminders |
-| `before_provider_request` | `provider-handler.ts`      | Filters stale hidden artifacts from provider payload            |
-| `session_before_compact`  | `native-compaction.ts`     | Returns DCP `CompactionResult` if coverage threshold met        |
-| `session_compact`         | `native-compaction.ts`     | Deactivates represented blocks, adjusts watermarks, saves state |
-| `turn_end`                | `native-compaction.ts`     | Triggers queued auto-compaction, sends continuation prompt      |
-| `session_shutdown`        | `session-handler.ts`       | Persists state as `dcp-state` custom entry                      |
-| `agent_end`               | `session-handler.ts`       | Persists state as `dcp-state` custom entry                      |
+| Hook                      | Handler                    | Effect                                                                  |
+| ------------------------- | -------------------------- | ----------------------------------------------------------------------- |
+| `tool_call`               | `tool-recording.ts`        | Populates `state.toolCalls` for dedup/fingerprint                       |
+| `tool_result`             | `tool-recording.ts`        | Updates `ToolRecord.isError`, `timestamp`, `tokenEstimate`              |
+| `session_start`           | `session-handler.ts`       | Scalar restore + `replayPending`, v4 full restore, or snapshot fallback |
+| `session_tree`            | `session-handler.ts`       | Same restore path as `session_start`; branch switch                     |
+| `before_agent_start`      | `system-prompt-handler.ts` | Appends `SYSTEM_PROMPT` or `MANUAL_MODE_SYSTEM_PROMPT`                  |
+| `context`                 | `context-handler.ts`       | Materializes transcript, applies pruning, emits nudge reminders         |
+| `before_provider_request` | `provider-handler.ts`      | Filters stale hidden artifacts from provider payload                    |
+| `session_before_compact`  | `native-compaction.ts`     | Returns DCP `CompactionResult` if coverage threshold met                |
+| `session_compact`         | `native-compaction.ts`     | Deactivates represented blocks, adjusts watermarks, saves state         |
+| `turn_end`                | `native-compaction.ts`     | Triggers queued auto-compaction, sends continuation prompt              |
+| `session_shutdown`        | `session-handler.ts`       | Persists v3/v4 bootstrap when `pendingSave` is set                      |
+| `agent_end`               | `session-handler.ts`       | Persists v3/v4 bootstrap when `pendingSave` is set                      |
 
 ### Data flow (active v1 runtime)
 
@@ -288,13 +286,31 @@ session event messages
   → return { messages: prunedMessages }
 ```
 
+### Restore / replay flow
+
+```
+session_start / session_tree → restoreStateFromBranch()
+  → replayable?
+      YES → restorePersistedStateScalars(); replayPending = true
+            → first context event → replayDcpState(live messages)
+                → rebuild blocks with coverage anchors; applyPruning
+                → clear replayPending
+  → latest v4 && !replayable?
+      YES → restorePersistedState() (light blocks); replayPending = false
+  → else snapshot fallback (legacy fat snapshots + repairs)
+
+compress success / prune / native_compaction → pendingSave = true
+agent_end / session_shutdown → saveState() if pendingSave
+```
+
 ### Key design patterns
 
-1. **Canonical owner keys over visibility heuristics** — ownership is derived from exact source-key metadata, not rendered text patterns.
-2. **Exact coverage metadata over timestamps** — new blocks persist `coveredSourceKeys`/`coveredSpanKeys`; timestamp fallback is for legacy blocks only.
-3. **Atomic assistant+tool-result removal** — `expandCompressionIndexRange` expands ranges to always include the full tool batch before splicing.
-4. **Bucket-based pruning cadence** — `prunedToolIds` additions are gated on `floor(currentTurn / N) * N`, so the rendered prefix is cache-stable between bucket boundaries.
-5. **Supersession only for exact full coverage** — partial ambiguous overlap conservatively rejects; exact containment absorbs.
-6. **Two-phase provider-payload filtering** — `filterProviderPayloadInput` keeps the newest live represented compress receipt and suppresses older pairs; unrepresented failed attempts stay visible.
-7. **Turn-based debounce** — nudges debounce on logical turns, not raw `context` event frequency.
-8. **Shim re-exports for backward compatibility** — root-level `src/*.ts` files re-export from layered paths so older internal import paths continue to work without changes.
+1. **Replay-first persistence** — coverage metadata and alias snapshots are reconstructed from transcript on replayable branches; v4 persists a light block list (no coverage anchors) for non-replayable restarts only.
+2. **Canonical owner keys over visibility heuristics** — ownership is derived from exact source-key metadata, not rendered text patterns.
+3. **Exact coverage metadata over timestamps** — new blocks persist `coveredSourceKeys`/`coveredSpanKeys`; timestamp fallback is for legacy blocks only.
+4. **Atomic assistant+tool-result removal** — `expandCompressionIndexRange` expands ranges to always include the full tool batch before splicing.
+5. **Bucket-based pruning cadence** — `prunedToolIds` additions are gated on `floor(currentTurn / N) * N`, so the rendered prefix is cache-stable between bucket boundaries.
+6. **Supersession only for exact full coverage** — partial ambiguous overlap conservatively rejects; exact containment absorbs.
+7. **Two-phase provider-payload filtering** — `filterProviderPayloadInput` keeps the newest live represented compress receipt and suppresses older pairs; unrepresented failed attempts stay visible.
+8. **Turn-based debounce** — nudges debounce on logical turns, not raw `context` event frequency.
+9. **Shim re-exports for backward compatibility** — root-level `src/*.ts` files re-export from layered paths so older internal import paths continue to work without changes.

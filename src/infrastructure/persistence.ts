@@ -242,7 +242,11 @@ function normalizePersistedCompressionBlockV4(value: unknown): CompressionBlock 
   const block = asObject(value);
   if (!block) return null;
 
-  if (!isFiniteNumber(block.id) || typeof block.topic !== "string" || typeof block.summary !== "string") {
+  if (
+    !isFiniteNumber(block.id) ||
+    typeof block.topic !== "string" ||
+    typeof block.summary !== "string"
+  ) {
     return null;
   }
 
@@ -532,6 +536,12 @@ function restorePersistedScalars(persisted: Record<string, unknown>, state: DcpS
  * The current runtime still executes legacy v1 blocks; v2 blocks are preserved
  * in `state.compressionBlocksV2` for future work but are not yet materialized.
  */
+export function restorePersistedStateScalars(data: unknown, state: DcpState): void {
+  const persisted = asObject(data);
+  if (!persisted || persisted.unchanged === true) return;
+  restorePersistedScalars(persisted, state);
+}
+
 export function restorePersistedState(data: unknown, state: DcpState): void {
   const persisted = asObject(data);
   if (!persisted) return;

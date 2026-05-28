@@ -23,7 +23,7 @@ Registers the `/dcp` slash command with subcommands: `context`, `stats`, `sweep`
 Thin wrapper around `src/domain/compression/tooling.js`. Exports everything re-exported from `tooling.js` plus the three source files below.
 
 - **`index.ts`** — re-exports `artifacts`, `registration`, and `validation`.
-- **`registration.ts`** — calls `pi.registerTool` for the `compress` tool. Contains the full `execute` callback: validates range boundaries, resolves timestamps/source-keys, checks protected-tail safety, builds `CompressionBlock` objects, deactivates superseded blocks, fires `state.lastCompressTurn`/`lastNudgeTurn`, computes token savings, decides native-compaction auto-trigger, and returns a structured response with `blockIds`, topics, and post-compress planning hints.
+- **`registration.ts`** — calls `pi.registerTool` for the `compress` tool. Full `execute` callback: validates boundaries via domain tooling, resolves timestamps/source-keys, enforces protected-tail (with emergency override), builds `CompressionBlock` objects with coverage metadata, deactivates superseded blocks, sets `pendingSave`, updates compress/nudge watermarks, estimates creation savings, runs `decideNativeCompactionAutoTrigger()` (passthrough roles excluded from LLM message counts), and returns post-compress planning hints in the tool response.
 - **`validation.ts`** — re-exports from `domain/compression/tooling.js`. Contains `validateCompressionRangeBoundaryIds` and related helpers.
 - **`artifacts.ts`** — re-exports from `domain/compression/tooling.js`. Contains `buildCompressionArtifactsForRange`, `buildCompressionPlanningHints`, `expandBlockPlaceholders`, `renderCompressionPlanningHints`.
 
@@ -68,13 +68,13 @@ Registers the `before_provider_request` event hook. Calls `filterProviderPayload
 
 Registers session lifecycle hooks (`session_start`, `session_tree`, `session_shutdown`, `agent_end`) and exposes `saveState` / `restoreStateFromBranch`.
 
-- **`session_start` / `session_tree`** — calls `restoreStateFromBranch`, which:
-  - **Replayable branches** (contain DCP-relevant transcript evidence: successful `compress` tool results or `dcp-native-compaction` entries): scalar-only restore from the latest `dcp-state` entry (turn counters, `prunedToolIds`, `lifetimeTokensSavedRealized`), sets `state.replayPending = true`, and runs `repairStaleNudgeWatermarks`. The actual block reconstruction is deferred to the `context` event hook.
-  - **Legacy branches** (pre-dcp-replay-v3 sessions with only snapshot `dcp-state` entries): falls back to `snapshotRestore` which walks all `dcp-state` entries, restores the full block log directly, sets `state.replayPending = false`, and runs `repairOffBranchNativeCompactionState` + `repairStaleNudgeWatermarks`.
-  - `branchIsReplayable()` is the gating predicate.
-- **`session_shutdown` / `agent_end`** — calls `saveState` to append a `"dcp-state"` custom session entry with serialized `DcpState`. Guarded by `ctx.hasUI` to avoid I/O in `-p` print mode.
-- **`saveState`** — appends a `"dcp-state"` session entry via `pi.appendEntry`.
-- **`restoreStateFromBranch`** — returns a `RestoreStateFromBranchResult` with `mode: "replay-pending" | "snapshot-fallback"`, entry counts, and repair metadata.
+- **`session_start` / `session_tree`** — calls `restoreStateFromBranch()`:
+  - **Replayable** (`branchIsReplayable()`): `restorePersistedStateScalars()` for turn counters, `prunedToolIds`, `lifetimeTokensSavedRealized`; `replayPending = true`; `repairStaleNudgeWatermarks()`. Block reconstruction deferred to `context-handler` lazy replay (v4 light blocks intentionally not loaded — they lack coverage anchors).
+  - **v4 non-replayable** (latest material entry schema v4, no transcript evidence): full `restorePersistedState()` loads light blocks + scalars; `replayPending = false`.
+  - **Snapshot fallback** (pre-v3 / legacy): `snapshotRestore()` walks all `dcp-state` entries, restores fat snapshots, repairs off-branch native compaction blocks and stale nudge watermarks.
+- **`session_shutdown` / `agent_end`** — calls `saveState()` when `state.pendingSave` is true. Guarded by `ctx.hasUI` (skip in `-p` print mode).
+- **`saveState`** — no-op when `!pendingSave`; otherwise `pi.appendEntry("dcp-state", serializePersistedState(state))` and clears the dirty flag.
+- **`restoreStateFromBranch`** — returns `RestoreStateFromBranchResult` with `mode: "replay-pending" | "persisted" | "snapshot-fallback"` plus repair metadata.
 
 ### `status.ts`
 
@@ -104,7 +104,8 @@ Application layer never contains compression overlap logic, liveness computation
 ### Two-phase state management
 
 - **Runtime state** lives in `DcpState` (in-memory, mutated per event).
-- **Persisted state** is serialized on `session_shutdown` / `agent_end` via `serializePersistedState` and restored on `session_start` / `session_tree` via `restorePersistedState` (scalar-only for replayable branches; full for legacy snapshot branches).
+- **Dirty-flag persistence** — mutation sites set `pendingSave = true`; `saveState()` serializes only when dirty (v3 scalar marker when block-less, v4 light block list otherwise).
+- **Restore dispatch** — replayable branches: scalars only + lazy replay; v4 non-replayable: `restorePersistedState()`; legacy: snapshot walk via `restorePersistedState()` over all branch entries.
 
 ### Lazy replay on first context event
 
@@ -128,20 +129,20 @@ Native compaction auto-trigger queues a request via `queueDcpAutoNativeCompactio
 
 ## Hook Map
 
-| Hook                       | Handler module           | Key responsibilities                                                     |
-| -------------------------- | ------------------------ | ------------------------------------------------------------------------ |
-| `session_start`            | `session-handler.ts`     | scalar restore from `dcp-state`, set `replayPending`, repair watermarks  |
-| `session_tree`             | `session-handler.ts`     | same as `session_start`                                                   |
-| `session_shutdown`         | `session-handler.ts`     | `saveState` (append `dcp-state` entry)                                   |
-| `agent_end`                | `session-handler.ts`     | `saveState` (append `dcp-state` entry)                                  |
-| `context`                  | `context-handler.ts`     | lazy replay (if `replayPending`), materialize, nudge, footer update      |
-| `before_agent_start`       | `system-prompt-handler.ts` | append DCP system prompt                                               |
-| `before_provider_request`  | `provider-handler.ts`    | filter stale provider artifacts                                           |
-| `session_before_compact`   | `native-compaction.ts`   | build compaction result from active blocks                                |
-| `session_compact`          | `native-compaction.ts`   | deactivate represented blocks, bake savings, reset watermarks             |
-| `turn_end`                 | `native-compaction.ts`   | drain `pendingAutoRequests`, continue after auto-compaction              |
-| `tool_call`                | `tool-recording.ts`      | insert `ToolRecord` into `state.toolCalls`                               |
-| `tool_result`              | `tool-recording.ts`      | update/create `ToolRecord`                                              |
+| Hook                      | Handler module             | Key responsibilities                                                            |
+| ------------------------- | -------------------------- | ------------------------------------------------------------------------------- |
+| `session_start`           | `session-handler.ts`       | `restoreStateFromBranch()` — replay-pending, v4 persisted, or snapshot fallback |
+| `session_tree`            | `session-handler.ts`       | same restore path as `session_start`                                            |
+| `session_shutdown`        | `session-handler.ts`       | `saveState()` when `pendingSave` (v3/v4 bootstrap)                              |
+| `agent_end`               | `session-handler.ts`       | `saveState()` when `pendingSave` (v3/v4 bootstrap)                              |
+| `context`                 | `context-handler.ts`       | lazy replay (if `replayPending`), materialize, nudge, footer update             |
+| `before_agent_start`      | `system-prompt-handler.ts` | append DCP system prompt                                                        |
+| `before_provider_request` | `provider-handler.ts`      | filter stale provider artifacts                                                 |
+| `session_before_compact`  | `native-compaction.ts`     | build compaction result from active blocks                                      |
+| `session_compact`         | `native-compaction.ts`     | deactivate represented blocks, bake savings, reset watermarks                   |
+| `turn_end`                | `native-compaction.ts`     | drain `pendingAutoRequests`, continue after auto-compaction                     |
+| `tool_call`               | `tool-recording.ts`        | insert `ToolRecord` into `state.toolCalls`                                      |
+| `tool_result`             | `tool-recording.ts`        | update/create `ToolRecord`                                                      |
 
 ## Integration Points
 
@@ -149,38 +150,38 @@ Native compaction auto-trigger queues a request via `queueDcpAutoNativeCompactio
 | ----------------------------------------------- | --------------------------------------- | --------- | ---------------------------------------------------------------------------------------- |
 | `src/application/context-handler.ts`            | `src/domain/pruning/`                   | calls     | `applyPruning`, `exceedsMaxContextLimit`, `getNudgeType`, `finalizeMaterializedMessages` |
 | `src/application/context-handler.ts`            | `src/domain/replay/index.ts`            | calls     | `replayDcpState` (lazy replay on first context when `state.replayPending`)               |
-| `src/application/context-handler.ts`           | `src/domain/compression/materialize.ts` | calls     | `materializeTranscript`                                                                  |
-| `src/application/context-handler.ts`           | `src/domain/compression/tooling.ts`     | calls     | `buildCompressionPlanningHints`, `renderCompressionPlanningHints`                        |
-| `src/application/context-handler.ts`           | `src/domain/transcript/`               | calls     | `buildTranscriptSnapshot`, `buildLiveOwnerKeys`                                          |
-| `src/application/context-handler.ts`           | `src/infrastructure/debug-log.js`       | calls     | `appendDebugLog`, `buildSessionDebugPayload`                                             |
-| `src/application/context-handler.ts`           | `src/application/status.ts`             | calls     | `updateDcpStatus`                                                                        |
-| `src/application/provider-handler.ts`           | `src/domain/provider/payload-filter.ts`| calls     | `filterProviderPayloadInput`                                                              |
-| `src/application/session-handler.ts`            | `src/state.ts`                         | calls     | `createState`, `resetState`                                                              |
-| `src/application/session-handler.ts`            | `src/infrastructure/persistence.ts`     | calls     | `serializePersistedState`, `restorePersistedState`                                        |
+| `src/application/context-handler.ts`            | `src/domain/compression/materialize.ts` | calls     | `materializeTranscript`                                                                  |
+| `src/application/context-handler.ts`            | `src/domain/compression/tooling.ts`     | calls     | `buildCompressionPlanningHints`, `renderCompressionPlanningHints`                        |
+| `src/application/context-handler.ts`            | `src/domain/transcript/`                | calls     | `buildTranscriptSnapshot`, `buildLiveOwnerKeys`                                          |
+| `src/application/context-handler.ts`            | `src/infrastructure/debug-log.js`       | calls     | `appendDebugLog`, `buildSessionDebugPayload`                                             |
+| `src/application/context-handler.ts`            | `src/application/status.ts`             | calls     | `updateDcpStatus`                                                                        |
+| `src/application/provider-handler.ts`           | `src/domain/provider/payload-filter.ts` | calls     | `filterProviderPayloadInput`                                                             |
+| `src/application/session-handler.ts`            | `src/state.ts`                          | calls     | `createState`, `resetState`                                                              |
+| `src/application/session-handler.ts`            | `src/infrastructure/persistence.ts`     | calls     | `serializePersistedState`, `restorePersistedState`, `restorePersistedStateScalars`       |
 | `src/application/session-handler.ts`            | `src/application/status.ts`             | calls     | `updateDcpStatus`                                                                        |
-| `src/application/session-handler.ts`            | `src/infrastructure/debug-log.js`       | calls     | `appendDebugLog`, `buildSessionDebugPayload`                                              |
-| `src/application/native-compaction.ts`          | `src/domain/compression/materialize.ts` | calls     | `renderCompressedBlockText`                                                               |
-| `src/application/native-compaction.ts`          | `src/domain/transcript/`               | calls     | `buildTranscriptSnapshot`                                                                 |
+| `src/application/session-handler.ts`            | `src/infrastructure/debug-log.js`       | calls     | `appendDebugLog`, `buildSessionDebugPayload`                                             |
+| `src/application/native-compaction.ts`          | `src/domain/compression/materialize.ts` | calls     | `renderCompressedBlockText`                                                              |
+| `src/application/native-compaction.ts`          | `src/domain/transcript/`                | calls     | `buildTranscriptSnapshot`                                                                |
 | `src/application/native-compaction.ts`          | `src/application/session-handler.ts`    | calls     | `saveState`                                                                              |
-| `src/application/native-compaction.ts`          | `src/application/status.ts`            | calls     | `updateDcpStatus`                                                                        |
-| `src/application/compress-tool/registration.ts`  | `src/domain/compression/tooling.ts`     | calls     | all tooling helpers, validation, artifacts, planning hints                                 |
-| `src/application/compress-tool/registration.ts`  | `src/domain/compression/materialize.ts` | calls     | `renderCompressedBlockMessage`                                                            |
-| `src/application/compress-tool/registration.ts`  | `src/domain/pruning/`                  | calls     | `exceedsMaxContextLimit`                                                                  |
-| `src/application/compress-tool/registration.ts`  | `src/domain/transcript/`               | calls     | `buildTranscriptSnapshot`, `resolveLogicalTurnTailStartTimestamp`                         |
-| `src/application/compress-tool/registration.ts`  | `src/application/status.ts`            | calls     | `updateDcpStatus`                                                                        |
-| `src/application/compress-tool/registration.ts`  | `src/application/native-compaction.ts`  | calls     | `queueDcpAutoNativeCompaction`                                                            |
-| `src/application/commands/dcp.ts`               | `src/application/status.ts`             | calls     | `computeDisplayedTokensSaved`, `updateDcpStatus`                                          |
-| `src/application/commands/dcp.ts`               | `src/application/native-compaction.ts`  | calls     | `triggerDcpNativeCompaction`                                                              |
-| `src/application/system-prompt-handler.ts`      | `src/prompts/system.js`                | imports   | `SYSTEM_PROMPT`, `MANUAL_MODE_SYSTEM_PROMPT`                                             |
-| `src/application/tool-recording.ts`             | `src/state.ts`                         | calls     | `createInputFingerprint`                                                                  |
-| `src/application/tool-recording.ts`             | `src/domain/tokens/estimate.ts`        | calls     | `estimateTokens`                                                                         |
-| `src/application/status.ts`                     | `src/types/state.ts`                   | imports   | `DcpState` type                                                                          |
-| `src/application/context-handler.ts`            | `@mariozechner/pi-coding-agent`         | pi API    | registers `context` hook, emits `REMINDER_UPSERT_EVENT`                                   |
-| `src/application/provider-handler.ts`           | `@mariozechner/pi-coding-agent`         | pi API    | registers `before_provider_request` hook                                                  |
-| `src/application/session-handler.ts`            | `@mariozechner/pi-coding-agent`         | pi API    | registers `session_start/tree/shutdown/agent_end` hooks                                    |
-| `src/application/system-prompt-handler.ts`      | `@mariozechner/pi-coding-agent`         | pi API    | registers `before_agent_start` hook                                                       |
-| `src/application/native-compaction.ts`          | `@mariozechner/pi-coding-agent`        | pi API    | registers `session_before_compact/session_compact/turn_end` hooks                         |
-| `src/application/native-compaction.ts`          | `ExtensionContext`                     | pi API    | calls `ctx.compact()`                                                                     |
-| `src/application/compress-tool/registration.ts`  | `@mariozechner/pi-coding-agent`         | pi API    | calls `pi.registerTool()`                                                                  |
-| `src/application/commands/dcp.ts`               | `@mariozechner/pi-coding-agent`         | pi API    | calls `pi.registerCommand()`, `pi.sendMessage()`                                           |
-| `src/application/tool-recording.ts`             | `@mariozechner/pi-coding-agent`         | pi API    | registers `tool_call/tool_result` hooks                                                   |
+| `src/application/native-compaction.ts`          | `src/application/status.ts`             | calls     | `updateDcpStatus`                                                                        |
+| `src/application/compress-tool/registration.ts` | `src/domain/compression/tooling.ts`     | calls     | all tooling helpers, validation, artifacts, planning hints                               |
+| `src/application/compress-tool/registration.ts` | `src/domain/compression/materialize.ts` | calls     | `renderCompressedBlockMessage`                                                           |
+| `src/application/compress-tool/registration.ts` | `src/domain/pruning/`                   | calls     | `exceedsMaxContextLimit`                                                                 |
+| `src/application/compress-tool/registration.ts` | `src/domain/transcript/`                | calls     | `buildTranscriptSnapshot`, `resolveLogicalTurnTailStartTimestamp`                        |
+| `src/application/compress-tool/registration.ts` | `src/application/status.ts`             | calls     | `updateDcpStatus`                                                                        |
+| `src/application/compress-tool/registration.ts` | `src/application/native-compaction.ts`  | calls     | `queueDcpAutoNativeCompaction`                                                           |
+| `src/application/commands/dcp.ts`               | `src/application/status.ts`             | calls     | `computeDisplayedTokensSaved`, `updateDcpStatus`                                         |
+| `src/application/commands/dcp.ts`               | `src/application/native-compaction.ts`  | calls     | `triggerDcpNativeCompaction`                                                             |
+| `src/application/system-prompt-handler.ts`      | `src/prompts/system.js`                 | imports   | `SYSTEM_PROMPT`, `MANUAL_MODE_SYSTEM_PROMPT`                                             |
+| `src/application/tool-recording.ts`             | `src/state.ts`                          | calls     | `createInputFingerprint`                                                                 |
+| `src/application/tool-recording.ts`             | `src/domain/tokens/estimate.ts`         | calls     | `estimateTokens`                                                                         |
+| `src/application/status.ts`                     | `src/types/state.ts`                    | imports   | `DcpState` type                                                                          |
+| `src/application/context-handler.ts`            | `@mariozechner/pi-coding-agent`         | pi API    | registers `context` hook, emits `REMINDER_UPSERT_EVENT`                                  |
+| `src/application/provider-handler.ts`           | `@mariozechner/pi-coding-agent`         | pi API    | registers `before_provider_request` hook                                                 |
+| `src/application/session-handler.ts`            | `@mariozechner/pi-coding-agent`         | pi API    | registers `session_start/tree/shutdown/agent_end` hooks                                  |
+| `src/application/system-prompt-handler.ts`      | `@mariozechner/pi-coding-agent`         | pi API    | registers `before_agent_start` hook                                                      |
+| `src/application/native-compaction.ts`          | `@mariozechner/pi-coding-agent`         | pi API    | registers `session_before_compact/session_compact/turn_end` hooks                        |
+| `src/application/native-compaction.ts`          | `ExtensionContext`                      | pi API    | calls `ctx.compact()`                                                                    |
+| `src/application/compress-tool/registration.ts` | `@mariozechner/pi-coding-agent`         | pi API    | calls `pi.registerTool()`                                                                |
+| `src/application/commands/dcp.ts`               | `@mariozechner/pi-coding-agent`         | pi API    | calls `pi.registerCommand()`, `pi.sendMessage()`                                         |
+| `src/application/tool-recording.ts`             | `@mariozechner/pi-coding-agent`         | pi API    | registers `tool_call/tool_result` hooks                                                  |

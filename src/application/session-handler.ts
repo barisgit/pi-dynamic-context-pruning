@@ -3,7 +3,11 @@ import type { DcpConfig } from "../types/config.js";
 import type { CompressionBlock, DcpState } from "../types/state.js";
 import { createState, resetState } from "../state.js";
 import { appendDebugLog, buildSessionDebugPayload } from "../infrastructure/debug-log.js";
-import { restorePersistedState, serializePersistedState } from "../infrastructure/persistence.js";
+import {
+  restorePersistedState,
+  restorePersistedStateScalars,
+  serializePersistedState,
+} from "../infrastructure/persistence.js";
 import { replayDcpState } from "../domain/replay/index.js";
 import { updateDcpStatus } from "./status.js";
 
@@ -232,6 +236,12 @@ function snapshotRestore(
  * live message buffer, which guarantees ref-allocation parity with the
  * agent at compress time.
  *
+ * v4 dcp-state entries carry a light block list for non-replayable branches
+ * and native-compaction history, but active replayable branches still prefer
+ * scalar-only restore: v4 blocks intentionally omit coverage anchors, so using
+ * them for live pruning would leave old raw transcript spans uncompressed after
+ * reload.
+ *
  * Old sessions that pre-date v3 only carry persisted `dcp-state` snapshots
  * and no transcript evidence; those fall back to the legacy snapshot walk
  * here so existing state survives the upgrade.
@@ -242,7 +252,10 @@ export function restoreStateFromBranch(
   config: DcpConfig,
   allEntries: readonly any[] = branchEntries
 ): RestoreStateFromBranchResult {
-  if (latestMaterialDcpStateSchemaVersion(branchEntries) === 4) {
+  const latestSchemaVersion = latestMaterialDcpStateSchemaVersion(branchEntries);
+  const replayable = branchIsReplayable(branchEntries);
+
+  if (latestSchemaVersion === 4 && !replayable) {
     resetState(state);
     initializeSessionState(state, config);
 
@@ -266,18 +279,20 @@ export function restoreStateFromBranch(
     };
   }
 
-  if (branchIsReplayable(branchEntries)) {
+  if (replayable) {
     resetState(state);
     initializeSessionState(state, config);
 
-    // Scalar-only restore: walk dcp-state entries through restorePersistedState
-    // so the persisted scalars (currentTurn, lastNudgeTurn, lastCompressTurn,
-    // prunedToolIds, lifetimeTokensSavedRealized) end up on `state`. We do NOT
-    // call replayDcpState here — that happens lazily on the first context event.
+    // Scalar-only restore: walk dcp-state entries without restoring block logs
+    // so persisted counters (currentTurn, lastNudgeTurn, lastCompressTurn,
+    // prunedToolIds, lifetimeTokensSavedRealized) end up on `state`. Blocks are
+    // reconstructed lazily from the live context buffer; restoring v4 light
+    // block placeholders here would leave active blocks without coverage
+    // anchors and resurrect raw transcript tokens after reload.
     let restoredStateEntries = 0;
     for (const entry of branchEntries) {
       if (isDcpStateEntry(entry)) {
-        restorePersistedState(entry.data, state);
+        restorePersistedStateScalars(entry.data, state);
         restoredStateEntries++;
       }
     }

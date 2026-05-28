@@ -10,19 +10,24 @@ This isolation ensures the core pruning/compression semantics are testable, dete
 
 ## Subdirectories
 
-### `compression/`
+### `compression/` — planning & artifact flow
 
-**Purpose:** Compression block construction, range resolution, planning hints, and v2 materialization scaffolding.
+1. `buildTranscriptSnapshot()` → span walk in `buildCompressionPlanningHints()` (passthrough spans extend candidates; hot-tail/covered spans flush them).
+2. `validateCompressionRangeBoundaryIds()` → reject raw refs inside active `bN` spans with boundary guidance.
+3. `buildCompressionArtifactsForRange()` → activity log + `coveredSourceKeys`/`coveredSpanKeys` metadata.
+4. `resolveSupersededBlockIdsForRange()` → exact full-coverage supersession only; partial overlap throws.
 
-| File             | Responsibility                                                                                                                                                                |
-| ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `range.ts`       | Expand timestamp-bounded ranges to include atomic assistant/tool-result groups. Resolve indices from timestamps.                                                              |
-| `materialize.ts` | Render v2 compression blocks into `DcpMessage`s with three detail levels: `full` (summary + activity log), `compact` (truncated summary), `minimal` (one-line).               |
-| `metadata.ts`    | Factory for empty `CompressionBlockMetadata` (covered source keys, span keys, tool IDs, file/command stats).                                                                  |
-| `tooling.ts`     | Core compression helpers: validate boundaries, build activity logs, resolve superseded blocks, collect file read/write stats, build `CompressionPlanningHints` for the agent. |
-| `index.ts`       | Re-exports for all submodules.                                                                                                                                                |
+Consumed by: `application/compress-tool/registration.ts`, `application/context-handler.ts` (nudge hints).
 
-**Key types:** `CompressionCandidateRange`, `CompressionPlanningHints`, `CompressionBlockRenderDetail`, `MaterializedTranscript`.
+| File             | Responsibility                                                                                                                                                                                                       |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `range.ts`       | Expand timestamp-bounded ranges to include atomic assistant/tool-result groups. Resolve indices from timestamps.                                                                                                     |
+| `materialize.ts` | Render v2 compression blocks into `DcpMessage`s with three detail levels: `full` (summary + activity log), `compact` (truncated summary), `minimal` (one-line).                                                      |
+| `metadata.ts`    | Factory for empty `CompressionBlockMetadata` (covered source keys, span keys, tool IDs, file/command stats).                                                                                                         |
+| `tooling.ts`     | Core compression helpers: boundary validation (including refs inside active blocks), passthrough-span absorption in planning hints, activity-log/metadata assembly, supersession resolution, protected-tail helpers. |
+| `index.ts`       | Re-exports for all submodules.                                                                                                                                                                                       |
+
+**Key types:** `CompressionCandidateRange`, `CompressionPlanningHints` (`candidateRanges`, `totalCandidateCount`, `totalCompressibleTokens`, protected-tail IDs), `CompressionBlockRenderDetail`, `MaterializedTranscript`.
 
 ---
 
@@ -40,8 +45,8 @@ This isolation ensures the core pruning/compression semantics are testable, dete
 
 **Purpose:** Filter stale hidden artifacts from provider payloads using canonical owner keys.
 
-| File                | Responsibility                                                                                                                                                                                                                                                                                                                       |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| File                | Responsibility                                                                                                                                                                                                                                                                                                                                          |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `payload-filter.ts` | Derive owner keys from `__dcpOwnerKey` Symbol attached to assistant message objects. Build represented compress receipts. Minify the newest live represented compress exchange to a compact receipt; suppress older represented pairs. Filter `reasoning`, `function_call`, `function_call_output` items by live owner key. No rendered tag dependency. |
 
 **Key types:** `RepresentedCompressCallReceipt`, `RepresentedCompressArtifacts`.
@@ -71,9 +76,9 @@ This isolation ensures the core pruning/compression semantics are testable, dete
 
 **Purpose:** Visible reference parsing, allocation, and DCP metadata tag handling.
 
-| File          | Responsibility                                                                                                                                              |
-| ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `index.ts`    | Parse `mXXXX` message refs and `bN` block refs. Allocate sequential message refs. Serialize/deserialize `MessageAliasState`.                                |
+| File          | Responsibility                                                                                                                            |
+| ------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `index.ts`    | Parse `mXXXX` message refs and `bN` block refs. Allocate sequential message refs. Serialize/deserialize `MessageAliasState`.              |
 | `metadata.ts` | Strip visible DCP metadata tags (`` ` ``, `` ` ``, `` ` ``) from text. Strip generated DCP/protocol hallucination tags from model output. |
 
 **Key types:** `ParsedVisibleRef`, `MessageAliasState`, `MessageRefSnapshotEntry`.
@@ -84,8 +89,8 @@ This isolation ensures the core pruning/compression semantics are testable, dete
 
 **Purpose:** Reconstruct `DcpState` from session transcript and branch entries (replay-first, dcp-replay-v3). Used on session restore instead of loading a full serialized block log.
 
-| File     | Responsibility                                                                                                                                                                                                                                                                                                                  |
-| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| File       | Responsibility                                                                                                                                                                                                                                                                                                                                                                                                     |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `index.ts` | `replayDcpState(branchEntries, config, {state}) -> DcpState`. Walks branch entries (or live `event.messages` buffer), reconstructs `CompressionBlock`s from assistant `compress` toolCalls + matching `toolResult`s, applies native-compaction deactivations, runs `applyPruning` at bucket boundaries to populate refs and snapshots. Fallback snapshot path for pre-v3 sessions gated by `branchIsReplayable()`. |
 
 ---
@@ -155,7 +160,7 @@ Owner keys are derived from rendered transcript metadata tags for visible non-as
 
 ### 8. Passthrough Roles
 
-Roles `compaction`, `branch_summary`, `custom_message` are treated as transparent: they are excluded from visible ID injection and logical turn counting, but their timestamps still fall inside compression ranges for splicing. Assistant messages are also excluded from visible ID injection, while remaining part of logical turns and atomic tool-pair expansion.
+Roles `compaction`, `branch_summary`, `custom_message` are transparent in planning and native-compaction counting: excluded from visible ID injection and logical turn counting, but their timestamps still fall inside compression splice ranges. In `buildCompressionPlanningHints()`, passthrough-only spans absorb token estimates into the running safe candidate instead of fragmenting compressible stretches across reminder/compaction injections. Assistant messages are also excluded from visible ID injection while remaining part of logical turns and atomic tool-pair expansion.
 
 ---
 
@@ -188,4 +193,4 @@ The `transcript/` snapshot is the canonical source of truth for source items and
 
 **Application layer** owns: pi hook registration, tool registration, command registration, config loading, state persistence, debug logging, and provider-payload adaptation.
 
-**Persistence is replay-first (dcp-replay-v3):** on-disk `PersistedDcpStateV3` is a tiny scalar bootstrap; `replayDcpState()` reconstructs the full block log from transcript + `compress` calls/results + `dcp-native-compaction` entries. Pre-v3 sessions fall back to snapshot restore, gated by `branchIsReplayable()`.
+**Persistence (dcp-replay-v3 + v4):** empty sessions persist v3 scalars only; sessions with blocks persist v4 light blocks (summary/topic/savings, no coverage anchors). Replayable branches still reconstruct coverage metadata via `replayDcpState()`; v4 light blocks serve non-replayable restart continuity. `validateCompressionRangeBoundaryIds()` rejects raw `mNNNN` refs inside active compressed spans with actionable `bN` boundary guidance.

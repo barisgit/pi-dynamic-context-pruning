@@ -713,8 +713,12 @@ describe("DCP compression.test", () => {
         commandStats: [],
       },
     };
+    const state = makeState();
+    state.messageAliases.bySourceKey.set(snapshot.sourceItems[0]!.key, "m0001");
+    state.messageAliases.bySourceKey.set(snapshot.sourceItems[1]!.key, "m0002");
+    state.messageAliases.bySourceKey.set(snapshot.sourceItems[2]!.key, "m0003");
 
-    assert.throws(
+    const thrown = assert.throws(
       () =>
         resolveSupersededBlockIdsForRange(
           messages,
@@ -789,11 +793,27 @@ describe("DCP compression.test", () => {
         active: true,
         summaryTokenEstimate: 2,
         createdAt: Date.now(),
+        startSourceKey: "msg:1000:user:0",
+        endSourceKey: "msg:2000:user:1",
+        metadata: {
+          coveredSourceKeys: ["msg:1000:user:0", "msg:2000:user:1"],
+          coveredSpanKeys: [],
+          coveredArtifactRefs: [],
+          coveredToolIds: [],
+          supersededBlockIds: [],
+          fileReadStats: [],
+          fileWriteStats: [],
+          commandStats: [],
+        },
       },
     ]);
     state.messageIdSnapshot.set("m0001", 1000);
     state.messageIdSnapshot.set("m0002", 2000);
     state.messageIdSnapshot.set("m10000", 10000);
+    state.messageAliases.byRef.set("m0001", "msg:1000:user:0");
+    state.messageAliases.byRef.set("m0002", "msg:2000:user:1");
+    state.messageAliases.bySourceKey.set("msg:1000:user:0", "m0001");
+    state.messageAliases.bySourceKey.set("msg:2000:user:1", "m0002");
 
     assert.throws(
       () => validateCompressionRangeBoundaryIds("m10001", "m0002", state),
@@ -808,6 +828,38 @@ describe("DCP compression.test", () => {
     validateCompressionRangeBoundaryIds("m0001", "b3", state);
     validateCompressionRangeBoundaryIds("m10000", "b3", state);
     state.messageIdSnapshot.delete("m10000");
+    state.messageIdSnapshot.delete("m0001");
+    state.messageIdSnapshot.delete("m0002");
+
+    let unavailableMessage = "";
+    try {
+      validateCompressionRangeBoundaryIds("m0002", "b3", state);
+      assert.fail(
+        "FAIL — refs covered by a compressed block should explain why they are unavailable"
+      );
+    } catch (error) {
+      unavailableMessage = (error as Error).message;
+    }
+    assert.match(
+      unavailableMessage,
+      /inside existing compressed block b3/,
+      "FAIL — refs covered by a compressed block should explain why they are unavailable"
+    );
+    assert.match(
+      unavailableMessage,
+      /b3 covers original raw span m0001..m0002; the usable boundary for that whole span is b3/,
+      "FAIL — unavailable-ref diagnostic should say what span bN covers and that bN is the usable boundary"
+    );
+    assert.doesNotMatch(
+      unavailableMessage,
+      /timestamps/,
+      "FAIL — unavailable-ref diagnostic should not fall back to timestamp-only spans"
+    );
+    assert.match(
+      unavailableMessage,
+      /Use boundary ref b3/,
+      "FAIL — unavailable-ref diagnostic should suggest using the block ref"
+    );
 
     state.messageRefSnapshot.set("m0001", {
       ref: "m0001",

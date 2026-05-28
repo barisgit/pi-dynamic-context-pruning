@@ -153,6 +153,46 @@ export function resolveAnchorSourceKey(
   return anchor?.sourceKey ?? (endSourceKey ? `tail:${endSourceKey}` : undefined);
 }
 
+function formatUnavailableBlockRefHint(
+  unavailableRef: string,
+  coveringBlock: CompressionBlock,
+  state: DcpState
+): string {
+  const { startRef, endRef } = resolveExistingBlockBoundaryRefs(coveringBlock, state);
+  const blockRef = `b${coveringBlock.id}`;
+  const boundaryHint =
+    startRef && endRef
+      ? ` ${blockRef} covers original raw span ${startRef}..${endRef}; the usable boundary for that whole span is ${blockRef}.`
+      : ` ${blockRef} covers a compressed span containing ${unavailableRef}; its original raw start/end IDs are not available in the current alias table, so the only valid span ref is ${blockRef}.`;
+
+  return (
+    ` Message ID ${unavailableRef} is inside ${blockRef}; do not use raw IDs inside a compressed block as boundaries.` +
+    boundaryHint
+  );
+}
+
+function buildUnavailableMessageRefError(rawId: string, ref: string, state: DcpState): Error {
+  const sourceKey = state.messageAliases.byRef.get(ref);
+  if (sourceKey) {
+    const coveringBlock = state.compressionBlocks.find((block) => {
+      if (!block.active) return false;
+      const coveredSourceKeys = block.metadata?.coveredSourceKeys ?? [];
+      return coveredSourceKeys.includes(sourceKey);
+    });
+
+    if (coveringBlock) {
+      return new Error(
+        `Message ID ${rawId} is not available as a compression boundary because it is inside existing compressed block b${coveringBlock.id} "${coveringBlock.topic}".` +
+          `${formatUnavailableBlockRefHint(rawId, coveringBlock, state)} ` +
+          `Use boundary ref b${coveringBlock.id} to include that whole block and include (b${coveringBlock.id}) exactly once in the summary, ` +
+          `or choose currently visible mNNNN boundaries outside b${coveringBlock.id}. Do not retry a range that starts or ends inside b${coveringBlock.id}.`
+      );
+    }
+  }
+
+  return new Error(`Unknown message ID: ${rawId}`);
+}
+
 export function validateCompressionRangeBoundaryIds(
   startId: string,
   endId: string,
@@ -177,14 +217,14 @@ export function validateCompressionRangeBoundaryIds(
     !state.messageIdSnapshot.has(parsedStartId.ref) &&
     !state.messageIdSnapshot.has(startId.trim())
   ) {
-    throw new Error(`Unknown message ID: ${startId}`);
+    throw buildUnavailableMessageRefError(startId, parsedStartId.ref, state);
   }
   if (
     parsedEndId.kind === "message" &&
     !state.messageIdSnapshot.has(parsedEndId.ref) &&
     !state.messageIdSnapshot.has(endId.trim())
   ) {
-    throw new Error(`Unknown message ID: ${endId}`);
+    throw buildUnavailableMessageRefError(endId, parsedEndId.ref, state);
   }
 
   if (
@@ -756,12 +796,79 @@ export function resolveProtectedTailStartTimestamp(
   return resolveLogicalTurnTailStartTimestamp(messages, protectRecentTurns);
 }
 
-function buildOverlapError(startId: string, endId: string, existing: CompressionBlock): Error {
+function resolveRefForSourceKey(
+  state: DcpState | null | undefined,
+  sourceKey: string | null | undefined
+): string | null {
+  if (!state || !sourceKey) return null;
+  return (
+    state.messageRefSnapshot.get(sourceKey)?.ref ??
+    state.messageAliases.bySourceKey.get(sourceKey) ??
+    null
+  );
+}
+
+function resolveRefForTimestamp(
+  state: DcpState | null | undefined,
+  timestamp: number | null | undefined
+): string | null {
+  if (!state || timestamp === null || timestamp === undefined || !Number.isFinite(timestamp)) {
+    return null;
+  }
+
+  const matchingRefs = [...state.messageIdSnapshot.entries()]
+    .filter(([, candidateTimestamp]) => candidateTimestamp === timestamp)
+    .map(([ref]) => ref)
+    .sort(compareMessageIds);
+  return matchingRefs[0] ?? null;
+}
+
+function resolveExistingBlockBoundaryRefs(
+  existing: CompressionBlock,
+  state: DcpState | null | undefined
+): { startRef: string | null; endRef: string | null } {
+  const exactSourceKeys = existing.metadata?.coveredSourceKeys ?? [];
+  const exactStartSourceKey = exactSourceKeys[0] ?? existing.startSourceKey ?? null;
+  const exactEndSourceKey = exactSourceKeys.at(-1) ?? existing.endSourceKey ?? null;
+
+  return {
+    startRef:
+      resolveRefForSourceKey(state, exactStartSourceKey) ??
+      resolveRefForTimestamp(state, existing.startTimestamp),
+    endRef:
+      resolveRefForSourceKey(state, exactEndSourceKey) ??
+      resolveRefForTimestamp(state, existing.endTimestamp),
+  };
+}
+
+function formatExistingBlockBoundaryHint(
+  existing: CompressionBlock,
+  state: DcpState | null | undefined
+): string {
+  const { startRef, endRef } = resolveExistingBlockBoundaryRefs(existing, state);
+  const rangeRef = startRef && endRef ? `${startRef}..${endRef}` : null;
+  const timestampRange = `${existing.startTimestamp}..${existing.endTimestamp}`;
+
+  if (rangeRef) {
+    return ` Existing block b${existing.id} spans ${rangeRef} (timestamps ${timestampRange}).`;
+  }
+
+  return ` Existing block b${existing.id} spans timestamps ${timestampRange}; visible message refs for its exact boundaries are unavailable.`;
+}
+
+function buildOverlapError(
+  startId: string,
+  endId: string,
+  existing: CompressionBlock,
+  state?: DcpState | null
+): Error {
   return new Error(
     `Overlapping compression ranges are not supported. ` +
       `New range (${startId}..${endId}) overlaps existing block ` +
       `b${existing.id} "${existing.topic}". ` +
-      `Choose a range entirely before or after b${existing.id}, or compress relative to b${existing.id} itself.`
+      `${formatExistingBlockBoundaryHint(existing, state)} ` +
+      `Do not retry the same range: choose a range entirely outside b${existing.id}'s span, ` +
+      `or include b${existing.id} explicitly by using boundary ref b${existing.id} and a matching (b${existing.id}) placeholder in the summary.`
   );
 }
 
@@ -773,7 +880,8 @@ export function resolveSupersededBlockIdsForRange(
   newCoveredSourceKeys: Iterable<string>,
   startId: string,
   endId: string,
-  ignoredBlockIds: Set<number> = new Set()
+  ignoredBlockIds: Set<number> = new Set(),
+  state?: DcpState | null
 ): number[] {
   const snapshot = buildTranscriptSnapshot(messages);
   const newCoveredSourceKeySet = new Set(newCoveredSourceKeys);

@@ -453,7 +453,8 @@ export function registerCompressTool(pi: ExtensionAPI, state: DcpState, config: 
             artifacts.metadata.coveredSourceKeys,
             startId,
             endId,
-            pendingSupersededBlockIds
+            pendingSupersededBlockIds,
+            state
           );
           for (const blockId of supersededBlockIds) {
             pendingSupersededBlockIds.add(blockId);

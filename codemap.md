@@ -24,7 +24,7 @@ This repo is at **dcp-replay-v3**. Persistence is replay-first; the in-memory bl
 On `session_start` / `session_tree`, `restoreStateFromBranch` checks `branchIsReplayable()`:
 
 - **Replayable branch** (contains DCP-relevant transcript evidence — successful `compress` tool results or `dcp-native-compaction` entries): performs a **scalar-only** restore (turn counters, `prunedToolIds`, `lifetimeTokensSavedRealized`) and sets `state.replayPending = true`. Block reconstruction is deferred to the first `context` event, which runs `replayDcpState` against pi's live message buffer. This guarantees `mNNNN` ref-allocation parity with the agent at compress time.
-- **Non-replayable branch** (pre-v3 sessions with only persisted `dcp-state` snapshots and no transcript evidence): falls back to the legacy snapshot walk, which fully restores `compressionBlocks` from disk. `state.replayPending` is cleared so the context handler skips replay.
+- **Non-replayable branch** (no transcript evidence): falls back to snapshot restore. Legacy v1/v2 snapshots restore full block state; v4 entries restore their light block list plus scalars for compaction/history continuity. `state.replayPending` is cleared so the context handler skips replay.
 
 ### Active runtime path
 
@@ -34,44 +34,44 @@ On `session_start` / `session_tree`, `restoreStateFromBranch` checks `branchIsRe
 
 - `/dcp sweep`, `/dcp decompress`, `/dcp manual` subcommands — dropped
 - `state.manualMode` plumbing (prompt variant, config flag, command handler) — removed; `initializeSessionState` is a no-op
-- Full block-log persistence — no longer written to disk; restored lazily from transcript
+- Full fat block-log persistence — no longer written to disk. Replayable branches restore blocks lazily from transcript; v4 persisted entries carry only a light block list for non-replayable compaction/history continuity.
 
 ---
 
 ## System Entry Points
 
-| File                                      | Purpose                                                                                              |
-| ----------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| `src/index.ts`                            | Extension entry point; wires config, state, tools, commands, and hook handlers                       |
-| `src/application/session-handler.ts`      | Session lifecycle hooks (start/tree/shutdown/agent_end); scalar restore, `saveState`                 |
-| `src/application/context-handler.ts`       | `context` event hook — lazy replay trigger, materialize, nudge, footer                               |
-| `src/application/compress-tool/registration.ts` | `compress` tool registration and execution                                      |
-| `src/infrastructure/config.ts`             | JSONC config loading with 4-layer deep-merge                                                          |
-| `src/domain/replay/index.ts`              | `replayDcpState` — reconstructs block log from session transcript                                    |
+| File                                            | Purpose                                                                              |
+| ----------------------------------------------- | ------------------------------------------------------------------------------------ |
+| `src/index.ts`                                  | Extension entry point; wires config, state, tools, commands, and hook handlers       |
+| `src/application/session-handler.ts`            | Session lifecycle hooks (start/tree/shutdown/agent_end); scalar restore, `saveState` |
+| `src/application/context-handler.ts`            | `context` event hook — lazy replay trigger, materialize, nudge, footer               |
+| `src/application/compress-tool/registration.ts` | `compress` tool registration and execution                                           |
+| `src/infrastructure/config.ts`                  | JSONC config loading with 4-layer deep-merge                                         |
+| `src/domain/replay/index.ts`                    | `replayDcpState` — reconstructs block log from session transcript                    |
 
 ---
 
 ## Repository Directory Map
 
-| Directory                          | Responsibility Summary                                                                               | Detailed Map                                      |
-| --------------------------------- | -------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
-| `src/`                            | Extension root: entry point and backward-compat shim re-exports                                      | [View Map](src/codemap.md)                       |
-| `src/application/`                | Orchestration layer: event hook wiring, tool/command registration, host payload adaptation, domain delegation | [View Map](src/application/codemap.md) |
-| `src/application/commands/`       | `/dcp` slash command: `context`, `stats`, `compress`, `compact`, `help`                             | [View Map](src/application/commands/codemap.md)  |
-| `src/application/compress-tool/`  | `compress` tool: registration, range validation, block construction, planning hints                  | [View Map](src/application/compress-tool/codemap.md) |
-| `src/domain/`                     | Pure business logic: zero pi/provider/FS imports                                                    | [View Map](src/domain/codemap.md)                |
-| `src/domain/compression/`         | Block construction, range resolution, exact metadata, supersession, v2 materialization scaffold        | [View Map](src/domain/compression/codemap.md)    |
-| `src/domain/pruning/`             | Active runtime pruning: block application, atomic repair, dedup, error purge, ID injection           | [View Map](src/domain/pruning/codemap.md)        |
-| `src/domain/transcript/`          | Canonical snapshot builder: source items, spans, logical turns, live owner keys                     | [View Map](src/domain/transcript/codemap.md)     |
-| `src/domain/provider/`            | Provider-payload stale artifact filtering via canonical owner keys                                   | [View Map](src/domain/provider/codemap.md)       |
-| `src/domain/refs/`                | Visible ref parsing/formatting (`mNNNN`, `bN`) and DCP metadata stripping                          | [View Map](src/domain/refs/codemap.md)           |
-| `src/domain/tokens/`              | Token estimation (gpt-tokenizer + chars/4 fallback)                                                  | [View Map](src/domain/tokens/codemap.md)         |
-| `src/domain/nudge/`               | Nudge type decision helpers (thin re-export from pruning)                                           | [View Map](src/domain/nudge/codemap.md)         |
-| `src/domain/replay/`              | `replayDcpState` — reconstructs block log, supersession, savedTokenEstimate, prunedToolIds from transcript | [View Map](src/domain/replay/codemap.md) |
-| `src/infrastructure/`             | Side effects: JSONC config loading, JSONL debug logging, persisted-state contract                   | [View Map](src/infrastructure/codemap.md)       |
-| `src/prompts/`                    | System prompt additions, compress tool contract text, nudge text                                     | [View Map](src/prompts/codemap.md)               |
-| `src/types/`                      | Config, state, message, and API boundary types                                                      | [View Map](src/types/codemap.md)                |
-| `scripts/`                        | Capture-only HTTP proxy for LLM traffic debugging                                                   | [View Map](scripts/codemap.md)                  |
+| Directory                        | Responsibility Summary                                                                                        | Detailed Map                                         |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
+| `src/`                           | Extension root: entry point and backward-compat shim re-exports                                               | [View Map](src/codemap.md)                           |
+| `src/application/`               | Orchestration layer: event hook wiring, tool/command registration, host payload adaptation, domain delegation | [View Map](src/application/codemap.md)               |
+| `src/application/commands/`      | `/dcp` slash command: `context`, `stats`, `compress`, `compact`, `help`                                       | [View Map](src/application/commands/codemap.md)      |
+| `src/application/compress-tool/` | `compress` tool: registration, range validation, block construction, planning hints                           | [View Map](src/application/compress-tool/codemap.md) |
+| `src/domain/`                    | Pure business logic: zero pi/provider/FS imports                                                              | [View Map](src/domain/codemap.md)                    |
+| `src/domain/compression/`        | Block construction, range resolution, exact metadata, supersession, v2 materialization scaffold               | [View Map](src/domain/compression/codemap.md)        |
+| `src/domain/pruning/`            | Active runtime pruning: block application, atomic repair, dedup, error purge, ID injection                    | [View Map](src/domain/pruning/codemap.md)            |
+| `src/domain/transcript/`         | Canonical snapshot builder: source items, spans, logical turns, live owner keys                               | [View Map](src/domain/transcript/codemap.md)         |
+| `src/domain/provider/`           | Provider-payload stale artifact filtering via canonical owner keys                                            | [View Map](src/domain/provider/codemap.md)           |
+| `src/domain/refs/`               | Visible ref parsing/formatting (`mNNNN`, `bN`) and DCP metadata stripping                                     | [View Map](src/domain/refs/codemap.md)               |
+| `src/domain/tokens/`             | Token estimation (gpt-tokenizer + chars/4 fallback)                                                           | [View Map](src/domain/tokens/codemap.md)             |
+| `src/domain/nudge/`              | Nudge type decision helpers (thin re-export from pruning)                                                     | [View Map](src/domain/nudge/codemap.md)              |
+| `src/domain/replay/`             | `replayDcpState` — reconstructs block log, supersession, savedTokenEstimate, prunedToolIds from transcript    | [View Map](src/domain/replay/codemap.md)             |
+| `src/infrastructure/`            | Side effects: JSONC config loading, JSONL debug logging, persisted-state contract                             | [View Map](src/infrastructure/codemap.md)            |
+| `src/prompts/`                   | System prompt additions, compress tool contract text, nudge text                                              | [View Map](src/prompts/codemap.md)                   |
+| `src/types/`                     | Config, state, message, and API boundary types                                                                | [View Map](src/types/codemap.md)                     |
+| `scripts/`                       | Capture-only HTTP proxy for LLM traffic debugging                                                             | [View Map](scripts/codemap.md)                       |
 
 ---
 
@@ -125,7 +125,9 @@ session_before_compact / session_compact / turn_end
     └─ native compaction bridge (see src/application/native-compaction.ts)
 
 agent_end / session_shutdown
-    └─ saveState() → append "dcp-state" custom session entry (scalar-only in v3)
+    └─ saveState() → if state.pendingSave, append "dcp-state"
+        ├─ v3 scalar bootstrap when no blocks exist
+        └─ v4 scalar bootstrap + light block list when blocks exist
 ```
 
 ---
@@ -144,19 +146,19 @@ agent_end / session_shutdown
 
 ## Design Patterns
 
-| Pattern                          | Usage                                                                                     |
-| -------------------------------- | ---------------------------------------------------------------------------------------- |
-| Hook-based pipeline              | pi extension hooks chain together; shared state via closures                              |
-| Canonical transcript             | `buildTranscriptSnapshot` builds immutable snapshot for liveness derivation               |
-| Exact metadata over timestamps    | `coveredSourceKeys`/`coveredSpanKeys` preferred; timestamps for legacy fallback only     |
-| Deterministic activity log       | `CompressionLogEntry[]` in block summaries — reproducible across renders                |
-| Fingerprint dedup                | `createInputFingerprint()` — `toolName::JSON(sortedArgs)` for stable dedup               |
-| Bucket-gated tombstones          | `prunedToolIds` additions gated by `floor(currentTurn / pruneCadenceTurns) * N`          |
-| Two-phase provider filtering     | newest represented compress → receipt; older represented pairs suppressed                |
-| Auto-trigger with queue drain    | `pendingAutoRequests` queue drained atomically at `turn_end` to prevent cancel loops      |
-| Lifetime realized savings        | `lifetimeTokensSavedRealized` accumulates savings from native-compaction-absorbed blocks  |
-| Replay-first persistence         | block log reconstructed from transcript on first context event; scalar-only on-disk state |
-| Lazy replay on context           | `state.replayPending` defers `replayDcpState` until live message buffer is available     |
+| Pattern                        | Usage                                                                                                                                        |
+| ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| Hook-based pipeline            | pi extension hooks chain together; shared state via closures                                                                                 |
+| Canonical transcript           | `buildTranscriptSnapshot` builds immutable snapshot for liveness derivation                                                                  |
+| Exact metadata over timestamps | `coveredSourceKeys`/`coveredSpanKeys` preferred; timestamps for legacy fallback only                                                         |
+| Deterministic activity log     | `CompressionLogEntry[]` in block summaries — reproducible across renders                                                                     |
+| Fingerprint dedup              | `createInputFingerprint()` — `toolName::JSON(sortedArgs)` for stable dedup                                                                   |
+| Bucket-gated tombstones        | `prunedToolIds` additions gated by `floor(currentTurn / pruneCadenceTurns) * N`                                                              |
+| Two-phase provider filtering   | newest represented compress → receipt; older represented pairs suppressed                                                                    |
+| Auto-trigger with queue drain  | `pendingAutoRequests` queue drained atomically at `turn_end` to prevent cancel loops                                                         |
+| Lifetime realized savings      | `lifetimeTokensSavedRealized` accumulates savings from native-compaction-absorbed blocks                                                     |
+| Replay-first persistence       | replayable branches reconstruct block log from transcript on first context event; persisted state is v3 scalars or v4 scalars + light blocks |
+| Lazy replay on context         | `state.replayPending` defers `replayDcpState` until live message buffer is available                                                         |
 
 ---
 

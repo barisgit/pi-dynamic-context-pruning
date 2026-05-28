@@ -156,22 +156,12 @@ describe("Legacy session restore (f3)", () => {
     expect(state.compressionBlocks).toHaveLength(0);
   });
 
-  test("latest v4 dcp-state entry -> persisted mode without lazy replay", () => {
+  test("latest v4 dcp-state entry without transcript evidence -> persisted mode", () => {
     const persisted = makeState([block(3, true)]);
     persisted.nextBlockId = 4;
     persisted.currentTurn = 12;
 
-    const branch = [
-      messageEntry({
-        role: "toolResult",
-        toolCallId: "call-c1",
-        toolName: "compress",
-        content: [{ type: "text", text: "ok" }],
-        isError: false,
-        timestamp: 5000,
-      }),
-      dcpStateEntry(serializePersistedState(persisted)),
-    ];
+    const branch = [dcpStateEntry(serializePersistedState(persisted))];
     const state = makeState();
     const result = restoreStateFromBranch(branch, state, makeConfig());
 
@@ -182,6 +172,54 @@ describe("Legacy session restore (f3)", () => {
     expect(state.compressionBlocks).toHaveLength(1);
     expect(state.compressionBlocks[0]?.id).toBe(3);
     expect(state.compressionBlocks[0]?.active).toBe(true);
+  });
+
+  test("latest v4 dcp-state with replayable transcript -> scalar replay pending", () => {
+    const persisted = makeState([block(3, true)]);
+    persisted.nextBlockId = 4;
+    persisted.currentTurn = 12;
+
+    const branch = [
+      messageEntry({ role: "user", content: [{ type: "text", text: "hello" }], timestamp: 1000 }),
+      messageEntry({
+        role: "assistant",
+        content: [
+          {
+            type: "toolCall",
+            id: "call-c1",
+            name: "compress",
+            arguments: {
+              ranges: [
+                {
+                  startId: "m0001",
+                  endId: "m0001",
+                  summary: "hello summary",
+                  topic: "hello",
+                },
+              ],
+            },
+          },
+        ],
+        timestamp: 2000,
+      }),
+      messageEntry({
+        role: "toolResult",
+        toolCallId: "call-c1",
+        toolName: "compress",
+        content: [{ type: "text", text: "Compressed 1 range(s)" }],
+        isError: false,
+        timestamp: 3000,
+      }),
+      dcpStateEntry(serializePersistedState(persisted)),
+    ];
+    const state = makeState();
+    const result = restoreStateFromBranch(branch, state, makeConfig());
+
+    expect(result.mode).toBe("replay-pending");
+    expect(state.replayPending).toBe(true);
+    expect(state.currentTurn).toBe(12);
+    expect(state.nextBlockId).toBe(1);
+    expect(state.compressionBlocks).toHaveLength(0);
   });
 
   test("compaction entry + snapshot + no compress transcript -> snapshot-fallback", () => {
