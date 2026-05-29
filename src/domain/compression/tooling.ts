@@ -253,10 +253,29 @@ export function validateCompressionRangeBoundaryIds(
 }
 
 function resolveVisibleIdForTimestamp(timestamp: number, state: DcpState): string | null {
-  for (const [messageId, candidateTimestamp] of state.messageIdSnapshot.entries()) {
-    if (candidateTimestamp === timestamp) return messageId;
-  }
-  return null;
+  // Timestamp-only lookup is a lossy fallback: adjacent eligible messages can
+  // share one Date.now() millisecond. When no source key is available, prefer
+  // the earliest visible ref at that millisecond because this helper is used for
+  // start-boundary hint text (hot-tail starts) and stable deterministic output is
+  // better than Map insertion order.
+  const matchingRefs = [...state.messageIdSnapshot.entries()]
+    .filter(([, candidateTimestamp]) => candidateTimestamp === timestamp)
+    .map(([messageId]) => messageId)
+    .sort(compareMessageIds);
+  return matchingRefs[0] ?? null;
+}
+
+function resolveVisibleIdForSourceItem(
+  sourceItem: { key: string; timestamp: number | null },
+  state: DcpState
+): string | null {
+  const exactRef =
+    state.messageAliases.bySourceKey.get(sourceItem.key) ??
+    [...state.messageRefSnapshot.values()].find((entry) => entry.sourceKey === sourceItem.key)?.ref;
+  if (exactRef) return exactRef;
+  return sourceItem.timestamp !== null
+    ? resolveVisibleIdForTimestamp(sourceItem.timestamp, state)
+    : null;
 }
 
 function compareMessageIds(a: string, b: string): number {
@@ -459,9 +478,7 @@ export function buildCompressionPlanningHints(
     // references that ref. Using timestamps[0] here resolved to null for every
     // tool batch and fragmented each one into its own tiny range.
     const resolvableIds = sourceItems
-      .map((item) =>
-        item.timestamp !== null ? resolveVisibleIdForTimestamp(item.timestamp, state) : null
-      )
+      .map((item) => resolveVisibleIdForSourceItem(item, state))
       .filter((id): id is string => id !== null);
 
     // Spans with no addressable visible ref (standalone assistant output,
@@ -844,8 +861,8 @@ function resolveRefForSourceKey(
 ): string | null {
   if (!state || !sourceKey) return null;
   return (
-    state.messageRefSnapshot.get(sourceKey)?.ref ??
     state.messageAliases.bySourceKey.get(sourceKey) ??
+    [...state.messageRefSnapshot.values()].find((entry) => entry.sourceKey === sourceKey)?.ref ??
     null
   );
 }

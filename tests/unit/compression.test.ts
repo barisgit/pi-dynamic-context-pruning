@@ -795,6 +795,68 @@ describe("DCP compression.test", () => {
   });
 
   // ---------------------------------------------------------------------------
+  // Test 18c5 — PLANNING HINTS USE SOURCE KEYS FOR SHARED TIMESTAMPS
+  // ---------------------------------------------------------------------------
+  test("Test 18c5 — PLANNING HINTS USE SOURCE KEYS FOR SHARED TIMESTAMPS", () => {
+    console.log("TEST 18c5: shared-ms toolResult/user collisions should keep exact visible refs");
+
+    // Production-faithful collision: assistant messages receive no refs, while
+    // the toolResult and adjacent user both came from the same Date.now()
+    // millisecond. A timestamp-only lookup would resolve the user@3000 back to
+    // the earlier toolResult ref and surface m0001..m0002 instead of extending
+    // the safe range through the user ref m0003.
+    const big = (label: string): string => `${label} `.repeat(40).trim();
+    const messages: any[] = [
+      { role: "user", content: [{ type: "text", text: big("u0") }], timestamp: 1000 },
+      {
+        role: "assistant",
+        content: [{ type: "toolCall", id: "call_a", name: "read", input: {} }],
+        timestamp: 2000,
+      },
+      {
+        role: "toolResult",
+        toolCallId: "call_a",
+        content: [{ type: "text", text: big("r0") }],
+        timestamp: 3000,
+      },
+      { role: "user", content: [{ type: "text", text: big("u1") }], timestamp: 3000 },
+      { role: "user", content: [{ type: "text", text: "hot tail" }], timestamp: 5000 },
+    ];
+
+    const state = makeState([]);
+    applyPruning(messages, state, makeConfig());
+    const refsAtSharedTimestamp = [...state.messageRefSnapshot.values()].filter(
+      (entry) => entry.timestamp === 3000
+    );
+
+    const hints = buildCompressionPlanningHints(messages, state, 1);
+
+    assert.deepStrictEqual(
+      refsAtSharedTimestamp
+        .filter((entry) => entry.ref.length === 5)
+        .map((entry) => [entry.ref, entry.sourceKey]),
+      [
+        ["m0002", "msg:3000:toolResult:call_a:2"],
+        ["m0003", "msg:3000:user:3"],
+      ],
+      "FAIL — fixture must mirror production refs for adjacent eligible messages at one timestamp"
+    );
+    assert.strictEqual(
+      hints.candidateRanges[0]?.startId,
+      "m0001",
+      "FAIL — safe range should still start at the first user ref"
+    );
+    assert.strictEqual(
+      hints.candidateRanges[0]?.endId,
+      "m0003",
+      "FAIL — shared timestamp should resolve the adjacent user by source key, not the toolResult"
+    );
+
+    console.log("  PASS: shared-ms candidate boundaries prefer exact source-key refs");
+    console.log("TEST 18c5 PASSED\n");
+  });
+
+  // ---------------------------------------------------------------------------
   // Test 18d — PLANNING HINTS DISCLOSE TRUNCATION WHEN MORE RANGES EXIST
   // ---------------------------------------------------------------------------
   test("Test 18d — PLANNING HINTS DISCLOSE TRUNCATION WHEN MORE RANGES EXIST", () => {
