@@ -186,7 +186,6 @@ Ideas discussed but not currently implemented:
 | `src/application/commands/dcp.ts` | `/dcp` slash command registration                                                                   |
 | `src/infrastructure/`             | JSONC config loading, debug logging, persisted-state migration/serialization                        |
 | `src/prompts/`                    | System prompt additions, compress tool contract text, nudge text                                    |
-| `src/*.ts` shims                  | Compatibility re-exports for older local import paths                                               |
 | `tests/unit/`                     | Focused Bun unit suites for transcript, compression, pruning, nudges, provider filtering            |
 | `tests/integration/`              | End-to-end applyPruning/compress-tool/debug behavior coverage                                       |
 | `DCP_V2_DESIGN.md`                | future-state design and invariants                                                                  |
@@ -196,7 +195,6 @@ Ideas discussed but not currently implemented:
 - Domain modules must not import `@mariozechner/pi-coding-agent`, filesystem utilities, config loading, debug logging, or application handlers.
 - Application modules adapt pi/provider payloads and delegate pure decisions to domain modules.
 - Infrastructure modules own side effects such as config files, persisted-state migration, and JSONL debug logging.
-- Compatibility shims in `src/*.ts` should stay thin; new code should prefer the layered paths.
 
 ---
 

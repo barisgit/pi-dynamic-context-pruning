@@ -130,13 +130,13 @@ DCP uses a layered configuration system (later layers override earlier ones):
 
 All commands are available in the pi TUI via `/dcp <subcommand>`:
 
-| Command               | Description                                                                 |
-| --------------------- | --------------------------------------------------------------------------- |
-| `/dcp` or `/dcp help` | Show command reference                                                      |
-| `/dcp context`        | Show context window usage and session stats                                 |
-| `/dcp stats`          | Show pruning statistics (tokens saved, blocks, operations)                  |
-| `/dcp compress`       | Trigger LLM compression immediately (sends a followUp message)              |
-| `/dcp compact`        | Materialize active DCP blocks into a pi-native compaction entry             |
+| Command               | Description                                                     |
+| --------------------- | --------------------------------------------------------------- |
+| `/dcp` or `/dcp help` | Show command reference                                          |
+| `/dcp context`        | Show context window usage and session stats                     |
+| `/dcp stats`          | Show pruning statistics (tokens saved, blocks, operations)      |
+| `/dcp compress`       | Trigger LLM compression immediately (sends a followUp message)  |
+| `/dcp compact`        | Materialize active DCP blocks into a pi-native compaction entry |
 
 ## How It Works
 
@@ -267,7 +267,6 @@ src/
   application/             # pi hook/tool/command orchestration and host payload adaptation
   infrastructure/          # config loading, persistence migration, debug logging
   prompts/                 # system, nudge, and compress-tool prompt text
-  *.ts                     # compatibility re-export shims for older local imports
 
 tests/
   helpers/                 # shared test factories/utilities

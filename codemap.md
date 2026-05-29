@@ -55,7 +55,7 @@ On `session_start` / `session_tree`, `restoreStateFromBranch` checks `branchIsRe
 
 | Directory                        | Responsibility Summary                                                                                        | Detailed Map                                         |
 | -------------------------------- | ------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
-| `src/`                           | Extension root: entry point and backward-compat shim re-exports                                               | [View Map](src/codemap.md)                           |
+| `src/`                           | Extension root: extension entry point and DcpState factory                                                    | [View Map](src/codemap.md)                           |
 | `src/application/`               | Orchestration layer: event hook wiring, tool/command registration, host payload adaptation, domain delegation | [View Map](src/application/codemap.md)               |
 | `src/application/commands/`      | `/dcp` slash command: `context`, `stats`, `compress`, `compact`, `help`                                       | [View Map](src/application/commands/codemap.md)      |
 | `src/application/compress-tool/` | `compress` tool: registration, range validation, block construction, planning hints                           | [View Map](src/application/compress-tool/codemap.md) |
@@ -82,7 +82,6 @@ On `session_start` / `session_tree`, `restoreStateFromBranch` checks `branchIsRe
 - **Domain** (`src/domain/`) — pure business logic. Must not import `@mariozechner/pi-coding-agent`, filesystem utilities, config loading, debug logging, or application handlers.
 - **Application** (`src/application/`) — adapts pi/provider payloads, wires hooks, delegates pure decisions to domain.
 - **Infrastructure** (`src/infrastructure/`) — owns side effects: config files, persisted-state, JSONL debug logging.
-- **Compatibility shims** (`src/*.ts`) — thin re-exports for older import paths; new code uses layered paths.
 
 ### Event Processing Pipeline
 

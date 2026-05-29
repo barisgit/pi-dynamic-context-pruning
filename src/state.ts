@@ -1,4 +1,4 @@
-import { createMessageAliasState } from "./message-refs.js";
+import { createMessageAliasState } from "./domain/refs/index.js";
 import { createEmptyCompressionBlockMetadata } from "./domain/compression/metadata.js";
 import type { DcpState } from "./types/state.js";
 

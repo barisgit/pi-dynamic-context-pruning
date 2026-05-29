@@ -58,18 +58,3 @@ Do not compress active working memory — in-progress plans, partial changes, un
 NESTED \`bN\` PLACEHOLDERS
 If the range includes prior \`bN\` blocks (marked with a \`[Compressed conversation section]\` header), reference each as \`(bN)\` exactly once in your summary. The tool expands \`(bN)\` to the full stored block content, so write the surrounding prose so it still reads correctly after expansion (no "as noted in \`(b2)\`"). To mention a block in plain prose, write \`compressed bN\` instead. Do not invent placeholders for blocks outside the range. Preflight: \`(bN)\` placeholders in the summary must equal the set of nested blocks, no duplicates.
 `;
-
-/**
- * Legacy nudge prompt text retained for compatibility with older imports.
- * Runtime DCP reminders now render compact planning hints inside <system-reminder>.
- */
-export const CONTEXT_LIMIT_NUDGE_SOFT = ``;
-
-/** Legacy strong context-limit nudge text. */
-export const CONTEXT_LIMIT_NUDGE_STRONG = ``;
-
-/** Legacy lightweight turn nudge text. */
-export const TURN_NUDGE = ``;
-
-/** Legacy iteration nudge text. */
-export const ITERATION_NUDGE = ``;

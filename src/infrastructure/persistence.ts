@@ -20,8 +20,8 @@ import {
   type PersistedDcpStateV3,
   type PersistedDcpStateV4,
 } from "../state.js";
-import { normalizeMessageAliasState, serializeMessageAliasState } from "../message-refs.js";
-import type { TranscriptSnapshot } from "../transcript.js";
+import { normalizeMessageAliasState, serializeMessageAliasState } from "../domain/refs/index.js";
+import type { TranscriptSnapshot } from "../domain/transcript/index.js";
 
 // ---------------------------------------------------------------------------
 // Helpers

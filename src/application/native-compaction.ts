@@ -82,9 +82,6 @@ export function hasPendingDcpAutoNativeCompaction(state: DcpState): boolean {
   return pendingAutoRequests.has(state);
 }
 
-export function clearPendingDcpAutoNativeCompaction(state: DcpState): void {
-  pendingAutoRequests.delete(state);
-}
 let nextRequestId = 1;
 
 function createRequest(

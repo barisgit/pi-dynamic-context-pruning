@@ -19,7 +19,6 @@ The extension lives entirely in `src/` as TypeScript/ESM — pi loads `.ts` file
 | **Infrastructure** | `src/infrastructure/` | Side effects: config files, JSONL debug logs, state persistence |
 | **Types**          | `src/types/`          | Shared contracts (state, config, message, API)                  |
 | **Prompts**        | `src/prompts/`        | System-prompt additions, tool descriptions, nudge text          |
-| **Shims**          | `src/*.ts` (root)     | Compatibility re-exports for older import paths                 |
 
 Domain modules must not import from `@mariozechner/pi-coding-agent`, filesystem utilities, config loading, or application handlers. Application modules adapt pi/provider payloads and delegate pure decisions to domain modules.
 
@@ -145,22 +144,9 @@ src/
 │                                  migrateLegacyCompressionBlocksToV2, mapLegacyBlockToSpanRange
 ├── prompts/
 │   ├── index.ts                 # SYSTEM_PROMPT, COMPRESS_RANGE_DESCRIPTION,
-│   │                              MANUAL_MODE_SYSTEM_PROMPT, legacy nudge texts
+│   │                              MANUAL_MODE_SYSTEM_PROMPT
 │   ├── system.ts                # Re-exports SYSTEM_PROMPT, MANUAL_MODE_SYSTEM_PROMPT
-│   ├── compress-tool.ts         # Re-exports COMPRESS_RANGE_DESCRIPTION
-│   └── nudge.ts                 # Re-exports legacy nudge text constants
-├── compress-tool.ts              # Shim → application/compress-tool/index.js
-├── commands.ts                   # Shim → application/commands/dcp.js
-├── config.ts                     # Shim → infrastructure/config.js
-├── debug-log.ts                  # Shim → infrastructure/debug-log.js
-├── pruner.ts                     # Shim → domain/pruning/index.js
-├── payload-filter.ts             # Shim → domain/provider/payload-filter.js
-├── prompts.ts                    # Shim → prompts/index.js
-├── materialize.ts                # Shim → domain/compression/materialize.js
-├── transcript.ts                 # Shim → domain/transcript/index.js
-├── message-refs.ts               # Shim → domain/refs/index.js
-├── dcp-metadata.ts               # Shim → domain/refs/metadata.js
-└── migration.ts                  # Shim → infrastructure/persistence.js
+│   └── compress-tool.ts         # Re-exports COMPRESS_RANGE_DESCRIPTION
 ```
 
 ---
@@ -313,4 +299,3 @@ agent_end / session_shutdown → saveState() if pendingSave
 6. **Supersession only for exact full coverage** — partial ambiguous overlap conservatively rejects; exact containment absorbs.
 7. **Two-phase provider-payload filtering** — `filterProviderPayloadInput` keeps the newest live represented compress receipt and suppresses older pairs; unrepresented failed attempts stay visible.
 8. **Turn-based debounce** — nudges debounce on logical turns, not raw `context` event frequency.
-9. **Shim re-exports for backward compatibility** — root-level `src/*.ts` files re-export from layered paths so older internal import paths continue to work without changes.
