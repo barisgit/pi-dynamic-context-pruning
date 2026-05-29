@@ -339,11 +339,6 @@ export function buildCompressionPlanningHints(
     messages,
     protectRecentTurns
   );
-  const protectedTailStartId =
-    protectedTailStartTimestamp === null
-      ? null
-      : resolveVisibleIdForTimestamp(protectedTailStartTimestamp, state);
-
   const protectedMessageIds =
     protectedTailStartTimestamp === null
       ? []
@@ -353,6 +348,20 @@ export function buildCompressionPlanningHints(
             .map(([messageId]) => messageId)
             .sort(compareMessageIds)
         );
+
+  // The protected-tail boundary is the START of the Nth-from-last logical turn.
+  // For a `tool-exchange` turn that start is the assistant tool-call message,
+  // which never receives a visible ref (see injectMessageIds), so a direct
+  // timestamp lookup returns null. Fall back to the first visible protected id
+  // (the turn's toolResult/bashExecution, already collected above) so the nudge
+  // can still name an addressable hot-tail boundary instead of silently
+  // dropping the "Protected hot tail starts at ..." hint.
+  const protectedTailStartId =
+    protectedTailStartTimestamp === null
+      ? null
+      : (resolveVisibleIdForTimestamp(protectedTailStartTimestamp, state) ??
+        protectedMessageIds[0] ??
+        null);
 
   const protectedBlockIds =
     protectedTailStartTimestamp === null
@@ -372,8 +381,17 @@ export function buildCompressionPlanningHints(
   const coveredSourceKeys = collectCoveredSourceKeys(snapshot, state.compressionBlocks);
   const candidateRanges: CompressionCandidateRange[] = [];
   let activeCandidate: CompressionCandidateRange | null = null;
+  // Tokens from transparent spans (passthrough roles or zero-ref assistant
+  // output) that currently fall AFTER the candidate's endId. They only become
+  // real savings if a later resolvable span extends endId past them (making
+  // them interior to the range). If the candidate flushes first they trail
+  // beyond endId, the compression splice over startId..endId will not remove
+  // them, and counting them would overstate the suggested range. So they are
+  // committed on extension and dropped on flush.
+  let pendingTransparentTokens = 0;
 
   const pushActiveCandidate = (): void => {
+    pendingTransparentTokens = 0;
     if (!activeCandidate || activeCandidate.tokenEstimate <= 0) {
       activeCandidate = null;
       return;
@@ -404,7 +422,6 @@ export function buildCompressionPlanningHints(
       continue;
     }
 
-    const spanStartTimestamp = timestamps[0]!;
     const spanEndTimestamp = timestamps[timestamps.length - 1]!;
     const touchesProtectedTail =
       protectedTailStartTimestamp !== null && spanEndTimestamp >= protectedTailStartTimestamp;
@@ -429,18 +446,38 @@ export function buildCompressionPlanningHints(
     // fragmented by every reminder injection.
     if (isPassthroughOnlySpan(sourceItems)) {
       if (activeCandidate && spanTokenEstimate > 0) {
-        activeCandidate.tokenEstimate += spanTokenEstimate;
+        pendingTransparentTokens += spanTokenEstimate;
       }
       continue;
     }
 
-    const spanStartId = resolveVisibleIdForTimestamp(spanStartTimestamp, state);
-    const spanEndId = resolveVisibleIdForTimestamp(spanEndTimestamp, state);
+    // Derive the span's addressable visible refs from its resolvable items,
+    // not the raw first/last timestamp. A `tool-exchange` span starts with an
+    // assistant tool-call message, which never receives a visible ref (see
+    // injectMessageIds); its trailing toolResult/bashExecution does, and the
+    // assistant is pulled back in by atomic-pair expansion when the agent
+    // references that ref. Using timestamps[0] here resolved to null for every
+    // tool batch and fragmented each one into its own tiny range.
+    const resolvableIds = sourceItems
+      .map((item) =>
+        item.timestamp !== null ? resolveVisibleIdForTimestamp(item.timestamp, state) : null
+      )
+      .filter((id): id is string => id !== null);
 
-    if (!spanStartId || !spanEndId || spanTokenEstimate <= 0) {
-      pushActiveCandidate();
+    // Spans with no addressable visible ref (standalone assistant output,
+    // unmatched tool calls) are transparent like passthrough roles: a
+    // compression splice over the surrounding range removes them anyway, so
+    // absorb their tokens and keep the running candidate alive instead of
+    // flushing it.
+    if (resolvableIds.length === 0 || spanTokenEstimate <= 0) {
+      if (activeCandidate && spanTokenEstimate > 0) {
+        pendingTransparentTokens += spanTokenEstimate;
+      }
       continue;
     }
+
+    const spanStartId = resolvableIds[0]!;
+    const spanEndId = resolvableIds[resolvableIds.length - 1]!;
 
     if (!activeCandidate) {
       activeCandidate = {
@@ -450,6 +487,11 @@ export function buildCompressionPlanningHints(
       };
     }
 
+    // Buffered transparent-span tokens are now interior to the range (they
+    // fall between the previous endId and this span's endId), so the splice
+    // will remove them and they count as real savings.
+    activeCandidate.tokenEstimate += pendingTransparentTokens;
+    pendingTransparentTokens = 0;
     activeCandidate.endId = spanEndId;
     activeCandidate.tokenEstimate += spanTokenEstimate;
   }
@@ -823,6 +865,33 @@ function resolveRefForTimestamp(
   return matchingRefs[0] ?? null;
 }
 
+/**
+ * Find the visible ref nearest a block boundary, constrained to the block's
+ * own timestamp span. `edge: "start"` returns the earliest visible ref at or
+ * after the block start; `edge: "end"` returns the latest at or before the
+ * block end. This is the fallback used when a boundary's exact source key /
+ * timestamp does not resolve to a ref — most commonly because a `tool-exchange`
+ * block's first covered item is the assistant tool-call message, which never
+ * receives a visible ref (see injectMessageIds). The toolResult inside the same
+ * block does carry a ref, so this recovers an addressable boundary.
+ */
+function resolveBoundaryRefWithinSpan(
+  state: DcpState | null | undefined,
+  startTimestamp: number,
+  endTimestamp: number,
+  edge: "start" | "end"
+): string | null {
+  if (!state || !Number.isFinite(startTimestamp) || !Number.isFinite(endTimestamp)) {
+    return null;
+  }
+  const within = [...state.messageIdSnapshot.entries()]
+    .filter(([, timestamp]) => timestamp >= startTimestamp && timestamp <= endTimestamp)
+    .sort((a, b) => a[1] - b[1]);
+  if (within.length === 0) return null;
+  const [ref] = edge === "start" ? within[0]! : within[within.length - 1]!;
+  return ref;
+}
+
 function resolveExistingBlockBoundaryRefs(
   existing: CompressionBlock,
   state: DcpState | null | undefined
@@ -834,10 +903,12 @@ function resolveExistingBlockBoundaryRefs(
   return {
     startRef:
       resolveRefForSourceKey(state, exactStartSourceKey) ??
-      resolveRefForTimestamp(state, existing.startTimestamp),
+      resolveRefForTimestamp(state, existing.startTimestamp) ??
+      resolveBoundaryRefWithinSpan(state, existing.startTimestamp, existing.endTimestamp, "start"),
     endRef:
       resolveRefForSourceKey(state, exactEndSourceKey) ??
-      resolveRefForTimestamp(state, existing.endTimestamp),
+      resolveRefForTimestamp(state, existing.endTimestamp) ??
+      resolveBoundaryRefWithinSpan(state, existing.startTimestamp, existing.endTimestamp, "end"),
   };
 }
 
@@ -899,7 +970,7 @@ export function resolveSupersededBlockIdsForRange(
 
     const existingCoveredSourceKeys = resolveCompressionBlockCoveredSourceKeys(snapshot, existing);
     if (existingCoveredSourceKeys === null || existingCoveredSourceKeys.size === 0) {
-      throw buildOverlapError(startId, endId, existing);
+      throw buildOverlapError(startId, endId, existing, state);
     }
 
     let coveredCount = 0;
@@ -912,7 +983,7 @@ export function resolveSupersededBlockIdsForRange(
       continue;
     }
 
-    throw buildOverlapError(startId, endId, existing);
+    throw buildOverlapError(startId, endId, existing, state);
   }
 
   return supersededBlockIds;

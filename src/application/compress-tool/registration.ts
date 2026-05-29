@@ -224,8 +224,27 @@ function estimateDcpCoverageRatio(
   const coveredSourceKeys = new Set<string>();
   for (const block of state.compressionBlocks) {
     if (!block.active) continue;
-    for (const sourceKey of block.metadata?.coveredSourceKeys ?? []) {
-      coveredSourceKeys.add(sourceKey);
+    const exactKeys = block.metadata?.coveredSourceKeys ?? [];
+    if (exactKeys.length > 0) {
+      for (const sourceKey of exactKeys) {
+        coveredSourceKeys.add(sourceKey);
+      }
+      continue;
+    }
+    // Legacy blocks (snapshot-restored, pre-exact-metadata) carry no
+    // coveredSourceKeys. Fall back to timestamp-range matching so this estimate
+    // stays consistent with resolveBlockCoveredSourceKeys() in
+    // native-compaction.ts; otherwise the auto-trigger under-counts coverage
+    // for legacy sessions and defers a compaction that session_before_compact
+    // would actually approve.
+    if (!Number.isFinite(block.startTimestamp) || !Number.isFinite(block.endTimestamp)) {
+      continue;
+    }
+    for (const item of compactableSourceItems) {
+      if (item.timestamp === null) continue;
+      if (item.timestamp >= block.startTimestamp && item.timestamp <= block.endTimestamp) {
+        coveredSourceKeys.add(item.key);
+      }
     }
   }
 

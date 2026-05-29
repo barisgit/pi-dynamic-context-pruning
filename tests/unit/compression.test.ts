@@ -410,13 +410,14 @@ describe("DCP compression.test", () => {
         createdAt: 1,
       },
     ]);
+    // Production-faithful injection: assistant messages (ts 2000/4000/6000)
+    // never receive a visible ref (injectMessageIds skips them), so only the
+    // user turns appear in messageIdSnapshot. The plain-text assistant spans
+    // are absorbed transparently into the surrounding candidate.
     state.messageIdSnapshot = new Map([
       ["m001", 1000],
-      ["m002", 2000],
-      ["m003", 3000],
-      ["m004", 4000],
-      ["m005", 5000],
-      ["m006", 6000],
+      ["m002", 3000],
+      ["m003", 5000],
     ]);
 
     const hints = buildCompressionPlanningHints(messages, state, 2);
@@ -427,7 +428,7 @@ describe("DCP compression.test", () => {
 
     assert.deepStrictEqual(
       hints.protectedMessageIds,
-      ["m005", "m006"],
+      ["m003"],
       "FAIL — protected message ids should list the visible hot-tail messages"
     );
     assert.deepStrictEqual(
@@ -442,7 +443,7 @@ describe("DCP compression.test", () => {
     );
     assert.strictEqual(
       hints.candidateRanges[0]?.endId,
-      "m004",
+      "m002",
       "FAIL — the largest safe range should stop before the protected tail"
     );
     assert.ok(
@@ -450,11 +451,11 @@ describe("DCP compression.test", () => {
       "FAIL — the largest safe range should report a positive token estimate"
     );
     assert.ok(
-      rendered.includes("Protected hot tail starts at m005."),
+      rendered.includes("Protected hot tail starts at m003."),
       "FAIL — rendered hints should include the visible hot-tail boundary"
     );
     assert.ok(
-      rendered.includes("messages m005, m006"),
+      rendered.includes("messages m003"),
       "FAIL — opted-in render should enumerate protected message ids"
     );
     assert.ok(
@@ -466,7 +467,7 @@ describe("DCP compression.test", () => {
       "FAIL — routine render should omit the verbose protected-id enumeration"
     );
     assert.ok(
-      rendered.includes("- m001..m004"),
+      rendered.includes("- m001..m002"),
       "FAIL — rendered hints should suggest the largest visible safe candidate range"
     );
 
@@ -518,15 +519,15 @@ describe("DCP compression.test", () => {
     ];
 
     const state = makeState([]);
-    // custom_message intentionally omitted from messageIdSnapshot — passthrough
-    // roles never receive a visible message ref (see injectMessageIds).
+    // Production-faithful injection: custom_message (reminder) AND assistant
+    // messages never receive a visible ref (see injectMessageIds / passthrough
+    // handling), so only the user turns (ts 1000/3000/5000) appear here. The
+    // reminder and the plain assistant spans must be absorbed transparently so
+    // the safe range stays a single m001..m002 stretch rather than fragmenting.
     state.messageIdSnapshot = new Map([
       ["m001", 1000],
-      ["m002", 2000],
-      ["m003", 3000],
-      ["m004", 4000],
-      ["m005", 5000],
-      ["m006", 6000],
+      ["m002", 3000],
+      ["m003", 5000],
     ]);
 
     const hints = buildCompressionPlanningHints(messages, state, 2);
@@ -544,7 +545,7 @@ describe("DCP compression.test", () => {
     );
     assert.strictEqual(
       hints.candidateRanges[0]?.endId,
-      "m004",
+      "m002",
       "FAIL — single safe range should still end at the last id before the hot tail"
     );
     assert.ok(
@@ -571,6 +572,226 @@ describe("DCP compression.test", () => {
 
     console.log("  PASS: passthrough roles are transparent to candidate building");
     console.log("TEST 18c PASSED\n");
+  });
+
+  // ---------------------------------------------------------------------------
+  // Test 18c2 — PLANNING HINTS DO NOT FRAGMENT ON ASSISTANT TOOL EXCHANGES
+  // ---------------------------------------------------------------------------
+  test("Test 18c2 — PLANNING HINTS DO NOT FRAGMENT ON ASSISTANT TOOL EXCHANGES", () => {
+    console.log("TEST 18c2: tool-exchange spans (assistant+toolResult) must not split safe ranges");
+
+    // Reproduces the production condition: assistant messages NEVER receive a
+    // visible ref (injectMessageIds skips them), so their timestamps are absent
+    // from messageIdSnapshot. Only user/toolResult/bashExecution are present.
+    // Each assistant emits a tool call answered by a matching toolResult, so the
+    // snapshot groups them into a single `tool-exchange` span whose first item
+    // (the assistant) has no resolvable id. The candidate builder must address
+    // the span via its trailing toolResult ref instead of flushing on every
+    // batch — otherwise it surfaces many tiny ranges of a few hundred tokens.
+    const big = (label: string): string => `${label} `.repeat(40).trim();
+    const messages: any[] = [
+      { role: "user", content: [{ type: "text", text: big("u0") }], timestamp: 1000 },
+      {
+        role: "assistant",
+        content: [{ type: "toolCall", id: "call_a", name: "read", input: {} }],
+        timestamp: 1100,
+      },
+      {
+        role: "toolResult",
+        toolCallId: "call_a",
+        content: [{ type: "text", text: big("r0") }],
+        timestamp: 1200,
+      },
+      { role: "user", content: [{ type: "text", text: big("u1") }], timestamp: 2000 },
+      {
+        role: "assistant",
+        content: [{ type: "toolCall", id: "call_b", name: "read", input: {} }],
+        timestamp: 2100,
+      },
+      {
+        role: "toolResult",
+        toolCallId: "call_b",
+        content: [{ type: "text", text: big("r1") }],
+        timestamp: 2200,
+      },
+      // Hot tail (protectRecentTurns=2) — last two logical turns are protected.
+      { role: "user", content: [{ type: "text", text: "hot tail user" }], timestamp: 5000 },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "hot tail assistant" }],
+        timestamp: 6000,
+      },
+    ];
+
+    const state = makeState([]);
+    // Production-accurate: assistant timestamps (1100, 2100, 6000) are NOT keys.
+    state.messageIdSnapshot = new Map([
+      ["m001", 1000], // user u0
+      ["m003", 1200], // toolResult r0
+      ["m004", 2000], // user u1
+      ["m006", 2200], // toolResult r1
+      ["m007", 5000], // hot-tail user
+    ]);
+
+    const hints = buildCompressionPlanningHints(messages, state, 2);
+
+    assert.strictEqual(
+      hints.candidateRanges.length,
+      1,
+      "FAIL — assistant tool exchanges must not fragment the safe range into per-batch candidates"
+    );
+    assert.strictEqual(
+      hints.candidateRanges[0]?.startId,
+      "m001",
+      "FAIL — safe range should start at the oldest visible id"
+    );
+    assert.strictEqual(
+      hints.candidateRanges[0]?.endId,
+      "m006",
+      "FAIL — safe range should extend through the last toolResult before the hot tail"
+    );
+    // The two tool exchanges carry the bulk of the tokens; a fragmented build
+    // would drop them and report only the small lone-user spans.
+    assert.ok(
+      (hints.candidateRanges[0]?.tokenEstimate ?? 0) > 200,
+      "FAIL — safe range must include the tool-exchange tokens, not just lone user messages"
+    );
+
+    console.log("  PASS: tool-exchange spans are addressed via trailing toolResult refs");
+    console.log("TEST 18c2 PASSED\n");
+  });
+
+  // ---------------------------------------------------------------------------
+  // Test 18c3 — PROTECTED-TAIL ID FALLS BACK WHEN TAIL STARTS ON A TOOL EXCHANGE
+  // ---------------------------------------------------------------------------
+  test("Test 18c3 — PROTECTED-TAIL ID FALLS BACK WHEN TAIL STARTS ON A TOOL EXCHANGE", () => {
+    console.log(
+      "TEST 18c3: hot-tail boundary on a tool-exchange turn must still surface a visible id"
+    );
+
+    // The protected-tail boundary is the START of the last logical turn. When
+    // that turn is a tool exchange, its start is the assistant tool-call
+    // message, which has NO visible ref. A direct timestamp lookup returns
+    // null; the hint must fall back to the first visible protected id (the
+    // turn's toolResult) instead of silently dropping the boundary line.
+    const big = (label: string): string => `${label} `.repeat(40).trim();
+    const messages: any[] = [
+      { role: "user", content: [{ type: "text", text: big("u0") }], timestamp: 1000 },
+      {
+        role: "assistant",
+        content: [{ type: "toolCall", id: "call_a", name: "read", input: {} }],
+        timestamp: 1100,
+      },
+      {
+        role: "toolResult",
+        toolCallId: "call_a",
+        content: [{ type: "text", text: big("r0") }],
+        timestamp: 1200,
+      },
+      { role: "user", content: [{ type: "text", text: big("u1") }], timestamp: 2000 },
+      {
+        role: "assistant",
+        content: [{ type: "toolCall", id: "call_b", name: "read", input: {} }],
+        timestamp: 2100,
+      },
+      {
+        role: "toolResult",
+        toolCallId: "call_b",
+        content: [{ type: "text", text: big("r1") }],
+        timestamp: 2200,
+      },
+    ];
+
+    const state = makeState([]);
+    // Production-accurate: assistant timestamps (1100, 2100) are absent.
+    state.messageIdSnapshot = new Map([
+      ["m001", 1000],
+      ["m003", 1200],
+      ["m004", 2000],
+      ["m006", 2200],
+    ]);
+
+    // protectRecentTurns=1 protects the LAST logical turn (the second tool
+    // exchange), whose start is assistant@2100 — unresolvable on its own.
+    const hints = buildCompressionPlanningHints(messages, state, 1);
+    const rendered = renderCompressionPlanningHints(hints);
+
+    assert.strictEqual(
+      hints.protectedTailStartId,
+      "m006",
+      "FAIL — protected-tail id should fall back to the first visible protected id (the tail toolResult)"
+    );
+    assert.ok(
+      rendered.includes("Protected hot tail starts at m006."),
+      "FAIL — nudge must still name the hot-tail boundary when the tail starts on a tool exchange"
+    );
+
+    console.log("  PASS: protected-tail id falls back to a visible ref on tool-exchange tails");
+    console.log("TEST 18c3 PASSED\n");
+  });
+
+  // ---------------------------------------------------------------------------
+  // Test 18c4 — TRAILING TRANSPARENT-SPAN TOKENS ARE NOT OVERCOUNTED
+  // ---------------------------------------------------------------------------
+  test("Test 18c4 — TRAILING TRANSPARENT-SPAN TOKENS ARE NOT OVERCOUNTED", () => {
+    console.log("TEST 18c4: transparent tokens count only when interior to the suggested range");
+
+    // A transparent span (reminder / zero-ref) only becomes real savings if a
+    // later resolvable span extends endId past it (interior). A transparent
+    // span that TRAILS the last resolvable boundary is not removed by a
+    // startId..endId splice, so its tokens must NOT inflate the estimate.
+    const big = (label: string): string => `${label} `.repeat(20).trim();
+    const interiorMessages: any[] = [
+      { role: "user", content: [{ type: "text", text: big("u0") }], timestamp: 1000 },
+      { role: "custom_message", content: [{ type: "text", text: big("REMIND") }], timestamp: 1500 },
+      { role: "user", content: [{ type: "text", text: big("u1") }], timestamp: 2000 },
+      { role: "user", content: [{ type: "text", text: "tail" }], timestamp: 5000 },
+      { role: "assistant", content: [{ type: "text", text: "tail a" }], timestamp: 6000 },
+    ];
+    const interiorState = makeState([]);
+    interiorState.messageIdSnapshot = new Map([
+      ["m001", 1000],
+      ["m002", 2000],
+      ["m003", 5000],
+    ]);
+    const interiorHints = buildCompressionPlanningHints(interiorMessages, interiorState, 2);
+
+    // Same transcript but the reminder TRAILS the last resolvable user (m002).
+    const trailingMessages: any[] = [
+      { role: "user", content: [{ type: "text", text: big("u0") }], timestamp: 1000 },
+      { role: "user", content: [{ type: "text", text: big("u1") }], timestamp: 2000 },
+      { role: "custom_message", content: [{ type: "text", text: big("REMIND") }], timestamp: 2500 },
+      { role: "user", content: [{ type: "text", text: "tail" }], timestamp: 5000 },
+      { role: "assistant", content: [{ type: "text", text: "tail a" }], timestamp: 6000 },
+    ];
+    const trailingState = makeState([]);
+    trailingState.messageIdSnapshot = new Map([
+      ["m001", 1000],
+      ["m002", 2000],
+      ["m003", 5000],
+    ]);
+    const trailingHints = buildCompressionPlanningHints(trailingMessages, trailingState, 2);
+
+    assert.strictEqual(
+      interiorHints.candidateRanges[0]?.endId,
+      "m002",
+      "FAIL — interior case should still span m001..m002"
+    );
+    assert.strictEqual(
+      trailingHints.candidateRanges[0]?.endId,
+      "m002",
+      "FAIL — trailing case should still span m001..m002"
+    );
+    assert.ok(
+      (interiorHints.candidateRanges[0]?.tokenEstimate ?? 0) >
+        (trailingHints.candidateRanges[0]?.tokenEstimate ?? 0),
+      "FAIL — interior reminder tokens should count; trailing reminder tokens should not"
+    );
+
+    console.log(
+      "  PASS: trailing transparent tokens excluded; interior transparent tokens counted"
+    );
+    console.log("TEST 18c4 PASSED\n");
   });
 
   // ---------------------------------------------------------------------------
@@ -735,6 +956,104 @@ describe("DCP compression.test", () => {
 
     console.log("  PASS: partial exact overlap still rejects");
     console.log("TEST 22 PASSED\n");
+  });
+
+  // ---------------------------------------------------------------------------
+  // Test 22b — OVERLAP HINT RESOLVES A VISIBLE REF FOR TOOL-EXCHANGE BLOCKS
+  // ---------------------------------------------------------------------------
+  test("Test 22b — OVERLAP HINT RESOLVES A VISIBLE REF FOR TOOL-EXCHANGE BLOCKS", () => {
+    console.log(
+      "TEST 22b: overlap error should name a visible ref when the block starts on an assistant"
+    );
+
+    // Block b2 covers a tool exchange: assistant tool-call (no ref) + toolResult
+    // (has ref m003). The block's first covered source key and startTimestamp
+    // both belong to the assistant, so the legacy hint resolver produced the
+    // degraded "visible message refs ... unavailable" text (this is the b5
+    // failure seen in real dcp logs). Two fixes combine here: state is now
+    // forwarded into buildOverlapError, and resolveExistingBlockBoundaryRefs
+    // falls back to the first/last visible ref within the block's span.
+    const messages: any[] = [
+      { role: "user", content: [{ type: "text", text: "u0" }], timestamp: 1000 },
+      {
+        role: "assistant",
+        content: [{ type: "toolCall", id: "call_a", name: "read", input: {} }],
+        timestamp: 1100,
+      },
+      {
+        role: "toolResult",
+        toolCallId: "call_a",
+        content: [{ type: "text", text: "r0" }],
+        timestamp: 1200,
+      },
+      { role: "user", content: [{ type: "text", text: "u1" }], timestamp: 2000 },
+    ];
+    const snapshot = buildTranscriptSnapshot(messages);
+    const assistantKey = snapshot.sourceItems[1]!.key;
+    const toolResultKey = snapshot.sourceItems[2]!.key;
+    const block = {
+      id: 2,
+      topic: "tool exchange",
+      summary: "s",
+      startTimestamp: 1100,
+      endTimestamp: 1200,
+      anchorTimestamp: 2000,
+      active: true,
+      summaryTokenEstimate: 1,
+      createdAt: 1,
+      metadata: {
+        coveredSourceKeys: [assistantKey, toolResultKey],
+        coveredSpanKeys: [],
+        coveredArtifactRefs: [],
+        coveredToolIds: [],
+        supersededBlockIds: [],
+        fileReadStats: [],
+        fileWriteStats: [],
+        commandStats: [],
+      },
+    };
+    const state = makeState([block as any]);
+    // Production-accurate: assistant@1100 has no ref; toolResult@1200 -> m003.
+    state.messageIdSnapshot = new Map([
+      ["m001", 1000],
+      ["m003", 1200],
+      ["m004", 2000],
+    ]);
+
+    let thrownMessage = "";
+    try {
+      // New range partially overlaps the block (does not fully cover the
+      // toolResult key) so supersession is rejected and the hint is built.
+      resolveSupersededBlockIdsForRange(
+        messages,
+        [block as any],
+        1000,
+        1150,
+        [assistantKey],
+        "m001",
+        "m001b",
+        new Set(),
+        state
+      );
+    } catch (error) {
+      thrownMessage = error instanceof Error ? error.message : String(error);
+    }
+
+    assert.ok(
+      /Overlapping compression ranges are not supported/.test(thrownMessage),
+      "FAIL — partial overlap with a tool-exchange block should reject"
+    );
+    assert.ok(
+      thrownMessage.includes("m003"),
+      "FAIL — overlap hint should name the visible toolResult ref inside the block span"
+    );
+    assert.ok(
+      !thrownMessage.includes("visible message refs for its exact boundaries are unavailable"),
+      "FAIL — overlap hint must not degrade to the unavailable-refs fallback when a visible ref exists"
+    );
+
+    console.log("  PASS: overlap hint resolves a visible ref for tool-exchange blocks");
+    console.log("TEST 22b PASSED\n");
   });
 
   // ---------------------------------------------------------------------------
