@@ -54,6 +54,7 @@ export {
   getNudgeType,
   resolveEffectiveContextSize,
 } from "../../src/domain/pruning/index.js";
+export { estimateMessageTokens } from "../../src/domain/tokens/estimate.js";
 export {
   buildBlockOwnerKey,
   buildLiveOwnerKeys,

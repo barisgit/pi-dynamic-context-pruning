@@ -3,6 +3,7 @@ import { REMINDER_UPSERT_EVENT } from "pi-reminders/src/types.js";
 import type { ReminderIntent } from "pi-reminders/src/types.js";
 import {
   assert,
+  estimateMessageTokens,
   exceedsMaxContextLimit,
   getNudgeDecisionReason,
   getNudgeType,
@@ -166,6 +167,49 @@ describe("DCP nudge.test", () => {
 
     console.log("  PASS: turn debounce and post-compress suppression work");
     console.log("TEST 13 PASSED\n");
+  });
+
+  test("context handler threads effective DCP tokens when host under-reports", async () => {
+    const filler = [
+      "lorem ipsum dolor sit amet consectetur adipiscing elit",
+      "sed do eiusmod tempor incididunt ut labore et dolore magna aliqua",
+      "ut enim ad minim veniam quis nostrud exercitation ullamco laboris",
+      "nisi ut aliquip ex ea commodo consequat duis aute irure dolor",
+    ].join(" ");
+    const messages = Array.from({ length: 5 }, (_, index) => ({
+      role: "assistant",
+      content: [{ type: "text", text: `${filler} `.repeat(120) }],
+      timestamp: 10_000 + index,
+    }));
+    const measured = messages.reduce((sum, message) => sum + estimateMessageTokens(message), 0);
+    const contextWindow = measured * 4;
+    const hostTokens = Math.floor(measured / 8);
+
+    const config = makeConfig();
+    config.compress.minContextPercent = 0.2;
+
+    const state = makeState();
+    state.currentTurn = 5;
+    state.lastCompressTurn = -1;
+    state.lastNudgeTurn = -1;
+
+    const { pi, handlers, emitted } = createMockPi();
+
+    // Host usage can under-report after resume. This guards that the context
+    // handler threads the effective DCP estimate, not raw usage.tokens, through
+    // nudge decisions and reminder metadata.
+    registerContextHandler(pi as any, state, config);
+    await handlers.get("context")!({ messages }, createMockContext(hostTokens, contextWindow));
+
+    const upserts = emitted.filter((event) => event.name === REMINDER_UPSERT_EVENT);
+    expect(upserts).toHaveLength(1);
+
+    const reminder = upserts[0]!.payload as ReminderIntent;
+    const metadata = reminder.metadata!;
+    expect(metadata.contextTokens).toBeGreaterThan(hostTokens);
+    expect(metadata.contextTokens).toBe(measured);
+    expect(metadata.contextPercent as number).toBeGreaterThanOrEqual(0.2);
+    expect(metadata.contextPercent as number).toBeCloseTo(0.25, 2);
   });
 
   test("max-token nudges use action wording even when percent is low", async () => {
