@@ -30,15 +30,6 @@ function isCoverageBearingDcpState(data: unknown): boolean {
   return false;
 }
 
-function findLatestCoverageBearingDcpStateEntry(branchEntries: readonly any[]): any | null {
-  for (let index = branchEntries.length - 1; index >= 0; index--) {
-    const entry = branchEntries[index];
-    if (!isDcpStateEntry(entry)) continue;
-    if (isCoverageBearingDcpState(entry.data)) return entry;
-  }
-  return null;
-}
-
 /**
  * Latest non-`unchanged` `dcp-state` entry regardless of whether it carries
  * blocks. Used to recover scalar continuity (tombstones, turn watermarks,
@@ -237,37 +228,36 @@ function directRestore(
   resetState(state);
   initializeSessionState(state, config);
 
-  const latestCoverageEntry = findLatestCoverageBearingDcpStateEntry(branchEntries);
+  // Latest-entry-wins: the most recent non-`unchanged` dcp-state snapshot
+  // decides the resume, so a newer lossy v4 save is never silently skipped in
+  // favour of older coverage. Scanning backward for the latest *coverage* entry
+  // would restore stale blocks and mislabel the outcome whenever the newest
+  // save was a lossy v4 written after an older v1/v5.
+  const latestEntry = findLatestDcpStateEntry(branchEntries);
   let restoredStateEntries = 0;
   let restoreOutcome: RestoreOutcome = "empty";
   let restoredSchemaVersion: number | null = null;
-  if (latestCoverageEntry) {
-    // Coverage-bearing snapshots (v1/v5) carry both block coverage and the
-    // scalar bootstrap (prunedToolIds, turn watermarks, lifetime savings), so a
-    // single direct restore reproduces the full runtime state.
-    restorePersistedState(latestCoverageEntry.data, state);
+  if (latestEntry) {
     restoredStateEntries = 1;
-    // Coverage entries omit schemaVersion only for legacy v1 fat snapshots.
-    restoredSchemaVersion = readPersistedSchemaVersion(latestCoverageEntry.data) ?? 1;
-    restoreOutcome = `restored-v${restoredSchemaVersion}`;
-  } else {
-    // No block was ever compressed on this branch (blocks never leave the
-    // array once pushed, so a v3 scalar entry can only be the latest when
-    // nothing compressed). There are no blocks to restore, but the session may
-    // still carry scalar continuity — dedup/error-purge tombstones, turn
-    // watermarks, realized lifetime savings — in its latest v3 scalar snapshot.
-    // Restore those so resume does not silently drop tombstones or reset the
-    // nudge debounce. restorePersistedStateScalars never resurrects blocks, so
-    // this stays safe for lossy legacy v4 entries too.
-    const latestEntry = findLatestDcpStateEntry(branchEntries);
-    if (latestEntry) {
+    restoredSchemaVersion = readPersistedSchemaVersion(latestEntry.data);
+    if (isCoverageBearingDcpState(latestEntry.data)) {
+      // Coverage-bearing snapshots (v1/v5) carry both block coverage and the
+      // scalar bootstrap (prunedToolIds, turn watermarks, lifetime savings), so
+      // a single direct restore reproduces the full runtime state.
+      restorePersistedState(latestEntry.data, state);
+      // Coverage entries omit schemaVersion only for legacy v1 fat snapshots.
+      restoredSchemaVersion = restoredSchemaVersion ?? 1;
+      restoreOutcome = `restored-v${restoredSchemaVersion}`;
+    } else {
+      // The latest snapshot carries no restorable coverage. A v4 entry here is a
+      // lossy legacy snapshot that once held blocks we cannot restore, so this
+      // resume drops them (reset-legacy-v4). A v3 entry is the normal
+      // never-compressed marker with no blocks to lose. Either way we still
+      // restore scalar continuity — dedup/error-purge tombstones, turn
+      // watermarks, realized lifetime savings — so resume does not silently drop
+      // tombstones or reset the nudge debounce. restorePersistedStateScalars
+      // never resurrects blocks, so this stays safe for lossy v4 too.
       restorePersistedStateScalars(latestEntry.data, state);
-      restoredStateEntries = 1;
-      restoredSchemaVersion = readPersistedSchemaVersion(latestEntry.data);
-      // A v4 entry reaching the scalar branch means a lossy legacy snapshot was
-      // the latest: it once carried blocks that cannot be restored, so this
-      // resume drops them. A v3 entry is the normal never-compressed marker
-      // with no blocks to lose.
       restoreOutcome =
         restoredSchemaVersion === 4
           ? "reset-legacy-v4"

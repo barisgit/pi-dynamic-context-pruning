@@ -354,4 +354,43 @@ describe("restoreOutcome distinguishes restore branches", () => {
     expect(result.restoredStateEntries).toBe(0);
     expect(state.compressionBlocks).toHaveLength(0);
   });
+
+  test("latest-entry-wins: older v5 blocks + NEWER lossy v4 -> reset-legacy-v4 (stale blocks NOT resurrected)", () => {
+    // Ordering regression: a branch can hold an older coverage-bearing v5
+    // snapshot followed by a NEWER lossy v4 snapshot (e.g. the session briefly
+    // ran a fixed binary, then a stale one wrote the latest save). A backward
+    // scan for the latest *coverage* entry would skip the newer v4, resurrect
+    // the stale v5 blocks, and mislabel the resume `restored-v5`. Latest-entry
+    // -wins: the newest non-`unchanged` entry decides, so the lossy v4 stops
+    // the scan, blocks clean-reset, and the outcome is honestly reset-legacy-v4.
+    const older = makeState([block(1, true)]);
+    older.nextBlockId = 2;
+    older.currentTurn = 9;
+
+    const newerV4 = {
+      schemaVersion: 4 as const,
+      savedAt: 9000,
+      currentTurn: 21,
+      lastNudgeTurn: 18,
+      lastCompressTurn: 17,
+      prunedToolIds: ["tool-a"],
+      lifetimeTokensSavedRealized: 94278,
+      blocks: [],
+      nextBlockId: 6,
+    };
+
+    const branch = [dcpStateEntry(serializePersistedState(older)), dcpStateEntry(newerV4)];
+    const state = makeState();
+    const result = restoreStateFromBranch(branch, state, makeConfig());
+
+    // The newer v4 wins: stale v5 blocks must NOT be restored.
+    expect(result.restoreOutcome).toBe("reset-legacy-v4");
+    expect(result.restoredSchemaVersion).toBe(4);
+    expect(state.compressionBlocks).toHaveLength(0);
+    // Scalar continuity comes from the winning (newer v4) entry, not the older v5.
+    expect(state.currentTurn).toBe(21);
+    expect(state.lastNudgeTurn).toBe(18);
+    expect(state.lifetimeTokensSavedRealized).toBe(94278);
+    expect(state.prunedToolIds.has("tool-a")).toBe(true);
+  });
 });

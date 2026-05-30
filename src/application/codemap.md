@@ -67,7 +67,7 @@ Registers session lifecycle hooks (`session_start`, `session_tree`, `session_shu
 
 - **`session_start` / `session_tree`** — calls `restoreStateFromBranch()`:
   - Runs a single direct-restore path: `resetState(state)` + `initializeSessionState(state, config)`.
-  - If `findLatestCoverageBearingDcpStateEntry(branchEntries)` finds v1/v5 coverage, `restorePersistedState()` restores full block state plus scalars directly (`restoredStateEntries = 1`).
+  - Latest-entry-wins: `findLatestDcpStateEntry(branchEntries)` picks the newest non-`unchanged` snapshot. If that entry is coverage-bearing (v1/v5), `restorePersistedState()` restores full block state plus scalars directly (`restoredStateEntries = 1`); otherwise the scalar branch runs (a newer lossy v4 therefore resets rather than resurrecting older coverage).
   - Otherwise `findLatestDcpStateEntry(branchEntries)` + `restorePersistedStateScalars()` restores scalar continuity only (`prunedToolIds`, turn watermarks, `lifetimeTokensSavedRealized`) and never resurrects blocks.
   - Always finishes with `repairOffBranchNativeCompactionState()` and `repairStaleNudgeWatermarks()`.
 - **`session_shutdown` / `agent_end`** — calls `saveState()` when `state.pendingSave` is true. Guarded by `ctx.hasUI` (skip in `-p` print mode).
