@@ -2,11 +2,11 @@
 // ---------------------------------------------------------------------------
 // scripts/replay-equivalence.ts
 //
-// Offline replay-equivalence checker for dcp-replay-v3.
+// Offline replay/direct-restore equivalence checker.
 //
 // For each session JSONL it:
-//   1. Restores state via the legacy snapshot path (snapshotRestore).
-//   2. Restores state via the new replay path (replayDcpState).
+//   1. Replays the raw append-only branch via replayDcpState.
+//   2. Serializes that freshly replayed state and direct-restores it.
 //   3. Diffs the four observable fields the criterion cares about:
 //      active block IDs, nextBlockId, tokensSaved, prunedToolIds.
 //
@@ -25,9 +25,9 @@ import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { Glob } from "bun";
-import { createState, resetState } from "../src/state.js";
+import { createState } from "../src/state.js";
 import type { DcpConfig } from "../src/types/config.js";
-import { restorePersistedState } from "../src/infrastructure/persistence.js";
+import { restorePersistedState, serializePersistedState } from "../src/infrastructure/persistence.js";
 import { replayDcpState } from "../src/domain/replay/index.js";
 
 // ---------------------------------------------------------------------------
@@ -164,16 +164,14 @@ function extractBranches(allEntries: any[]): Array<{ branchId: string | null; en
 }
 
 // ---------------------------------------------------------------------------
-// Snapshot restore (legacy path)
+// Direct restore from a freshly serialized replay state
 // ---------------------------------------------------------------------------
 
-function snapshotRestoreForEquivalence(branchEntries: readonly any[]): ReturnType<typeof createState> {
+function directRestoreFromSerializedReplay(
+  replayState: ReturnType<typeof createState>
+): ReturnType<typeof createState> {
   const state = createState();
-  for (const entry of branchEntries) {
-    if (isDcpStateEntry(entry)) {
-      restorePersistedState(entry.data, state);
-    }
-  }
+  restorePersistedState(serializePersistedState(replayState), state);
   return state;
 }
 
@@ -206,23 +204,23 @@ function arraysEqual<T>(a: T[], b: T[]): boolean {
 
 export interface BranchMismatch {
   field: string;
-  snapshot: unknown;
+  directRestore: unknown;
   replay: unknown;
 }
 
-export function diffObservables(snapshot: Observables, replay: Observables): BranchMismatch[] {
+export function diffObservables(directRestore: Observables, replay: Observables): BranchMismatch[] {
   const mismatches: BranchMismatch[] = [];
-  if (!arraysEqual(snapshot.activeBlockIds, replay.activeBlockIds)) {
-    mismatches.push({ field: "activeBlockIds", snapshot: snapshot.activeBlockIds, replay: replay.activeBlockIds });
+  if (!arraysEqual(directRestore.activeBlockIds, replay.activeBlockIds)) {
+    mismatches.push({ field: "activeBlockIds", directRestore: directRestore.activeBlockIds, replay: replay.activeBlockIds });
   }
-  if (snapshot.nextBlockId !== replay.nextBlockId) {
-    mismatches.push({ field: "nextBlockId", snapshot: snapshot.nextBlockId, replay: replay.nextBlockId });
+  if (directRestore.nextBlockId !== replay.nextBlockId) {
+    mismatches.push({ field: "nextBlockId", directRestore: directRestore.nextBlockId, replay: replay.nextBlockId });
   }
-  if (snapshot.tokensSaved !== replay.tokensSaved) {
-    mismatches.push({ field: "tokensSaved", snapshot: snapshot.tokensSaved, replay: replay.tokensSaved });
+  if (directRestore.tokensSaved !== replay.tokensSaved) {
+    mismatches.push({ field: "tokensSaved", directRestore: directRestore.tokensSaved, replay: replay.tokensSaved });
   }
-  if (!arraysEqual(snapshot.prunedToolIds, replay.prunedToolIds)) {
-    mismatches.push({ field: "prunedToolIds", snapshot: snapshot.prunedToolIds, replay: replay.prunedToolIds });
+  if (!arraysEqual(directRestore.prunedToolIds, replay.prunedToolIds)) {
+    mismatches.push({ field: "prunedToolIds", directRestore: directRestore.prunedToolIds, replay: replay.prunedToolIds });
   }
   return mismatches;
 }
@@ -249,8 +247,8 @@ interface FileResult {
 }
 
 /**
- * A session is considered "in the v3 equivalence contract" when any of its
- * dcp-state entries declares schemaVersion 3. Pre-v3 sessions are reported
+ * A session is considered "in the replay equivalence contract" when any of its
+ * dcp-state entries declares schemaVersion 3 or 5. Pre-v3 sessions are reported
  * but their mismatches do not fail --corpus mode, because they were written
  * with legacy snapshot semantics that replay cannot reconstruct (e.g. slimmed
  * inactive blocks with savedTokenEstimate kept but coverage dropped, or
@@ -260,7 +258,7 @@ interface FileResult {
 function sessionContract(entries: readonly any[]): "v3" | "legacy" {
   for (const entry of entries) {
     if (!isDcpStateEntry(entry)) continue;
-    if (entry.data?.schemaVersion === 3) return "v3";
+    if (entry.data?.schemaVersion === 3 || entry.data?.schemaVersion === 5) return "v3";
   }
   return "legacy";
 }
@@ -311,13 +309,13 @@ async function checkFile(filePath: string): Promise<FileResult> {
     }
 
     try {
-      const snapshotState = snapshotRestoreForEquivalence(entries);
       const replayState = createState();
       replayDcpState(entries, EQUIVALENCE_CONFIG, { state: replayState });
+      const directRestoreState = directRestoreFromSerializedReplay(replayState);
 
-      const snapshotObs = extractObservables(snapshotState);
+      const directRestoreObs = extractObservables(directRestoreState);
       const replayObs = extractObservables(replayState);
-      const mismatches = diffObservables(snapshotObs, replayObs);
+      const mismatches = diffObservables(directRestoreObs, replayObs);
 
       if (mismatches.length === 0) {
         result.equivalentBranches++;
@@ -344,7 +342,7 @@ function usage(): never {
   bun scripts/replay-equivalence.ts <session.jsonl>
   bun scripts/replay-equivalence.ts --corpus [--session-dir <dir>]
 
-Compares legacy snapshot restore vs replay restore for each JSONL session branch.
+Compares direct-restore-from-serialized-replay vs replay for each JSONL session branch.
 Reports mismatches in activeBlockIds, nextBlockId, tokensSaved, prunedToolIds.
 
 Options:
@@ -371,7 +369,7 @@ function printFileResult(result: FileResult, verbose: boolean): void {
     if (detail.status === "mismatch") {
       console.log(`  branch ${detail.branchId ?? "root"}: MISMATCH`);
       for (const m of detail.mismatches ?? []) {
-        console.log(`    ${m.field}: snapshot=${JSON.stringify(m.snapshot)} replay=${JSON.stringify(m.replay)}`);
+        console.log(`    ${m.field}: directRestore=${JSON.stringify(m.directRestore)} replay=${JSON.stringify(m.replay)}`);
       }
     } else if (detail.status === "error") {
       console.log(`  branch ${detail.branchId ?? "root"}: ERROR ${detail.error}`);
@@ -392,12 +390,10 @@ async function main(): Promise<void> {
   const corpusMode = args.includes("--corpus");
   const verbose = args.includes("--verbose");
   const sessionDirIdx = args.indexOf("--session-dir");
-  const sessionDir =
-    sessionDirIdx >= 0 && args[sessionDirIdx + 1]
-      ? args[sessionDirIdx + 1]!
-      : join(homedir(), ".pi", "agent", "sessions");
+  const sessionDirValue = sessionDirIdx >= 0 ? args[sessionDirIdx + 1] : undefined;
+  const sessionDir = sessionDirValue ?? join(homedir(), ".pi", "agent", "sessions");
 
-  const singleFile = args.find((a) => !a.startsWith("--") && a !== args[sessionDirIdx + 1]);
+  const singleFile = args.find((a) => !a.startsWith("--") && a !== sessionDirValue);
 
   if (!corpusMode && !singleFile) usage();
 

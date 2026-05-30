@@ -148,7 +148,7 @@ describe("DCP session handler", () => {
     expect(state.tokensSaved).toBe(100);
   });
 
-  test("session_start uses scalar replay when native compaction is on the active branch", async () => {
+  test("session_start directly restores inactive state when native compaction is on the active branch", async () => {
     const inactiveState = makeState([block(false)]);
     inactiveState.nextBlockId = 2;
     inactiveState.tokensSaved = 0;
@@ -183,8 +183,8 @@ describe("DCP session handler", () => {
     registerSessionHandlers(pi as any, state, makeConfig());
     await handlers.get("session_start")({ type: "session_start", reason: "resume" }, ctx);
 
-    expect(state.replayPending).toBe(true);
-    expect(state.compressionBlocks).toHaveLength(0);
+    expect(state.compressionBlocks).toHaveLength(1);
+    expect(state.compressionBlocks[0]?.active).toBe(false);
     expect(state.tokensSaved).toBe(0);
   });
 

@@ -65,7 +65,7 @@ Notes:
 
 ## Current architecture status
 
-This repo is post **dcp-replay-v3**: persistence is replay-first, but the in-memory block model is still the legacy block log with source-key anchors.
+This repo is post **direct-restore**: persistence restores coverage-bearing blocks directly, and the in-memory block model is still the legacy block log with source-key anchors.
 
 1. **Active runtime path = legacy blocks with source-key anchors**
 
@@ -87,12 +87,12 @@ This repo is post **dcp-replay-v3**: persistence is replay-first, but the in-mem
 - assistant tool-call messages plus matching `toolResult` / `bashExecution` are grouped into one `tool-exchange` span
 - this span model now drives several current semantics, not just future v2 work
 
-4. **Persistence is replay-first (dcp-replay-v3)**
+4. **Persistence is direct-restore (schema v5)**
 
-- on-disk `dcp-state` entries are a tiny scalar bootstrap (`PersistedDcpStateV3`, `<4 KiB`); they no longer carry the block log
-- `src/domain/replay/` reconstructs `state.compressionBlocks`, supersession, savedTokenEstimate, prunedToolIds, etc. from the session transcript + `compress` tool calls/results + `dcp-native-compaction` entries on restore
-- `src/application/session-handler.ts` is replay-first with a snapshot fallback for pre-v3 sessions (`branchIsReplayable()` gating)
-- `scripts/vacuum-dcp-session.ts` and `scripts/replay-equivalence.ts` validate and shrink pre-v3 corpora against the new shape
+- empty on-disk `dcp-state` entries remain tiny scalar bootstraps (`PersistedDcpStateV3`)
+- once blocks exist, `serializePersistedState()` writes `PersistedDcpStateV5`: scalars plus active blocks with exact coverage, source-key anchors, and finite timestamp fallbacks; inactive blocks are slimmed
+- `src/application/session-handler.ts` restores the latest coverage-bearing v1/v2/v5 `dcp-state` entry directly; v3/v4 entries without coverage clean-reset to empty block state
+- `src/domain/replay/` is retained for offline scripts such as `scripts/vacuum-dcp-session.ts` and `scripts/replay-equivalence.ts`, not for live resume
 - `compressionBlocksV2` and `src/domain/compression/materialize.ts` remain scaffolding / shared renderer support; the runtime still materializes legacy blocks, not full v2 span-key blocks
 
 ---
@@ -231,7 +231,7 @@ Touch at least:
 
 ### If you change persisted block metadata
 
-Persistence is **replay-first** (dcp-replay-v3): the on-disk `dcp-state` entry is a tiny scalar bootstrap (`PersistedDcpStateV3` shape, `<4 KiB`) and the real block state is reconstructed by `replayDcpState()` from the transcript + `compress` tool calls/results + `dcp-native-compaction` entries on restore. Anything you persist that is NOT also derivable from those branch entries will be lost on the next session reload.
+Persistence is **direct-restore**: v5 `dcp-state` entries persist active compression blocks with exact coverage and finite timestamp fallback so resume does not replay the live context buffer. Empty sessions still write v3 scalar markers; v4/v3 entries without coverage intentionally clean-reset. Anything needed by live pruning after reload must be persisted in v5 or derivable from the current transcript.
 
 Touch at least:
 

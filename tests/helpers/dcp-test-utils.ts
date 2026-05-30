@@ -52,7 +52,9 @@ export {
   applyPruning,
   exceedsMaxContextLimit,
   getNudgeType,
+  resolveEffectiveContextSize,
 } from "../../src/domain/pruning/index.js";
+export { estimateMessageTokens } from "../../src/domain/tokens/estimate.js";
 export {
   buildBlockOwnerKey,
   buildLiveOwnerKeys,
@@ -119,7 +121,6 @@ export function makeState(compressionBlocks: DcpState["compressionBlocks"] = [])
     lifetimeTokensSavedRealized: 0,
     totalPruneCount: 0,
     pendingSave: false,
-    replayPending: false,
     lastNudgeTurn: -1,
     lastCompressTurn: -1,
   };

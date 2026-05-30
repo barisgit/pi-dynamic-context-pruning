@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { restorePersistedState, serializePersistedState } from "../../src/infrastructure/persistence.js";
 import { createEmptyCompressionBlockMetadata } from "../../src/domain/compression/metadata.js";
-import type { CompressionBlock, PersistedDcpStateV4 } from "../../src/types/state.js";
+import type { CompressionBlock, PersistedDcpStateV5 } from "../../src/types/state.js";
 import { makeState } from "../helpers/dcp-test-utils.js";
 
 function block(overrides: Partial<CompressionBlock>): CompressionBlock {
@@ -33,7 +33,7 @@ function block(overrides: Partial<CompressionBlock>): CompressionBlock {
   };
 }
 
-describe("persisted block metadata v4", () => {
+describe("persisted block metadata v5", () => {
   test("round-trips mixed active and inactive block metadata", () => {
     const active = block({ id: 1, active: true, savedTokenEstimate: 250 });
     const inactive = block({ id: 2, active: false, savedTokenEstimate: 0, compressCallId: undefined });
@@ -50,17 +50,17 @@ describe("persisted block metadata v4", () => {
     state.lifetimeTokensSavedRealized = 900;
     state.prunedToolIds.add("tool-a");
 
-    const persisted = JSON.parse(JSON.stringify(serializePersistedState(state))) as PersistedDcpStateV4;
+    const persisted = JSON.parse(JSON.stringify(serializePersistedState(state))) as PersistedDcpStateV5;
 
-    expect(persisted.schemaVersion).toBe(4);
+    expect(persisted.schemaVersion).toBe(5);
     expect(persisted.nextBlockId).toBe(3);
     expect(persisted.blocks).toHaveLength(2);
     const firstPersistedBlock = persisted.blocks[0] as unknown as Record<string, unknown>;
-    expect(firstPersistedBlock.metadata).toBeUndefined();
+    expect(firstPersistedBlock.metadata).toBeDefined();
     expect(firstPersistedBlock.activityLog).toBeUndefined();
-    expect(firstPersistedBlock.coveredSourceKeys).toBeUndefined();
-    expect(persisted.blocks[0]?.supersededBlockIds).toEqual([0]);
-    expect(persisted.blocks[1]?.supersededBlockIds).toEqual([1]);
+    expect((firstPersistedBlock.metadata as any).coveredSourceKeys).toEqual(["source-1"]);
+    expect(persisted.blocks[0]?.metadata?.supersededBlockIds).toEqual([0]);
+    expect(persisted.blocks[1]?.metadata?.supersededBlockIds).toEqual([1]);
 
     const restored = makeState();
     restorePersistedState(persisted, restored);
@@ -77,21 +77,27 @@ describe("persisted block metadata v4", () => {
     for (const [index, original] of [active, inactive].entries()) {
       const actual = restored.compressionBlocks[index];
       expect(actual?.id).toBe(original.id);
-      expect(actual?.topic).toBe(original.topic);
-      expect(actual?.summary).toBe(original.summary);
+      expect(actual?.topic).toBe(original.active ? original.topic : "");
+      expect(actual?.summary).toBe(original.active ? original.summary : "");
       expect(actual?.active).toBe(original.active);
       expect(actual?.createdAt).toBe(original.createdAt);
       expect(actual?.savedTokenEstimate).toBe(original.savedTokenEstimate);
       expect(actual?.summaryTokenEstimate).toBe(original.summaryTokenEstimate);
-      expect(actual?.compressCallId).toBe(original.compressCallId);
+      expect(actual?.compressCallId).toBe(original.active ? original.compressCallId : undefined);
       expect(actual?.metadata?.supersededBlockIds).toEqual(original.metadata?.supersededBlockIds);
-      expect(actual?.metadata?.coveredSourceKeys).toEqual([]);
-      expect(actual?.metadata?.coveredSpanKeys).toEqual([]);
-      expect(actual?.metadata?.coveredArtifactRefs).toEqual([]);
-      expect(actual?.metadata?.coveredToolIds).toEqual([]);
-      expect(actual?.metadata?.fileReadStats).toEqual([]);
-      expect(actual?.metadata?.fileWriteStats).toEqual([]);
-      expect(actual?.metadata?.commandStats).toEqual([]);
+      expect(actual?.metadata?.coveredSourceKeys).toEqual(original.active ? ["source-1"] : []);
+      expect(actual?.metadata?.coveredSpanKeys).toEqual(original.active ? ["span-1"] : []);
+      expect(actual?.metadata?.coveredArtifactRefs).toEqual(original.active ? ["artifact-1"] : []);
+      expect(actual?.metadata?.coveredToolIds).toEqual(original.active ? ["tool-1"] : []);
+      expect(actual?.metadata?.fileReadStats).toEqual(
+        original.active ? [{ path: "file-1.ts", count: 1, lineSpans: ["L1-L2"] }] : []
+      );
+      expect(actual?.metadata?.fileWriteStats).toEqual(
+        original.active ? [{ path: "file-1.ts", editCount: 1, addedLines: 2, removedLines: 0 }] : []
+      );
+      expect(actual?.metadata?.commandStats).toEqual(
+        original.active ? [{ command: "echo 1", status: "ok" }] : []
+      );
     }
   });
 
