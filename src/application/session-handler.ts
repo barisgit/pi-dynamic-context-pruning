@@ -3,7 +3,11 @@ import type { DcpConfig } from "../types/config.js";
 import type { CompressionBlock, DcpState } from "../types/state.js";
 import { createState, resetState } from "../state.js";
 import { appendDebugLog, buildSessionDebugPayload } from "../infrastructure/debug-log.js";
-import { restorePersistedState, serializePersistedState } from "../infrastructure/persistence.js";
+import {
+  restorePersistedState,
+  restorePersistedStateScalars,
+  serializePersistedState,
+} from "../infrastructure/persistence.js";
 import { updateDcpStatus } from "./status.js";
 
 /** Apply config-derived baseline state before session hooks run. */
@@ -14,7 +18,11 @@ export function initializeSessionState(_state: DcpState, _config: DcpConfig): vo
 function isCoverageBearingDcpState(data: unknown): boolean {
   if (!data || typeof data !== "object") return false;
   if ((data as { unchanged?: unknown }).unchanged === true) return false;
-  const persisted = data as { schemaVersion?: unknown; compressionBlocks?: unknown; blocks?: unknown };
+  const persisted = data as {
+    schemaVersion?: unknown;
+    compressionBlocks?: unknown;
+    blocks?: unknown;
+  };
   if (persisted.schemaVersion === 5) return Array.isArray(persisted.blocks);
   if (persisted.schemaVersion === 2) return Array.isArray(persisted.blocks);
   if (persisted.schemaVersion === 1 || persisted.schemaVersion === undefined) {
@@ -28,6 +36,23 @@ function findLatestCoverageBearingDcpStateEntry(branchEntries: readonly any[]): 
     const entry = branchEntries[index];
     if (!isDcpStateEntry(entry)) continue;
     if (isCoverageBearingDcpState(entry.data)) return entry;
+  }
+  return null;
+}
+
+/**
+ * Latest non-`unchanged` `dcp-state` entry regardless of whether it carries
+ * blocks. Used to recover scalar continuity (tombstones, turn watermarks,
+ * realized lifetime savings) for branches that never compressed and therefore
+ * only ever wrote v3 scalar snapshots.
+ */
+function findLatestDcpStateEntry(branchEntries: readonly any[]): any | null {
+  for (let index = branchEntries.length - 1; index >= 0; index--) {
+    const entry = branchEntries[index];
+    if (!isDcpStateEntry(entry)) continue;
+    const data = entry.data as { unchanged?: unknown } | null | undefined;
+    if (data && typeof data === "object" && data.unchanged === true) continue;
+    return entry;
   }
   return null;
 }
@@ -179,9 +204,27 @@ function directRestore(
   initializeSessionState(state, config);
 
   const latestCoverageEntry = findLatestCoverageBearingDcpStateEntry(branchEntries);
-  const restoredStateEntries = latestCoverageEntry ? 1 : 0;
+  let restoredStateEntries = 0;
   if (latestCoverageEntry) {
+    // Coverage-bearing snapshots (v1/v2/v5) carry both block coverage and the
+    // scalar bootstrap (prunedToolIds, turn watermarks, lifetime savings), so a
+    // single direct restore reproduces the full runtime state.
     restorePersistedState(latestCoverageEntry.data, state);
+    restoredStateEntries = 1;
+  } else {
+    // No block was ever compressed on this branch (blocks never leave the
+    // array once pushed, so a v3 scalar entry can only be the latest when
+    // nothing compressed). There are no blocks to restore, but the session may
+    // still carry scalar continuity — dedup/error-purge tombstones, turn
+    // watermarks, realized lifetime savings — in its latest v3 scalar snapshot.
+    // Restore those so resume does not silently drop tombstones or reset the
+    // nudge debounce. restorePersistedStateScalars never resurrects blocks, so
+    // this stays safe for lossy legacy v4 entries too.
+    const latestEntry = findLatestDcpStateEntry(branchEntries);
+    if (latestEntry) {
+      restorePersistedStateScalars(latestEntry.data, state);
+      restoredStateEntries = 1;
+    }
   }
 
   const repairedBlockIds = repairOffBranchNativeCompactionState(
@@ -200,9 +243,11 @@ function directRestore(
  * Restore runtime state from the active branch.
  *
  * Direct-restore from the latest coverage-bearing persisted DCP snapshot.
- * v1/v2/v5 entries carry enough block coverage to resume pruning immediately;
- * v3/v4 entries are intentionally ignored and therefore clean-reset to empty
- * state rather than triggering replay-on-resume.
+ * v1/v2/v5 entries carry enough block coverage to resume pruning immediately
+ * (blocks plus scalar bootstrap). When no coverage-bearing entry exists the
+ * branch never compressed, so blocks clean-reset to empty, but the latest v3
+ * scalar snapshot still restores scalar continuity (tombstones, turn
+ * watermarks, realized lifetime savings). Replay-on-resume is never triggered.
  */
 export function restoreStateFromBranch(
   branchEntries: readonly any[],

@@ -566,10 +566,10 @@ function restorePersistedScalars(persisted: Record<string, unknown>, state: DcpS
 }
 
 /**
- * Restore one persisted DCP state entry into runtime state.
- *
- * The current runtime still executes legacy v1 blocks; v2 blocks are preserved
- * in `state.compressionBlocksV2` for future work but are not yet materialized.
+ * Restore only the scalar bootstrap (prunedToolIds, turn watermarks, realized
+ * lifetime savings) from a persisted DCP state entry, never blocks. Used by
+ * direct-restore to recover scalar continuity from a v3 scalar snapshot when no
+ * coverage-bearing entry exists on the branch.
  */
 export function restorePersistedStateScalars(data: unknown, state: DcpState): void {
   const persisted = asObject(data);

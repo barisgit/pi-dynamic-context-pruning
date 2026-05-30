@@ -5,3 +5,6 @@ dist/
 coverage/
 .pi/
 *.tsbuildinfo
+
+# Transient subagent QA output
+qa-artifacts/
