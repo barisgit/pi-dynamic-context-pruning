@@ -9,7 +9,9 @@ import {
   exceedsMaxContextLimit,
   finalizeMaterializedMessages,
   getNudgeType,
+  resolveEffectiveContextSize,
 } from "../domain/pruning/index.js";
+import { estimateMessageTokens } from "../domain/tokens/estimate.js";
 import { materializeTranscript } from "../domain/compression/materialize.js";
 import {
   buildCompressionPlanningHints,
@@ -208,8 +210,16 @@ export function registerContextHandler(pi: ExtensionAPI, state: DcpState, config
     const liveOwnerKeys = materializedContext.liveOwnerKeys;
     const prunedMessages = materializedContext.messages;
     const usage = ctx.getContextUsage();
-    const contextPercent =
-      usage && usage.tokens !== null ? usage.tokens / usage.contextWindow : null;
+    const dcpEstimatedTokens = prunedMessages.reduce(
+      (sum, message) => sum + estimateMessageTokens(message),
+      0
+    );
+    const { effectiveTokens, effectivePercent } = resolveEffectiveContextSize(
+      usage?.tokens ?? null,
+      dcpEstimatedTokens,
+      usage?.contextWindow ?? null
+    );
+    const contextPercent = effectivePercent;
     let toolCallsSinceLastUser: number | null = null;
     let nudgeType: ReturnType<typeof getNudgeType> = null;
     let nudgeDecisionReason: NudgeDecisionReason = "not_evaluated";
@@ -221,7 +231,7 @@ export function registerContextHandler(pi: ExtensionAPI, state: DcpState, config
         state,
         config,
         toolCallsSinceLastUser,
-        usage?.tokens ?? null
+        effectiveTokens
       );
 
       if (nudgeType) {
@@ -236,7 +246,7 @@ export function registerContextHandler(pi: ExtensionAPI, state: DcpState, config
           nudgeType,
           config,
           contextPercent,
-          usage?.tokens ?? null
+          effectiveTokens
         );
 
         const reminder: ReminderIntent = {
@@ -250,7 +260,7 @@ export function registerContextHandler(pi: ExtensionAPI, state: DcpState, config
           metadata: {
             nudgeType,
             contextPercent,
-            contextTokens: usage?.tokens ?? null,
+            contextTokens: effectiveTokens,
             currentTurn: state.currentTurn,
             toolCallsSinceLastUser,
           },
@@ -266,7 +276,7 @@ export function registerContextHandler(pi: ExtensionAPI, state: DcpState, config
           nudgeDecisionReason,
           nudgeMessage: injectedNudgeText,
           contextPercent,
-          contextTokens: usage?.tokens ?? null,
+          contextTokens: effectiveTokens,
           currentTurn: state.currentTurn,
           toolCallsSinceLastUser,
           planningHints,
@@ -280,7 +290,7 @@ export function registerContextHandler(pi: ExtensionAPI, state: DcpState, config
         state,
         config,
         nudgeType,
-        usage?.tokens ?? null
+        effectiveTokens
       );
     }
 
@@ -291,6 +301,8 @@ export function registerContextHandler(pi: ExtensionAPI, state: DcpState, config
     appendDebugLog(config, "context_evaluated", {
       ...buildSessionDebugPayload(ctx.sessionManager),
       contextTokens: usage?.tokens ?? null,
+      dcpEstimatedTokens,
+      effectiveContextTokens: effectiveTokens,
       contextWindow: usage?.contextWindow ?? null,
       contextPercent,
       currentTurn: state.currentTurn,

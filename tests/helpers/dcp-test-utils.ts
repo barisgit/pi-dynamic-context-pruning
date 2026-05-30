@@ -52,6 +52,7 @@ export {
   applyPruning,
   exceedsMaxContextLimit,
   getNudgeType,
+  resolveEffectiveContextSize,
 } from "../../src/domain/pruning/index.js";
 export {
   buildBlockOwnerKey,

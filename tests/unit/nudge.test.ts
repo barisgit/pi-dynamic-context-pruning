@@ -10,6 +10,7 @@ import {
   makeMessages,
   makeState,
   registerContextHandler,
+  resolveEffectiveContextSize,
 } from "../helpers/dcp-test-utils.js";
 
 type PiHandler = (event: any, ctx: any) => unknown;
@@ -222,6 +223,79 @@ describe("DCP nudge.test", () => {
       true,
       "FAIL — hot-tail emergency override should honor maxContextTokens"
     );
+  });
+
+  test("effective context size uses DCP estimate when host tokens under-report", () => {
+    const config = makeConfig();
+    config.compress.minContextPercent = 0.2;
+
+    const state = makeState();
+    state.currentTurn = 5;
+    state.lastCompressTurn = -1;
+    state.lastNudgeTurn = -1;
+
+    const { effectiveTokens, effectivePercent } = resolveEffectiveContextSize(
+      140_000,
+      270_000,
+      1_000_000
+    );
+
+    expect(effectiveTokens).toBe(270_000);
+    expect(effectivePercent).toBeCloseTo(0.27);
+    expect(getNudgeType(0.14, state, config, 0, 140_000)).toBeNull();
+    expect(getNudgeType(effectivePercent!, state, config, 0, effectiveTokens)).toBe("turn");
+  });
+
+  test("small effective context size stays below the nudge threshold", () => {
+    const config = makeConfig();
+    const state = makeState();
+    state.currentTurn = 5;
+
+    const { effectiveTokens, effectivePercent } = resolveEffectiveContextSize(
+      8_000,
+      6_000,
+      1_000_000
+    );
+    const nudgeType = getNudgeType(effectivePercent!, state, config, 0, effectiveTokens);
+
+    expect(effectiveTokens).toBe(8_000);
+    expect(effectivePercent).toBeCloseTo(0.008);
+    expect(nudgeType).toBeNull();
+    expect(
+      getNudgeDecisionReason(effectivePercent, state, config, nudgeType, effectiveTokens)
+    ).toBe("below_min_threshold");
+  });
+
+  test("effective context size preserves a healthy host token figure", () => {
+    const { effectiveTokens, effectivePercent } = resolveEffectiveContextSize(
+      800_000,
+      50_000,
+      1_000_000
+    );
+
+    expect(effectiveTokens).toBe(800_000);
+    expect(effectivePercent).toBe(0.8);
+  });
+
+  test("effective context size still respects nudge turn debounce", () => {
+    const config = makeConfig();
+    config.compress.minContextPercent = 0.2;
+    config.compress.nudgeDebounceTurns = 2;
+
+    const state = makeState();
+    state.currentTurn = 10;
+    state.lastNudgeTurn = state.currentTurn - 1;
+
+    const { effectiveTokens, effectivePercent } = resolveEffectiveContextSize(
+      140_000,
+      270_000,
+      1_000_000
+    );
+
+    expect(getNudgeType(effectivePercent!, state, config, 0, effectiveTokens)).toBeNull();
+
+    state.currentTurn += 2;
+    expect(getNudgeType(effectivePercent!, state, config, 0, effectiveTokens)).toBe("turn");
   });
 
   test("nudge decision reasons distinguish cache-relevant suppression paths", () => {

@@ -568,6 +568,19 @@ export function exceedsMaxContextLimit(
     : false;
 }
 
+export function resolveEffectiveContextSize(
+  hostTokens: number | null | undefined,
+  dcpEstimatedTokens: number,
+  contextWindow: number | null | undefined
+): { effectiveTokens: number; effectivePercent: number | null } {
+  const host = Number.isFinite(hostTokens as number) ? Math.max(0, hostTokens as number) : 0;
+  const dcp = Number.isFinite(dcpEstimatedTokens) ? Math.max(0, dcpEstimatedTokens) : 0;
+  const effectiveTokens = Math.max(host, dcp);
+  const effectivePercent =
+    typeof contextWindow === "number" && contextWindow > 0 ? effectiveTokens / contextWindow : null;
+  return { effectiveTokens, effectivePercent };
+}
+
 function reachesMinContextLimit(
   contextPercent: number,
   config: DcpConfig,
