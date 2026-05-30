@@ -22,7 +22,7 @@ import {
   validateCompressionRangeBoundaryIds,
 } from "../../domain/compression/tooling.js";
 import { renderCompressedBlockMessage } from "../../domain/compression/materialize.js";
-import { exceedsMaxContextLimit } from "../../domain/pruning/index.js";
+import { exceedsMaxContextLimit, resolveEffectiveContextSize } from "../../domain/pruning/index.js";
 import { estimateMessageTokens, estimateTokens } from "../../domain/compression/range.js";
 import { updateDcpStatus } from "../status.js";
 import { queueDcpAutoNativeCompaction } from "../native-compaction.js";
@@ -355,8 +355,20 @@ export function registerCompressTool(pi: ExtensionAPI, state: DcpState, config: 
       const newBlockIds: number[] = [];
       const currentMessages = buildCurrentBranchMessages(ctx);
       const usage = ctx.getContextUsage();
-      const contextPercent =
-        usage && usage.tokens !== null ? usage.tokens / usage.contextWindow : null;
+      // Gate the protected-tail emergency override on effective context size =
+      // max(host tokens, DCP's last rendered-transcript estimate), mirroring the
+      // nudge gate. A host figure that under-reports after resume must not
+      // silently suppress an emergency compression. The DCP estimate is read
+      // from the latest `context` pass (state.lastDcpEstimatedTokens) rather
+      // than recomputed here, because the estimating pass (applyPruning)
+      // mutates state and must not run at tool-call time.
+      const { effectiveTokens: effectiveContextTokens, effectivePercent: effectiveContextPercent } =
+        resolveEffectiveContextSize(
+          usage?.tokens ?? null,
+          state.lastDcpEstimatedTokens,
+          usage?.contextWindow ?? null
+        );
+      const contextPercent = effectiveContextPercent;
       const protectedTailStartTimestamp = resolveProtectedTailStartTimestamp(
         currentMessages,
         config.compress.protectRecentTurns
@@ -385,6 +397,8 @@ export function registerCompressTool(pi: ExtensionAPI, state: DcpState, config: 
         })),
         contextPercent,
         contextTokens: usage?.tokens ?? null,
+        effectiveContextTokens,
+        dcpEstimatedTokens: state.lastDcpEstimatedTokens,
         planningHints,
       });
 
@@ -429,7 +443,7 @@ export function registerCompressTool(pi: ExtensionAPI, state: DcpState, config: 
             protectedTailStartTimestamp !== null && endTimestamp >= protectedTailStartTimestamp;
           const emergencyOverride =
             contextPercent !== null &&
-            exceedsMaxContextLimit(contextPercent, config, usage?.tokens ?? null);
+            exceedsMaxContextLimit(contextPercent, config, effectiveContextTokens);
 
           if (touchesProtectedTail && !emergencyOverride) {
             const planningHintText = renderCompressionPlanningHints(planningHints, {

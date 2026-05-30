@@ -1867,4 +1867,134 @@ describe("DCP compression.test", () => {
     assert.strictEqual(result.details.nativeCompactionAutoTrigger.reason, "force-threshold");
     assert.ok(result.content[0].text.includes("Native compaction queued (force-threshold"));
   });
+
+  // ---------------------------------------------------------------------------
+  // Test 23g — EMERGENCY OVERRIDE GATES ON EFFECTIVE (max host, dcp) TOKENS
+  //
+  // The protected-tail emergency override let a hard context emergency compress
+  // into the hot tail. If it keys off the raw host token figure alone, a host
+  // that UNDER-REPORTS after resume keeps the override shut exactly when the
+  // session is genuinely huge. Gating on effective size = max(host, DCP
+  // estimate) fixes that: when DCP's own estimate of the rendered transcript is
+  // large, the override fires even though the host percent looks small.
+  // ---------------------------------------------------------------------------
+  function build23gHarness() {
+    const messages: any[] = [];
+    for (let i = 0; i < 6; i++) {
+      messages.push({
+        role: "user",
+        content: [{ type: "text", text: `user message ${i} `.repeat(80) }],
+        timestamp: 1000 + i * 2000,
+      });
+      messages.push({
+        role: "assistant",
+        content: [{ type: "text", text: `assistant reply ${i} `.repeat(80) }],
+        timestamp: 2000 + i * 2000,
+      });
+    }
+    const state = makeState();
+    messages.forEach((msg, idx) => {
+      const ref = `m${String(idx + 1).padStart(4, "0")}`;
+      state.messageIdSnapshot.set(ref, msg.timestamp);
+      state.messageRefSnapshot.set(ref, {
+        ref,
+        sourceKey: `msg:${msg.timestamp}:${msg.role}:${idx}`,
+        timestamp: msg.timestamp,
+        ownerKey: `source:${ref}`,
+      });
+    });
+    const config = makeConfig();
+    // protectRecentTurns=2 protects the final tail (m0011..m0012); a range that
+    // ends at m0012 touches the protected tail and is rejected unless the
+    // emergency override fires. maxContextPercent default is 0.8.
+    config.compress.protectRecentTurns = 2;
+    config.nativeCompaction.autoTriggerMessageCount = 999;
+    return { messages, state, config };
+  }
+
+  function make23gCtx(messages: any[], hostTokens: number) {
+    return {
+      sessionManager: {
+        getSessionId: () => "session-23g",
+        getCwd: () => "/tmp/dcp-test",
+        getSessionDir: () => "/tmp/dcp-test/session",
+        getSessionFile: () => "/tmp/dcp-test/session.jsonl",
+        getLeafId: () => null,
+        getBranch: () => messages.map((message) => ({ type: "message", message })),
+      },
+      getContextUsage: () => ({ tokens: hostTokens, contextWindow: 1_000_000 }),
+      compact: () => undefined,
+      hasUI: false,
+      ui: { notify: () => undefined },
+    };
+  }
+
+  test("Test 23g — host under-report: DCP estimate fires the emergency override", async () => {
+    console.log(
+      "TEST 23g: a large DCP estimate must fire the protected-tail override even when host under-reports"
+    );
+    const { messages, state, config } = build23gHarness();
+    // Host reports only 10% (looks calm), but DCP's own estimate of the
+    // rendered transcript is 900k/1M = 90% > 80% maxContextPercent. The context
+    // handler would have stashed this on the last pass.
+    state.lastDcpEstimatedTokens = 900_000;
+
+    let registeredTool: any = null;
+    registerCompressTool(
+      { registerTool: (tool: any) => (registeredTool = tool) } as any,
+      state,
+      config
+    );
+
+    // Range ends at m0012, inside the protected tail. With the override active
+    // it must compress instead of throwing.
+    const result = await registeredTool.execute(
+      "compress-call-23g-a",
+      {
+        topic: "emergency",
+        ranges: [{ startId: "m0001", endId: "m0012", summary: "emergency squeeze" }],
+      },
+      undefined,
+      undefined,
+      make23gCtx(messages, 100_000)
+    );
+
+    assert.ok(
+      result.content[0].text.startsWith("Compressed 1 range(s)"),
+      `FAIL — under-report emergency override should allow compressing into the protected tail, got: ${result.content[0].text}`
+    );
+    console.log("  PASS: DCP estimate corrects host under-report and fires the override");
+  });
+
+  test("Test 23g — control: no DCP estimate keeps the protected tail closed", async () => {
+    console.log(
+      "TEST 23g control: with a calm host AND no DCP estimate, a protected-tail range must still be rejected"
+    );
+    const { messages, state, config } = build23gHarness();
+    // No stashed estimate (fresh/healthy) and host is calm at 10%.
+    state.lastDcpEstimatedTokens = 0;
+
+    let registeredTool: any = null;
+    registerCompressTool(
+      { registerTool: (tool: any) => (registeredTool = tool) } as any,
+      state,
+      config
+    );
+
+    await assert.rejects(
+      registeredTool.execute(
+        "compress-call-23g-b",
+        {
+          topic: "too-eager",
+          ranges: [{ startId: "m0001", endId: "m0012", summary: "should reject" }],
+        },
+        undefined,
+        undefined,
+        make23gCtx(messages, 100_000)
+      ),
+      /protected tail/,
+      "FAIL — without an emergency the protected tail must stay closed"
+    );
+    console.log("  PASS: calm host + no estimate correctly keeps the protected tail closed");
+  });
 });

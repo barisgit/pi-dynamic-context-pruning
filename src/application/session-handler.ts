@@ -59,12 +59,41 @@ function findLatestDcpStateEntry(branchEntries: readonly any[]): any | null {
 
 export type RestoreMode = "persisted";
 
+/**
+ * Concrete outcome of a restore pass, distinct from the single restore-path
+ * name (`RestoreMode = "persisted"`). This is what makes a block-dropping
+ * resume obvious in the log instead of hiding behind the reassuring word
+ * "persisted":
+ * - `restored-v{n}` — coverage-bearing entry restored full block state
+ * - `reset-legacy-v4` — a lossy legacy v4 entry was the latest, so blocks were
+ *   intentionally dropped and only scalar continuity was recovered (the scary
+ *   case: this session HAD blocks that could not be restored)
+ * - `scalar-v3` — a normal v3 scalar marker (never compressed; no blocks to drop)
+ * - `scalar-legacy` — scalar-only continuity from some other non-coverage shape
+ * - `empty` — no dcp-state entry to restore from
+ */
+export type RestoreOutcome =
+  | `restored-v${number}`
+  | "reset-legacy-v4"
+  | "scalar-v3"
+  | "scalar-legacy"
+  | "empty";
+
 interface RestoreStateFromBranchResult {
   branchEntryCount: number;
   restoredStateEntries: number;
   repairedBlockIds: number[];
   repairedNudgeWatermarks: boolean;
   mode: RestoreMode;
+  restoreOutcome: RestoreOutcome;
+  restoredSchemaVersion: number | null;
+}
+
+/** Read a persisted entry's schemaVersion, treating legacy (v1) omission as 1. */
+function readPersistedSchemaVersion(data: unknown): number | null {
+  if (!data || typeof data !== "object") return null;
+  const version = (data as { schemaVersion?: unknown }).schemaVersion;
+  return typeof version === "number" ? version : null;
 }
 
 function isDcpStateEntry(entry: any): boolean {
@@ -199,18 +228,29 @@ function directRestore(
   state: DcpState,
   config: DcpConfig,
   allEntries: readonly any[]
-): { restoredStateEntries: number; repairedBlockIds: number[]; repairedNudgeWatermarks: boolean } {
+): {
+  restoredStateEntries: number;
+  repairedBlockIds: number[];
+  repairedNudgeWatermarks: boolean;
+  restoreOutcome: RestoreOutcome;
+  restoredSchemaVersion: number | null;
+} {
   resetState(state);
   initializeSessionState(state, config);
 
   const latestCoverageEntry = findLatestCoverageBearingDcpStateEntry(branchEntries);
   let restoredStateEntries = 0;
+  let restoreOutcome: RestoreOutcome = "empty";
+  let restoredSchemaVersion: number | null = null;
   if (latestCoverageEntry) {
     // Coverage-bearing snapshots (v1/v2/v5) carry both block coverage and the
     // scalar bootstrap (prunedToolIds, turn watermarks, lifetime savings), so a
     // single direct restore reproduces the full runtime state.
     restorePersistedState(latestCoverageEntry.data, state);
     restoredStateEntries = 1;
+    // Coverage entries omit schemaVersion only for legacy v1 fat snapshots.
+    restoredSchemaVersion = readPersistedSchemaVersion(latestCoverageEntry.data) ?? 1;
+    restoreOutcome = `restored-v${restoredSchemaVersion}`;
   } else {
     // No block was ever compressed on this branch (blocks never leave the
     // array once pushed, so a v3 scalar entry can only be the latest when
@@ -224,6 +264,17 @@ function directRestore(
     if (latestEntry) {
       restorePersistedStateScalars(latestEntry.data, state);
       restoredStateEntries = 1;
+      restoredSchemaVersion = readPersistedSchemaVersion(latestEntry.data);
+      // A v4 entry reaching the scalar branch means a lossy legacy snapshot was
+      // the latest: it once carried blocks that cannot be restored, so this
+      // resume drops them. A v3 entry is the normal never-compressed marker
+      // with no blocks to lose.
+      restoreOutcome =
+        restoredSchemaVersion === 4
+          ? "reset-legacy-v4"
+          : restoredSchemaVersion === 3
+            ? "scalar-v3"
+            : "scalar-legacy";
     }
   }
 
@@ -236,7 +287,13 @@ function directRestore(
 
   const repairedNudgeWatermarks = repairStaleNudgeWatermarks(branchEntries, state);
 
-  return { restoredStateEntries, repairedBlockIds, repairedNudgeWatermarks };
+  return {
+    restoredStateEntries,
+    repairedBlockIds,
+    repairedNudgeWatermarks,
+    restoreOutcome,
+    restoredSchemaVersion,
+  };
 }
 
 /**
@@ -262,6 +319,8 @@ export function restoreStateFromBranch(
     repairedBlockIds: fallback.repairedBlockIds,
     repairedNudgeWatermarks: fallback.repairedNudgeWatermarks,
     mode: "persisted",
+    restoreOutcome: fallback.restoreOutcome,
+    restoredSchemaVersion: fallback.restoredSchemaVersion,
   };
 }
 
@@ -327,6 +386,8 @@ export function registerSessionHandlers(
       activeCompressionBlockCount: state.compressionBlocks.filter((block) => block.active).length,
       nextBlockId: state.nextBlockId,
       restoreMode: restore.mode,
+      restoreOutcome: restore.restoreOutcome,
+      restoredSchemaVersion: restore.restoredSchemaVersion,
     });
 
     if (ctx.hasUI) updateDcpStatus(ctx, state);
@@ -351,6 +412,8 @@ export function registerSessionHandlers(
       activeCompressionBlockCount: state.compressionBlocks.filter((block) => block.active).length,
       nextBlockId: state.nextBlockId,
       restoreMode: restore.mode,
+      restoreOutcome: restore.restoreOutcome,
+      restoredSchemaVersion: restore.restoredSchemaVersion,
     });
 
     if (ctx.hasUI) updateDcpStatus(ctx, state);

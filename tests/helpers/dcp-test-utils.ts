@@ -112,6 +112,7 @@ export function makeState(compressionBlocks: DcpState["compressionBlocks"] = [])
     nextBlockId: 1,
     lastRenderedMessages: [],
     lastLiveOwnerKeys: [],
+    lastDcpEstimatedTokens: 0,
     messageAliases: createMessageAliasState(),
     messageRefSnapshot: new Map(),
     messageIdSnapshot: new Map(),

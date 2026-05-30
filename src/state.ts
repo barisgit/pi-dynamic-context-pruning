@@ -40,6 +40,7 @@ export function createState(): DcpState {
     nextBlockId: 1,
     lastRenderedMessages: [],
     lastLiveOwnerKeys: [],
+    lastDcpEstimatedTokens: 0,
     messageAliases: createMessageAliasState(),
     messageRefSnapshot: new Map(),
     messageIdSnapshot: new Map(),
@@ -68,6 +69,7 @@ export function resetState(state: DcpState): void {
   state.nextBlockId = 1;
   state.lastRenderedMessages = [];
   state.lastLiveOwnerKeys = [];
+  state.lastDcpEstimatedTokens = 0;
   state.messageAliases = createMessageAliasState();
   state.messageRefSnapshot.clear();
   state.messageIdSnapshot.clear();

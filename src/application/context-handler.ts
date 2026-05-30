@@ -296,6 +296,11 @@ export function registerContextHandler(pi: ExtensionAPI, state: DcpState, config
 
     state.lastRenderedMessages = cloneRenderedMessages(prunedMessages);
     state.lastLiveOwnerKeys = Array.from(liveOwnerKeys);
+    // Stash DCP's own estimate of the rendered transcript so the compress
+    // tool can gate its emergency override on effective context size
+    // (max host, DCP estimate) without re-running the state-mutating
+    // applyPruning pass at tool-call time.
+    state.lastDcpEstimatedTokens = dcpEstimatedTokens;
     updateDcpStatus(ctx, state);
 
     appendDebugLog(config, "context_evaluated", {

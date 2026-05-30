@@ -285,6 +285,15 @@ export interface DcpState {
   lastRenderedMessages: DcpMessage[];
   /** Canonical owner keys live in the latest materialized transcript. */
   lastLiveOwnerKeys: string[];
+  /**
+   * DCP's own token estimate of the latest rendered (pruned) transcript,
+   * summed via `estimateMessageTokens` on each `context` pass. Runtime-only
+   * (never persisted). Lets the `compress` tool gate its protected-tail
+   * emergency override on effective context size = max(host, DCP estimate),
+   * mirroring the nudge gate, so a host figure that under-reports after
+   * resume cannot silently suppress an emergency compression.
+   */
+  lastDcpEstimatedTokens: number;
 
   // ── Message ID snapshot ────────────────────────────────────────────────────
   /** Persisted source-key → visible-ref aliases for model-facing compression refs. */

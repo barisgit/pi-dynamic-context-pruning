@@ -259,3 +259,99 @@ describe("Legacy session restore (f3)", () => {
     expect(state.compressionBlocks[0]?.id).toBe(7);
   });
 });
+
+// ---------------------------------------------------------------------------
+// restoreOutcome observability
+//
+// `restoreMode` is always "persisted" (the single restore-path name) and so
+// cannot tell a block-restoring resume apart from a block-DROPPING one. The
+// observable `restoreOutcome` field must distinguish them so a resume that
+// silently drops blocks (the original v4 cliff) is screamingly obvious instead
+// of hiding behind the reassuring word "persisted".
+// ---------------------------------------------------------------------------
+describe("restoreOutcome distinguishes restore branches", () => {
+  test("coverage-bearing v5 entry -> restored-v5 (blocks restored)", () => {
+    const persisted = makeState([block(1, true)]);
+    persisted.nextBlockId = 2;
+
+    const branch = [dcpStateEntry(serializePersistedState(persisted))];
+    const state = makeState();
+    const result = restoreStateFromBranch(branch, state, makeConfig());
+
+    expect(result.restoreOutcome).toBe("restored-v5");
+    expect(result.restoredSchemaVersion).toBe(5);
+    expect(state.compressionBlocks).toHaveLength(1);
+  });
+
+  test("legacy v1 fat snapshot -> restored-v1", () => {
+    const persisted = makeState([block(1, true)]);
+    persisted.nextBlockId = 2;
+
+    const branch = [dcpStateEntry(serializeLegacyV1PersistedState(persisted))];
+    const state = makeState();
+    const result = restoreStateFromBranch(branch, state, makeConfig());
+
+    expect(result.restoreOutcome).toBe("restored-v1");
+    expect(state.compressionBlocks).toHaveLength(1);
+  });
+
+  test("lossy legacy v4 entry -> reset-legacy-v4 (blocks dropped, scalars kept)", () => {
+    // A v4 entry is NOT coverage-bearing (coveredSourceKeys were never
+    // persisted), so it falls to the scalar branch: blocks clean-reset to
+    // empty while scalar continuity is preserved. This is the exact morning
+    // "cliff" that ballooned a resumed session, and it must be visible in the
+    // restore outcome rather than reported as a reassuring "persisted".
+    const v4Entry = {
+      schemaVersion: 4 as const,
+      savedAt: 5000,
+      currentTurn: 21,
+      lastNudgeTurn: 18,
+      lastCompressTurn: 17,
+      prunedToolIds: ["tool-a", "tool-b"],
+      lifetimeTokensSavedRealized: 94278,
+      blocks: [],
+      nextBlockId: 6,
+    };
+
+    const branch = [dcpStateEntry(v4Entry)];
+    const state = makeState();
+    const result = restoreStateFromBranch(branch, state, makeConfig());
+
+    expect(result.restoreOutcome).toBe("reset-legacy-v4");
+    expect(result.restoredSchemaVersion).toBe(4);
+    expect(state.compressionBlocks).toHaveLength(0);
+    // Scalar continuity survives the block drop.
+    expect(state.currentTurn).toBe(21);
+    expect(state.lastNudgeTurn).toBe(18);
+    expect(state.lifetimeTokensSavedRealized).toBe(94278);
+    expect(state.prunedToolIds.has("tool-a")).toBe(true);
+  });
+
+  test("normal v3 scalar marker -> scalar-v3 (never compressed, no blocks to drop)", () => {
+    const persisted = makeState();
+    persisted.currentTurn = 7;
+
+    // serializePersistedState writes a v3 scalar marker when there are no blocks.
+    const branch = [dcpStateEntry(serializePersistedState(persisted))];
+    const state = makeState();
+    const result = restoreStateFromBranch(branch, state, makeConfig());
+
+    expect(result.restoreOutcome).toBe("scalar-v3");
+    expect(result.restoredSchemaVersion).toBe(3);
+    expect(state.compressionBlocks).toHaveLength(0);
+    expect(state.currentTurn).toBe(7);
+  });
+
+  test("no dcp-state entry on branch -> empty", () => {
+    const branch = [
+      messageEntry({ role: "user", content: [{ type: "text", text: "hi" }], timestamp: 1000 }),
+    ];
+    const state = makeState();
+    const result = restoreStateFromBranch(branch, state, makeConfig());
+
+    expect(result.restoreOutcome).toBe("empty");
+    expect(result.restoredSchemaVersion).toBeNull();
+    expect(result.restoredStateEntries).toBe(0);
+    expect(state.compressionBlocks).toHaveLength(0);
+  });
+});
