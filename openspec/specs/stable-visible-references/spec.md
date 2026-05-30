@@ -57,7 +57,7 @@ The system SHALL support a migration period where legacy message refs can be par
 
 #### Scenario: Legacy ref resolves during migration
 
-- **WHEN** an existing session or test uses a legacy `mNNN` ref that exists in the compatibility alias table
+- **WHEN** an existing session or test uses a legacy `mNNN` ref that matches the legacy three-digit pattern
 - **THEN** the system resolves it to the same canonical target as the stable alias
 
 #### Scenario: New prompt contract uses stable refs
