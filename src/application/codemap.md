@@ -8,15 +8,12 @@
 
 ### `commands/dcp.ts`
 
-Registers the `/dcp` slash command with subcommands: `context`, `stats`, `sweep`, `manual`, `decompress`, `compress`, `compact`, `help`.
+Registers the `/dcp` slash command with subcommands: `context`, `stats`, `compact`, `help`.
 
 - **`/dcp context`** — reads `ctx.getContextUsage()` and prints token/percentage breakdown plus session stats.
-- **`/dcp stats`** — prints active/total compression blocks, tokens saved, total prune count, manual mode state.
-- **`/dcp sweep [N]`** — walks the branch entries collecting `toolResult` IDs; adds the last N (or all since last user message) to `state.prunedToolIds`, respecting protected tool names (`compress`, `write`, `edit` + config).
-- **`/dcp manual [on|off]`** — flips `state.manualMode` and updates the pi status footer.
-- **`/dcp decompress [N]`** — lists active blocks or deactivates block `N`, recomputing `state.tokensSaved`.
-- **`/dcp compress`** — calls `pi.sendMessage(triggerTurn=true)` to prompt the LLM to invoke the `compress` tool on the next turn.
+- **`/dcp stats`** — prints active/total compression blocks, tokens saved, and total prune count.
 - **`/dcp compact`** — calls `triggerDcpNativeCompaction(ctx, state, "command")` to invoke pi-native session compaction.
+- **`/dcp help`** — prints the current command surface.
 
 ### `compress-tool/`
 
@@ -31,10 +28,10 @@ Thin wrapper around `src/domain/compression/tooling.js`. Exports everything re-e
 
 Registers the `context` event hook (`pi.on("context", ...)`). The handler:
 
-1. **Lazy replay** — if `state.replayPending` is true, wraps each `event.messages` entry as `{type:'message', message}` and calls `replayDcpState(wrappedEntries, config, {state})`, then sets `state.replayPending = false` and emits a `lazy_replay_completed` (or `lazy_replay_failed`) debug log. This reconstructs the full block log against pi's live message buffer, guaranteeing ref-allocation parity with the agent at compress time.
-2. Calls `materializeContextMessages` to apply pruning (v1 legacy blocks or v2 span-key materialization).
-3. Calls `ctx.getContextUsage()` to get context percent/tokens.
-4. Calls `getNudgeType` to decide whether to emit a DCP reminder nudge.
+1. Calls `materializeContextMessages` to apply active block materialization and pruning.
+2. Calls `ctx.getContextUsage()` and estimates rendered-message tokens locally.
+3. Calls `resolveEffectiveContextSize(hostTokens, dcpEstimatedTokens, contextWindow)`, using `max(hostTokens, dcpEstimatedTokens)` so nudges resist host under-reporting after resume.
+4. Calls `getNudgeType` with the effective context size to decide whether to emit a DCP reminder nudge.
 5. If a nudge fires, builds `ReminderIntent` (source `"dcp"`, id `"nudge"`, ttl `"once"`) and emits it via `REMINDER_UPSERT_EVENT`.
 6. Stores `state.lastRenderedMessages` and `state.lastLiveOwnerKeys` for the provider-payload filter.
 7. Updates the pi status footer via `updateDcpStatus`.
@@ -69,23 +66,24 @@ Registers the `before_provider_request` event hook. Calls `filterProviderPayload
 Registers session lifecycle hooks (`session_start`, `session_tree`, `session_shutdown`, `agent_end`) and exposes `saveState` / `restoreStateFromBranch`.
 
 - **`session_start` / `session_tree`** — calls `restoreStateFromBranch()`:
-  - **Replayable** (`branchIsReplayable()`): `restorePersistedStateScalars()` for turn counters, `prunedToolIds`, `lifetimeTokensSavedRealized`; `replayPending = true`; `repairStaleNudgeWatermarks()`. Block reconstruction deferred to `context-handler` lazy replay (v4 light blocks intentionally not loaded — they lack coverage anchors).
-  - **v4 non-replayable** (latest material entry schema v4, no transcript evidence): full `restorePersistedState()` loads light blocks + scalars; `replayPending = false`.
-  - **Snapshot fallback** (pre-v3 / legacy): `snapshotRestore()` walks all `dcp-state` entries, restores fat snapshots, repairs off-branch native compaction blocks and stale nudge watermarks.
+  - Runs a single direct-restore path: `resetState(state)` + `initializeSessionState(state, config)`.
+  - If `findLatestCoverageBearingDcpStateEntry(branchEntries)` finds v1/v2/v5 coverage, `restorePersistedState()` restores full block state plus scalars directly (`restoredStateEntries = 1`).
+  - Otherwise `findLatestDcpStateEntry(branchEntries)` + `restorePersistedStateScalars()` restores scalar continuity only (`prunedToolIds`, turn watermarks, `lifetimeTokensSavedRealized`) and never resurrects blocks.
+  - Always finishes with `repairOffBranchNativeCompactionState()` and `repairStaleNudgeWatermarks()`.
 - **`session_shutdown` / `agent_end`** — calls `saveState()` when `state.pendingSave` is true. Guarded by `ctx.hasUI` (skip in `-p` print mode).
 - **`saveState`** — no-op when `!pendingSave`; otherwise `pi.appendEntry("dcp-state", serializePersistedState(state))` and clears the dirty flag.
-- **`restoreStateFromBranch`** — returns `RestoreStateFromBranchResult` with `mode: "replay-pending" | "persisted" | "snapshot-fallback"` plus repair metadata.
+- **`restoreStateFromBranch`** — returns `RestoreStateFromBranchResult` with `mode: "persisted"` plus repair metadata. The mode name identifies the single restore path; it is not a success claim.
 
 ### `status.ts`
 
 Exposes `updateDcpStatus` (writes the pi footer status) and `buildDcpStatusText` / `computeDisplayedTokensSaved`.
 
 - **Displayed tokens** = `max(0, state.tokensSaved + state.lifetimeTokensSavedRealized)`. `lifetimeTokensSavedRealized` accumulates savings from blocks absorbed by native compaction, so the footer never regresses after compaction.
-- **Status text** format: `DCP [manual]` or `DCP N saved N prunes bX`.
+- **Status text** format: `DCP N saved N prunes bX`.
 
 ### `system-prompt-handler.ts`
 
-Registers the `before_agent_start` event hook. Appends either `SYSTEM_PROMPT` or `MANUAL_MODE_SYSTEM_PROMPT` (from `src/prompts/`) to the agent's system prompt depending on `state.manualMode`.
+Registers the `before_agent_start` event hook. Appends `SYSTEM_PROMPT` (from `src/prompts/`) to the agent's system prompt.
 
 ### `tool-recording.ts`
 
@@ -104,16 +102,16 @@ Application layer never contains compression overlap logic, liveness computation
 ### Two-phase state management
 
 - **Runtime state** lives in `DcpState` (in-memory, mutated per event).
-- **Dirty-flag persistence** — mutation sites set `pendingSave = true`; `saveState()` serializes only when dirty (v3 scalar marker when block-less, v4 light block list otherwise).
-- **Restore dispatch** — replayable branches: scalars only + lazy replay; v4 non-replayable: `restorePersistedState()`; legacy: snapshot walk via `restorePersistedState()` over all branch entries.
+- **Dirty-flag persistence** — mutation sites set `pendingSave = true`; `saveState()` serializes only when dirty (v3 scalar marker when block-less, v5 coverage-bearing block state otherwise).
+- **Direct restore** — `restoreStateFromBranch()` always uses the single direct-restore path: latest coverage-bearing v1/v2/v5 entry restores full blocks plus scalars; otherwise the latest `dcp-state` entry restores scalars only.
 
-### Lazy replay on first context event
+### Direct restore on session lifecycle
 
-For replayable branches, `session_start` sets `state.replayPending = true` and defers block reconstruction to the `context` handler. The `context` hook wraps pi's live message buffer as `{type:'message', message}` entries and calls `replayDcpState` once, guaranteeing ref-allocation parity with the agent at compress time. Pre-v3 legacy sessions bypass this path entirely via `snapshotRestore`.
+`session_start` and `session_tree` restore from persisted entries before any context pass. The `context` hook never triggers replay. `replayDcpState` remains in `src/domain/replay/` for offline scripts and tests only, not as a live runtime persistence path.
 
 ### Materialization dispatch
 
-`materializeContextMessages` is the single dispatch point between the v1 legacy block path and the v2 span-key materialization path. The v2 path is only entered when `state.schemaVersion === 2` and active v2 blocks exist.
+`materializeContextMessages` is the single dispatch point for current legacy block materialization. The v2/span-key path is inert scaffold reachable only from the never-written `schemaVersion === 2` legacy shape.
 
 ### Native compaction as a bridge
 
@@ -129,27 +127,26 @@ Native compaction auto-trigger queues a request via `queueDcpAutoNativeCompactio
 
 ## Hook Map
 
-| Hook                      | Handler module             | Key responsibilities                                                            |
-| ------------------------- | -------------------------- | ------------------------------------------------------------------------------- |
-| `session_start`           | `session-handler.ts`       | `restoreStateFromBranch()` — replay-pending, v4 persisted, or snapshot fallback |
-| `session_tree`            | `session-handler.ts`       | same restore path as `session_start`                                            |
-| `session_shutdown`        | `session-handler.ts`       | `saveState()` when `pendingSave` (v3/v4 bootstrap)                              |
-| `agent_end`               | `session-handler.ts`       | `saveState()` when `pendingSave` (v3/v4 bootstrap)                              |
-| `context`                 | `context-handler.ts`       | lazy replay (if `replayPending`), materialize, nudge, footer update             |
-| `before_agent_start`      | `system-prompt-handler.ts` | append DCP system prompt                                                        |
-| `before_provider_request` | `provider-handler.ts`      | filter stale provider artifacts                                                 |
-| `session_before_compact`  | `native-compaction.ts`     | build compaction result from active blocks                                      |
-| `session_compact`         | `native-compaction.ts`     | deactivate represented blocks, bake savings, reset watermarks                   |
-| `turn_end`                | `native-compaction.ts`     | drain `pendingAutoRequests`, continue after auto-compaction                     |
-| `tool_call`               | `tool-recording.ts`        | insert `ToolRecord` into `state.toolCalls`                                      |
-| `tool_result`             | `tool-recording.ts`        | update/create `ToolRecord`                                                      |
+| Hook                      | Handler module             | Key responsibilities                                              |
+| ------------------------- | -------------------------- | ----------------------------------------------------------------- |
+| `session_start`           | `session-handler.ts`       | `restoreStateFromBranch()` — single direct-restore path           |
+| `session_tree`            | `session-handler.ts`       | same direct-restore path as `session_start`                       |
+| `session_shutdown`        | `session-handler.ts`       | `saveState()` when `pendingSave` (v3/v5 persisted state)          |
+| `agent_end`               | `session-handler.ts`       | `saveState()` when `pendingSave` (v3/v5 persisted state)          |
+| `context`                 | `context-handler.ts`       | materialize, resolve effective context size, nudge, footer update |
+| `before_agent_start`      | `system-prompt-handler.ts` | append DCP system prompt                                          |
+| `before_provider_request` | `provider-handler.ts`      | filter stale provider artifacts                                   |
+| `session_before_compact`  | `native-compaction.ts`     | build compaction result from active blocks                        |
+| `session_compact`         | `native-compaction.ts`     | deactivate represented blocks, bake savings, reset watermarks     |
+| `turn_end`                | `native-compaction.ts`     | drain `pendingAutoRequests`, continue after auto-compaction       |
+| `tool_call`               | `tool-recording.ts`        | insert `ToolRecord` into `state.toolCalls`                        |
+| `tool_result`             | `tool-recording.ts`        | update/create `ToolRecord`                                        |
 
 ## Integration Points
 
 | Source                                          | Target                                  | Direction | Purpose                                                                                  |
 | ----------------------------------------------- | --------------------------------------- | --------- | ---------------------------------------------------------------------------------------- |
 | `src/application/context-handler.ts`            | `src/domain/pruning/`                   | calls     | `applyPruning`, `exceedsMaxContextLimit`, `getNudgeType`, `finalizeMaterializedMessages` |
-| `src/application/context-handler.ts`            | `src/domain/replay/index.ts`            | calls     | `replayDcpState` (lazy replay on first context when `state.replayPending`)               |
 | `src/application/context-handler.ts`            | `src/domain/compression/materialize.ts` | calls     | `materializeTranscript`                                                                  |
 | `src/application/context-handler.ts`            | `src/domain/compression/tooling.ts`     | calls     | `buildCompressionPlanningHints`, `renderCompressionPlanningHints`                        |
 | `src/application/context-handler.ts`            | `src/domain/transcript/`                | calls     | `buildTranscriptSnapshot`, `buildLiveOwnerKeys`                                          |
@@ -172,7 +169,7 @@ Native compaction auto-trigger queues a request via `queueDcpAutoNativeCompactio
 | `src/application/compress-tool/registration.ts` | `src/application/native-compaction.ts`  | calls     | `queueDcpAutoNativeCompaction`                                                           |
 | `src/application/commands/dcp.ts`               | `src/application/status.ts`             | calls     | `computeDisplayedTokensSaved`, `updateDcpStatus`                                         |
 | `src/application/commands/dcp.ts`               | `src/application/native-compaction.ts`  | calls     | `triggerDcpNativeCompaction`                                                             |
-| `src/application/system-prompt-handler.ts`      | `src/prompts/system.js`                 | imports   | `SYSTEM_PROMPT`, `MANUAL_MODE_SYSTEM_PROMPT`                                             |
+| `src/application/system-prompt-handler.ts`      | `src/prompts/system.js`                 | imports   | `SYSTEM_PROMPT`                                                                          |
 | `src/application/tool-recording.ts`             | `src/state.ts`                          | calls     | `createInputFingerprint`                                                                 |
 | `src/application/tool-recording.ts`             | `src/domain/tokens/estimate.ts`         | calls     | `estimateTokens`                                                                         |
 | `src/application/status.ts`                     | `src/types/state.ts`                    | imports   | `DcpState` type                                                                          |
@@ -183,5 +180,5 @@ Native compaction auto-trigger queues a request via `queueDcpAutoNativeCompactio
 | `src/application/native-compaction.ts`          | `@mariozechner/pi-coding-agent`         | pi API    | registers `session_before_compact/session_compact/turn_end` hooks                        |
 | `src/application/native-compaction.ts`          | `ExtensionContext`                      | pi API    | calls `ctx.compact()`                                                                    |
 | `src/application/compress-tool/registration.ts` | `@mariozechner/pi-coding-agent`         | pi API    | calls `pi.registerTool()`                                                                |
-| `src/application/commands/dcp.ts`               | `@mariozechner/pi-coding-agent`         | pi API    | calls `pi.registerCommand()`, `pi.sendMessage()`                                         |
+| `src/application/commands/dcp.ts`               | `@mariozechner/pi-coding-agent`         | pi API    | calls `pi.registerCommand()`                                                             |
 | `src/application/tool-recording.ts`             | `@mariozechner/pi-coding-agent`         | pi API    | registers `tool_call/tool_result` hooks                                                  |

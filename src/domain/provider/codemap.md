@@ -10,7 +10,7 @@ Prune stale `reasoning`, `function_call`, and `function_call_output` artifacts f
 
 Assistant messages carry `__dcpOwnerKey` (a Symbol-keyed property) on the in-memory `DcpMessage` object, set by `src/domain/transcript/` at snapshot build time. `extractCanonicalOwnerKeyFromMessageLike` reads this Symbol first:
 
-```
+```text
 in-memory assistant message → __dcpOwnerKey (Symbol) → owner key string
 ```
 
@@ -41,7 +41,7 @@ Active `CompressionBlock`s with `compressCallId` and a live `block:bN` owner key
 
 ## Flow
 
-```
+```text
 provider payload items
   → buildDirectOwnerKeys / buildPreviousAssistantOwners / buildNextAssistantOwners
   → buildRepresentedCompressArtifacts  (live blocks → call-id → receipt/newest)

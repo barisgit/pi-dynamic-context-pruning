@@ -26,7 +26,7 @@ One standalone visible message = one turn. One assistant tool-batch + matching t
 
 ## Flow
 
-```
+```text
 applyPruning(messages, state, config)
   └─ deep-clone messages (isolate mutations across context events)
   └─ stripGeneratedDcpHallucinations()

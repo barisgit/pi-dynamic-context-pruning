@@ -52,28 +52,30 @@ They must not be imported by domain modules (`src/domain/`). Application modules
 
 ### `src/infrastructure/persistence.ts`
 
-**Responsibility:** Serialize DCP runtime state to pi session entries and restore it on session resume or branch switching. Active writes use a tiny v3/v4 bootstrap; coverage metadata and aliases are reconstructed by replay on replayable branches.
+**Responsibility:** Serialize DCP runtime state to pi session entries and restore it on session resume or branch switching. Active writes use a tiny v3 scalar marker when no blocks exist, or the first complete v5 coverage-bearing shape once blocks exist.
 
 **What it does:**
 
-- **Active persisted schemas (v3/v4):**
+- **Active persisted schemas (v3/v5):**
   - **v3** — scalar bootstrap only: `{ schemaVersion: 3, savedAt, currentTurn, lastNudgeTurn, lastCompressTurn, prunedToolIds, lifetimeTokensSavedRealized }`. Written when `compressionBlocks.length === 0`.
-  - **v4** — v3 scalars plus a light `PersistedCompressionBlockV4[]` and `nextBlockId`. Written once blocks exist. Light blocks carry summary/topic/savings/active/superseded ids only — no coverage anchors, span keys, activity logs, or alias snapshots.
-- Exposes `serializePersistedState(state)` — picks v3 vs v4 from block count; does not consult `state.schemaVersion`.
-- Exposes `restorePersistedStateScalars(data, state)` — replayable-restore entry point. Applies only scalar fields via internal `restorePersistedScalars()` (`prunedToolIds`, `lifetimeTokensSavedRealized`, turn counters). No-op on `{ unchanged: true }`. Does not load blocks.
-- Exposes `restorePersistedState(data, state)` — full restore for non-replayable and legacy paths. Branches:
+  - **v5** — v3 scalars plus `blocks` and `nextBlockId`. Written once blocks exist. Blocks carry full coverage anchors (`coveredSourceKeys`, `coveredSpanKeys`) plus real finite timestamp fallbacks through `persistCompressionBlockV5`.
+- Exposes `serializePersistedState(state)` — picks v3 vs v5 from block count; does not consult `state.schemaVersion`.
+- Exposes `restorePersistedStateScalars(data, state)` — scalar-continuity entry point for branches without coverage-bearing state. Applies only scalar fields via internal `restorePersistedScalars()` (`prunedToolIds`, `lifetimeTokensSavedRealized`, turn counters). No-op on `{ unchanged: true }`. Does not load blocks.
+- Exposes `restorePersistedState(data, state)` — full restore for coverage-bearing and legacy back-compat paths. Branches:
   - `{ unchanged: true }` — no-op (cumulative restore keeps prior branch state).
-  - **v4** — scalars + light blocks into `state.compressionBlocks` (timestamps set to `Infinity`, empty coverage metadata except `supersededBlockIds`); derives `nextBlockId` and `tokensSaved` from active blocks.
-  - **v3** — scalars only; blocks/aliases/tokensSaved left to replay or prior restore.
-  - **v2 / v1** — legacy fat snapshots for retro vacuum and test fixtures (ignores removed `manualMode`).
+  - **v5** — direct restore of scalars plus full block state with coverage anchors, span keys, finite timestamps, `nextBlockId`, and active-block token savings.
+  - **v4** — legacy lossy light blocks; still understood for back-compat, but never written anymore and restored without coverage anchors.
+  - **v3** — scalars only; no blocks restored.
+  - **v2 / `Array.isArray(blocks)`** — legacy/deferred-dead `compressionBlocksV2` scaffolding; not a live written shape.
+  - **v1** — legacy fat snapshot for back-compat, retro vacuum, and test fixtures.
 - Exposes `serializeLegacyV1PersistedState(state)` and `serializeLegacyV2PersistedState(state)` — test/vacuum round-trip only; not called by live runtime.
-- Provides normalization helpers (`normalizeLegacyBlock`, `normalizeV2Block`, `normalizePersistedCompressionBlockV4`, metadata/stat/log normalizers, etc.). All return `null` or sentinel values on bad input rather than throwing.
+- Provides normalization helpers (`normalizeLegacyBlock`, `normalizeV2Block`, `normalizePersistedCompressionBlockV4`, `restorePersistedCompressionBlockV5`, metadata/stat/log normalizers, etc.). All return `null` or sentinel values on bad input rather than throwing.
 
-**Notably:** Persistence does not own read/write I/O — `session-handler` calls `pi.appendEntry` / reads branch entries. Restore dispatch:
+**Notably:** Persistence does not own read/write I/O — `session-handler` calls `pi.appendEntry` / reads branch entries. Restore dispatch is post direct-restore:
 
-- **Replayable branch** — `restorePersistedStateScalars()` per `dcp-state` entry; `replayPending = true`; block reconstruction deferred to `context-handler` replay (v4 light blocks intentionally skipped — they lack coverage anchors).
-- **v4 non-replayable branch** — `restorePersistedState()` loads light blocks + scalars; `replayPending = false`.
-- **Legacy fallback** — snapshot walk via `restorePersistedState()` over all branch entries.
+- **Coverage-bearing entry (v1/v2/v5)** — `restorePersistedState()` restores the full block state plus scalars directly.
+- **No coverage-bearing entry** — `restorePersistedStateScalars()` restores scalar continuity only; blocks remain empty, which is safe for lossy legacy v4.
+- **Replay domain** — `replayDcpState` remains available for offline scripts (`scripts/replay-equivalence.ts`, `scripts/vacuum-dcp-session.ts`) and tests, not live/session restore.
 
 `saveState()` in `session-handler` appends `serializePersistedState(state)` only when `state.pendingSave` is true (set by compress, prune, native-compaction commits); cleared after append.
 
@@ -81,23 +83,22 @@ They must not be imported by domain modules (`src/domain/`). Application modules
 
 ## Integration
 
-| File             | Imported by                                                                                                                                                                                                                                                   | How                                                                                                                                                                                                                                                                                                     |
-| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `config.ts`      | `src/index.ts`                                                                                                                                                                                                                                                | `loadConfig()` called once at extension init to produce the `DcpConfig` passed into all handlers.                                                                                                                                                                                                       |
-| `debug-log.ts`   | `src/index.ts`, `src/application/context-handler.ts`, `src/application/session-handler.ts`, `src/application/provider-handler.ts`, `src/application/compress-tool/registration.ts`, `src/application/native-compaction.ts`, `tests/helpers/dcp-test-utils.ts` | `appendDebugLog()` called on lifecycle events (session start/end, context evaluation, compress success/failure, state saves) and provider-payload filtering. `buildSessionDebugPayload()` injects stable session metadata into every log line.                                                          |
-| `persistence.ts` | `src/application/session-handler.ts`, `tests/unit/persistence-migration.test.ts`, `tests/unit/session-handler.test.ts`, `tests/helpers/dcp-test-utils.ts`                                                                                                     | `serializePersistedState()` writes v3 (no blocks) or v4 (light block list) on `session_shutdown` / `agent_end` when `pendingSave` is true. Replayable restore uses `restorePersistedStateScalars()` + lazy replay; v4 non-replayable uses `restorePersistedState()`; legacy branches use snapshot walk. |
+| File             | Imported by                                                                                                                                                                                                                                                   | How                                                                                                                                                                                                                                                              |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `config.ts`      | `src/index.ts`                                                                                                                                                                                                                                                | `loadConfig()` called once at extension init to produce the `DcpConfig` passed into all handlers.                                                                                                                                                                |
+| `debug-log.ts`   | `src/index.ts`, `src/application/context-handler.ts`, `src/application/session-handler.ts`, `src/application/provider-handler.ts`, `src/application/compress-tool/registration.ts`, `src/application/native-compaction.ts`, `tests/helpers/dcp-test-utils.ts` | `appendDebugLog()` called on lifecycle events (session start/end, context evaluation, compress success/failure, state saves) and provider-payload filtering. `buildSessionDebugPayload()` injects stable session metadata into every log line.                   |
+| `persistence.ts` | `src/application/session-handler.ts`, `tests/unit/persistence-migration.test.ts`, `tests/unit/session-handler.test.ts`, `tests/helpers/dcp-test-utils.ts`                                                                                                     | `serializePersistedState()` writes v3 (no blocks) or v5 (coverage-bearing block state) on `session_shutdown` / `agent_end` when `pendingSave` is true. Restore uses the latest coverage-bearing entry for full direct restore, otherwise scalar-only continuity. |
 
 ### State flow
 
-```
+```text
 session_start / session_tree
   └─> session-handler.ts
         └─> restoreStateFromBranch()
-              ├─> replayable: restorePersistedStateScalars() per dcp-state entry
-              │     └─> replayPending = true → context-handler replayDcpState()
-              ├─> v4 && !replayable: restorePersistedState() (light blocks + scalars)
-              │     └─> replayPending = false
-              └─> legacy: snapshot walk via restorePersistedState() over branch entries
+              ├─> latest coverage-bearing dcp-state (v1/v2/v5)
+              │     └─> restorePersistedState() (full blocks + scalars)
+              └─> otherwise latest dcp-state
+                    └─> restorePersistedStateScalars() (scalar continuity only)
 
 runtime work (compression, pruning, native compaction)
   └─> mutates DcpState in-memory; sets pendingSave = true
@@ -105,13 +106,13 @@ runtime work (compression, pruning, native compaction)
 session_shutdown / agent_end
   └─> session-handler.ts
         └─> saveState() when pendingSave
-              └─> serializePersistedState() → pi.appendEntry("dcp-state", v3 or v4)
+              └─> serializePersistedState() → pi.appendEntry("dcp-state", v3 or v5)
                     └─> pendingSave = false
 ```
 
 ### Config flow
 
-```
+```text
 pi starts
   └─> index.ts
         └─> loadConfig(projectDir)      [config.ts]

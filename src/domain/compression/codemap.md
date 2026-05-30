@@ -2,17 +2,17 @@
 
 ## Responsibility
 
-Pure compression logic: render active blocks into synthetic transcript messages, resolve timestamp/source-key ranges, build compress artifacts and planning hints, and enforce boundary/overlap rules. Consumed by pruning (materialization), the compress tool, context-handler nudges, and replay validation.
+Pure compression logic: render active legacy blocks into synthetic transcript messages, resolve timestamp/source-key ranges, build compress artifacts and planning hints, and enforce boundary/overlap rules. Consumed by pruning (runtime materialization), the compress tool, context-handler nudges, and offline replay validation.
 
 ## Design
 
-| File             | Responsibility                                                                                                                                                                                                      |
-| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `materialize.ts` | Render v2 blocks into `DcpMessage`s (`full` / `compact` / `minimal`). Stamps `INTERNAL_BLOCK_ID` so `buildSourceItemKey` emits stable `synth:block:b<id>` keys.                                                     |
-| `range.ts`       | Expand timestamp-bounded ranges to include atomic assistant/tool-result groups. Resolve indices from timestamps; token estimates. Imported directly by pruning and compress-tool (not re-exported from `index.ts`). |
-| `metadata.ts`    | Factory for empty `CompressionBlockMetadata` (`coveredSourceKeys`, `coveredSpanKeys`, tool IDs, file/command stats).                                                                                                |
-| `tooling.ts`     | Boundary validation, planning hints, activity-log/metadata assembly, supersession resolution, ID/timestamp/source-key resolution, `(bN)` placeholder expansion.                                                     |
-| `index.ts`       | Re-exports `materialize`, `metadata`, `tooling` only.                                                                                                                                                               |
+| File             | Responsibility                                                                                                                                                                                                                                                     |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `materialize.ts` | Inert/deferred-dead v2 scaffold: renders `CompressionBlockV2` into `DcpMessage`s (`full` / `compact` / `minimal`) only for the never-written `schemaVersion === 2` path. Stamps `INTERNAL_BLOCK_ID` so `buildSourceItemKey` emits stable `synth:block:b<id>` keys. |
+| `range.ts`       | Expand timestamp-bounded ranges to include atomic assistant/tool-result groups. Resolve indices from timestamps; token estimates. Imported directly by pruning and compress-tool (not re-exported from `index.ts`).                                                |
+| `metadata.ts`    | Factory for empty `CompressionBlockMetadata` (`coveredSourceKeys`, `coveredSpanKeys`, tool IDs, file/command stats).                                                                                                                                               |
+| `tooling.ts`     | Boundary validation, planning hints, activity-log/metadata assembly, supersession resolution, ID/timestamp/source-key resolution, `(bN)` placeholder expansion.                                                                                                    |
+| `index.ts`       | Re-exports `materialize`, `metadata`, `tooling` only.                                                                                                                                                                                                              |
 
 ### `tooling.ts` — planning hints
 
@@ -41,9 +41,10 @@ Pure compression logic: render active blocks into synthetic transcript messages,
 
 ### Materialization (pruning path)
 
-1. `applyPruning` selects active blocks → `materializeTranscriptWithBlocks`.
-2. `renderCompressedBlockMessage` creates a synthetic `user` message stamped with `INTERNAL_BLOCK_ID`.
-3. `buildSourceItemKey` emits `synth:block:b<id>`; downstream snapshot, owner derivation, provider-payload filtering, and replay use these keys.
+1. Runtime pruning selects active legacy `state.compressionBlocks` and replaces covered spans with synthetic block messages.
+2. Synthetic block messages are stamped with `INTERNAL_BLOCK_ID`.
+3. `buildSourceItemKey` emits `synth:block:b<id>`; downstream snapshot, owner derivation, and provider-payload filtering use these keys.
+4. `materializeTranscript` / `CompressionBlockV2` remain inert scaffolding, reachable only through the never-written `schemaVersion === 2` state path.
 
 ### Compress tool / nudge path
 
@@ -55,8 +56,8 @@ Pure compression logic: render active blocks into synthetic transcript messages,
 
 ## Integration
 
-- **pruning** — `materializeTranscriptWithBlocks`, `range.ts` expansion helpers
+- **pruning** — active legacy `state.compressionBlocks` replacement via `renderCompressedBlockMessage`, plus `range.ts` expansion helpers
 - **application/compress-tool** — planning hints, boundary validation, artifacts, supersession (via thin `artifacts.ts` / `validation.ts` barrels)
 - **application/context-handler** — nudge planning hints
-- **replay** — `validateCompressionRangeBoundaryIds` during range replay
+- **replay** — offline `validateCompressionRangeBoundaryIds` during range replay
 - **transcript** — snapshot spans, logical-turn tail, `INTERNAL_BLOCK_ID` / source-key derivation

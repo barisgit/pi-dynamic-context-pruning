@@ -33,7 +33,7 @@ export { COMPRESS_RANGE_DESCRIPTION } from "./index.js";
 
 ## Integration
 
-**System prompt** (`application/system-prompt-handler.ts`): appends `SYSTEM_PROMPT` to the host system prompt on every `before_agent_start`. Manual mode was removed in dcp-replay-v3 — there is now a single prompt mode.
+**System prompt** (`application/system-prompt-handler.ts`): appends `SYSTEM_PROMPT` to the host system prompt on every `before_agent_start`. Manual mode was removed — there is now a single prompt mode.
 
 **`compress` tool registration** (`application/compress-tool/registration.ts`): assigns `COMPRESS_RANGE_DESCRIPTION` to the tool schema `description` field. The model reads this to understand input constraints and summary quality requirements.
 

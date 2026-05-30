@@ -2,7 +2,7 @@
 
 ## Responsibility
 
-Canonical transcript scaffolding: key derivation, span grouping, ownership mapping, and liveness queries used by both the active runtime (pruning, nudges, provider-payload filtering) and replay-first persistence.
+Canonical transcript scaffolding: key derivation, span grouping, ownership mapping, and liveness queries used by the active runtime (pruning, nudges, provider-payload filtering), direct-restore coverage metadata, and offline replay tooling.
 
 ## Design
 
@@ -21,19 +21,19 @@ Both Symbols are non-enumerable exports retained because the stamping sites are 
 
 ## Flow
 
-```
+```text
 DcpMessage[]
   └─ buildTranscriptSnapshot
        ├─ map  → TranscriptSourceItem[]   (key via buildSourceItemKey)
        └─ reduce → TranscriptSpan[]        (assistant+tool pairs → tool-exchange span)
 ```
 
-Consumers: `resolveCompressionBlockCoveredSourceKeys`, `countLogicalTurns`, `resolveLogicalTurnTailStartTimestamp`, `buildLiveOwnerKeys`, replay, provider-payload filter.
+Consumers: `resolveCompressionBlockCoveredSourceKeys`, `countLogicalTurns`, `resolveLogicalTurnTailStartTimestamp`, `buildLiveOwnerKeys`, offline replay, provider-payload filter.
 
 ## Integration
 
-- **Replay** (`src/domain/replay/`): reconstructs state from transcript + `compress` tool calls using these keys
+- **Replay** (`src/domain/replay/`): offline reconstruction from transcript + `compress` tool calls using these keys
 - **Pruning** (`src/domain/pruning/`): uses `buildLiveOwnerKeys` + covered-ordinal logic
 - **Nudge** (`src/domain/nudge/`): uses `resolveLogicalTurnTailStartTimestamp`
 - **Provider filter** (`src/domain/provider/`): uses canonical owner keys from this module
-- **Persist** (`src/infrastructure/`): `PersistedDcpStateV3` is the bootstrap; full state is replayed from transcript
+- **Persist** (`src/infrastructure/`): v5 persists exact coverage keys for direct restore; v3 remains the scalar-only empty-session marker

@@ -135,7 +135,7 @@ All commands are available in the pi TUI via `/dcp <subcommand>`:
 | `/dcp` or `/dcp help` | Show command reference                                          |
 | `/dcp context`        | Show context window usage and session stats                     |
 | `/dcp stats`          | Show pruning statistics (tokens saved, blocks, operations)      |
-| `/dcp compress`       | Trigger LLM compression immediately (sends a followUp message)  |
+| `/dcp compress`       | Trigger LLM compression immediately (sends a follow-up message) |
 | `/dcp compact`        | Materialize active DCP blocks into a pi-native compaction entry |
 
 ## How It Works

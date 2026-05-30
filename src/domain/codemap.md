@@ -22,7 +22,7 @@ Consumed by: `application/compress-tool/registration.ts`, `application/context-h
 | File             | Responsibility                                                                                                                                                                                                       |
 | ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `range.ts`       | Expand timestamp-bounded ranges to include atomic assistant/tool-result groups. Resolve indices from timestamps.                                                                                                     |
-| `materialize.ts` | Render v2 compression blocks into `DcpMessage`s with three detail levels: `full` (summary + activity log), `compact` (truncated summary), `minimal` (one-line).                                                      |
+| `materialize.ts` | Inert/deferred-dead v2 scaffolding for rendering `CompressionBlockV2` into `DcpMessage`s when `state.schemaVersion === 2`; current persisted v5 runtime uses legacy `compressionBlocks`.                             |
 | `metadata.ts`    | Factory for empty `CompressionBlockMetadata` (covered source keys, span keys, tool IDs, file/command stats).                                                                                                         |
 | `tooling.ts`     | Core compression helpers: boundary validation (including refs inside active blocks), passthrough-span absorption in planning hints, activity-log/metadata assembly, supersession resolution, protected-tail helpers. |
 | `index.ts`       | Re-exports for all submodules.                                                                                                                                                                                       |
@@ -87,11 +87,11 @@ Consumed by: `application/compress-tool/registration.ts`, `application/context-h
 
 ### `replay/`
 
-**Purpose:** Reconstruct `DcpState` from session transcript and branch entries (replay-first, dcp-replay-v3). Used on session restore instead of loading a full serialized block log.
+**Purpose:** Offline-only reconstruction of `DcpState` from session transcript and branch entries. Runtime restore no longer calls replay; it uses direct restore from persisted coverage-bearing state in `application/session-handler.ts`.
 
-| File       | Responsibility                                                                                                                                                                                                                                                                                                                                                                                                     |
-| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `index.ts` | `replayDcpState(branchEntries, config, {state}) -> DcpState`. Walks branch entries (or live `event.messages` buffer), reconstructs `CompressionBlock`s from assistant `compress` toolCalls + matching `toolResult`s, applies native-compaction deactivations, runs `applyPruning` at bucket boundaries to populate refs and snapshots. Fallback snapshot path for pre-v3 sessions gated by `branchIsReplayable()`. |
+| File       | Responsibility                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `index.ts` | `replayDcpState(branchEntries, config, {state}) -> DcpState`. Walks branch entries (or wrapped message buffers), reconstructs `CompressionBlock`s from assistant `compress` toolCalls + matching `toolResult`s, applies native-compaction deactivations, and runs a final `applyPruning` pass. Retained for offline scripts/tests such as `scripts/replay-equivalence.ts`, `scripts/vacuum-dcp-session.ts`, and `tests/unit/replay.test.ts`. |
 
 ---
 
@@ -115,7 +115,7 @@ Consumed by: `application/compress-tool/registration.ts`, `application/context-h
 
 **Source-key ordinal scheme** (stable canonical anchors):
 
-```
+```text
 raw:<id>                       → assistant tool-call / toolResult messages
 synth:nudge:<turn>             → injected nudge messages
 synth:block:b<id>              → synthetic compressed block messages
@@ -156,7 +156,7 @@ New blocks persist `startSourceKey`, `endSourceKey`, and `anchorSourceKey` for s
 
 ### 7. Owner Key Derivation
 
-Owner keys are derived from rendered transcript metadata tags for visible non-assistant messages and compressed blocks, plus the non-enumerable `__dcpOwnerKey` Symbol attached to assistant message objects during context materialization. Assistant messages do not receive visible refs, preserving provider prefix cache. `provider/payload-filter.ts` reads `__dcpOwnerKey` directly from assistant message objects — no rendered tag dependency.
+Owner keys are derived from canonical transcript/source metadata captured in `messageOwnerSnapshot` for visible non-assistant messages and compressed blocks, plus the non-enumerable `__dcpOwnerKey` Symbol attached to assistant message objects during context materialization. Assistant messages do not receive visible refs, preserving provider prefix cache. `provider/payload-filter.ts` reads canonical owner data directly and uses rendered-tag parsing only as a legacy/non-assistant fallback — no arbitrary rendered-text ownership dependency.
 
 ### 8. Passthrough Roles
 
@@ -166,18 +166,18 @@ Roles `compaction`, `branch_summary`, `custom_message` are transparent in planni
 
 ## Integration
 
-```
+```text
 application/ (orchestration)
   └─> domain/pruning      applyPruning()          — main runtime path
   └─> domain/compression  buildCompressionArtifacts*() — compress tool
   └─> domain/nudge        getNudgeType()          — nudge decision
   └─> domain/provider     filterProviderPayloadInput() — hidden artifact filtering
-  └─> domain/replay       replayDcpState()        — session restore
+  └─> domain/replay       replayDcpState()        — offline verification/vacuum only
 
 domain/transcript      buildTranscriptSnapshot() — canonical snapshot
   └─> domain/compression (tooling.ts) resolveCompressionBlockCoveredSourceKeys
   └─> domain/pruning    countLogicalTurns, buildLiveOwnerKeys
-  └─> domain/replay     walk entries, reconstruct blocks
+  └─> domain/replay     offline walk entries, reconstruct blocks
 
 domain/refs            parseVisibleRef, allocateMessageRef, stripDcpMetadataTags
   └─> domain/compression (tooling.ts)
@@ -189,8 +189,8 @@ domain/tokens          estimateTokens, estimateMessageTokens
   └─> domain/pruning
 ```
 
-The `transcript/` snapshot is the canonical source of truth for source items and spans. It feeds `compression/tooling.ts` for exact coverage resolution, `pruning/index.ts` for logical turn counting and live owner keys, and will eventually drive the v2 materialization path in `compression/materialize.ts`.
+The `transcript/` snapshot is the canonical source of truth for source items and spans. It feeds `compression/tooling.ts` for exact coverage resolution, `pruning/index.ts` for logical turn counting and live owner keys, and also feeds the inert v2 materialization scaffold in `compression/materialize.ts`.
 
 **Application layer** owns: pi hook registration, tool registration, command registration, config loading, state persistence, debug logging, and provider-payload adaptation.
 
-**Persistence (dcp-replay-v3 + v4):** empty sessions persist v3 scalars only; sessions with blocks persist v4 light blocks (summary/topic/savings, no coverage anchors). Replayable branches still reconstruct coverage metadata via `replayDcpState()`; v4 light blocks serve non-replayable restart continuity. `validateCompressionRangeBoundaryIds()` rejects raw `mNNNN` refs inside active compressed spans with actionable `bN` boundary guidance.
+**Persistence (direct-restore v5):** empty sessions persist v3 scalar markers only; sessions with blocks persist v5 scalars plus full active block state, exact `coveredSourceKeys`/`coveredSpanKeys`, finite timestamp fallbacks, and `nextBlockId`. Runtime restore directly loads the latest coverage-bearing v1/v2/v5 `dcp-state` entry, or restores scalar continuity only from the latest non-coverage entry. `replayDcpState()` is retained for offline scripts/tests, not live restore. `validateCompressionRangeBoundaryIds()` rejects raw `mNNNN` refs inside active compressed spans with actionable `bN` boundary guidance.

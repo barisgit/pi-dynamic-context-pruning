@@ -2,11 +2,7 @@
 
 ## Purpose
 
-Reconstructs a full `DcpState` from any compatible branch-entry array (full session JSONL,
-or live `event.messages` wrapped as `{type:'message', message}`). Replay is the
-persistence story for **dcp-replay-v3**: the on-disk `dcp-state` entry is a tiny scalar
-bootstrap; the real block log, tool-call records, and lifetime savings are rebuilt by
-walking and interpreting DCP-significant events embedded in the transcript.
+Offline-only reconstruction of a full `DcpState` from compatible branch-entry arrays (full session JSONL, or message buffers wrapped as `{type:'message', message}`). Replay is retained for `scripts/replay-equivalence.ts`, `scripts/vacuum-dcp-session.ts`, and tests. It is not the runtime restore path: live restore uses `directRestore` in `src/application/session-handler.ts`, which directly loads persisted coverage-bearing v5/v2/v1 state when present and otherwise restores scalar continuity only.
 
 ---
 
@@ -74,10 +70,11 @@ interface ReplayDcpStateOptions {
 
 ## Call Sites
 
-| Caller               | Path                       | Role                                                           |
-| -------------------- | -------------------------- | -------------------------------------------------------------- |
-| `session-handler.ts` | `restoreStateFromBranch`   | Legacy restore path; guarded by `branchIsReplayable()`         |
-| `context-handler.ts` | lazy replay (current path) | Replays on first `context` pass when persisted state is absent |
+| Caller                          | Path                        | Role                                                                 |
+| ------------------------------- | --------------------------- | -------------------------------------------------------------------- |
+| `scripts/replay-equivalence.ts` | offline verifier            | Compares replayed state against persisted/direct-restored state      |
+| `scripts/vacuum-dcp-session.ts` | offline session maintenance | Replays entries while producing compacted/vacuumed session artifacts |
+| `tests/unit/replay.test.ts`     | unit tests                  | Locks offline replay behavior for compatibility                      |
 
 ---
 
