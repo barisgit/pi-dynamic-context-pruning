@@ -3,12 +3,7 @@ import type { DcpConfig } from "../types/config.js";
 import type { CompressionBlock, DcpState } from "../types/state.js";
 import { createState, resetState } from "../state.js";
 import { appendDebugLog, buildSessionDebugPayload } from "../infrastructure/debug-log.js";
-import {
-  restorePersistedState,
-  restorePersistedStateScalars,
-  serializePersistedState,
-} from "../infrastructure/persistence.js";
-import { replayDcpState } from "../domain/replay/index.js";
+import { restorePersistedState, serializePersistedState } from "../infrastructure/persistence.js";
 import { updateDcpStatus } from "./status.js";
 
 /** Apply config-derived baseline state before session hooks run. */
@@ -16,7 +11,28 @@ export function initializeSessionState(_state: DcpState, _config: DcpConfig): vo
   // No-op: manual mode was removed in dcp-replay-v3.
 }
 
-export type RestoreMode = "persisted" | "replay-pending" | "snapshot-fallback";
+function isCoverageBearingDcpState(data: unknown): boolean {
+  if (!data || typeof data !== "object") return false;
+  if ((data as { unchanged?: unknown }).unchanged === true) return false;
+  const persisted = data as { schemaVersion?: unknown; compressionBlocks?: unknown; blocks?: unknown };
+  if (persisted.schemaVersion === 5) return Array.isArray(persisted.blocks);
+  if (persisted.schemaVersion === 2) return Array.isArray(persisted.blocks);
+  if (persisted.schemaVersion === 1 || persisted.schemaVersion === undefined) {
+    return Array.isArray(persisted.compressionBlocks);
+  }
+  return false;
+}
+
+function findLatestCoverageBearingDcpStateEntry(branchEntries: readonly any[]): any | null {
+  for (let index = branchEntries.length - 1; index >= 0; index--) {
+    const entry = branchEntries[index];
+    if (!isDcpStateEntry(entry)) continue;
+    if (isCoverageBearingDcpState(entry.data)) return entry;
+  }
+  return null;
+}
+
+export type RestoreMode = "persisted";
 
 interface RestoreStateFromBranchResult {
   branchEntryCount: number;
@@ -24,48 +40,10 @@ interface RestoreStateFromBranchResult {
   repairedBlockIds: number[];
   repairedNudgeWatermarks: boolean;
   mode: RestoreMode;
-  replayError?: string;
 }
 
 function isDcpStateEntry(entry: any): boolean {
   return entry?.type === "custom" && entry.customType === "dcp-state";
-}
-
-function latestMaterialDcpStateSchemaVersion(branchEntries: readonly any[]): number | null {
-  for (let index = branchEntries.length - 1; index >= 0; index--) {
-    const entry = branchEntries[index];
-    if (!isDcpStateEntry(entry)) continue;
-    const data = entry.data;
-    if (!data || typeof data !== "object") continue;
-    if ((data as { unchanged?: unknown }).unchanged === true) continue;
-    const schemaVersion = (data as { schemaVersion?: unknown }).schemaVersion;
-    if (typeof schemaVersion === "number") return schemaVersion;
-    return 1;
-  }
-  return null;
-}
-
-/**
- * A branch is "replayable" if it contains any DCP-relevant transcript
- * events that the replay engine can reconstruct state from — a successful
- * compress tool result, or a DCP native-compaction entry. Old sessions
- * that pre-date dcp-replay-v3 only carry persisted `dcp-state` snapshots
- * with no transcript-side evidence; for those we must use the snapshot
- * fallback so existing state is not lost.
- */
-function branchIsReplayable(branchEntries: readonly any[]): boolean {
-  for (const entry of branchEntries) {
-    if (entry?.type === "compaction" && getDcpNativeCompactionBlockIds(entry).length > 0) {
-      return true;
-    }
-    if (entry?.type !== "message") continue;
-    const message = entry.message;
-    if (message?.role !== "toolResult") continue;
-    if (message.isError) continue;
-    if (message.toolName !== "compress") continue;
-    return true;
-  }
-  return false;
 }
 
 function getDcpNativeCompactionBlockIds(entry: any): number[] {
@@ -191,7 +169,7 @@ function repairOffBranchNativeCompactionState(
   return repairedIds;
 }
 
-function snapshotRestore(
+function directRestore(
   branchEntries: readonly any[],
   state: DcpState,
   config: DcpConfig,
@@ -200,12 +178,10 @@ function snapshotRestore(
   resetState(state);
   initializeSessionState(state, config);
 
-  let restoredStateEntries = 0;
-  for (const entry of branchEntries) {
-    if (isDcpStateEntry(entry)) {
-      restorePersistedState(entry.data, state);
-      restoredStateEntries++;
-    }
+  const latestCoverageEntry = findLatestCoverageBearingDcpStateEntry(branchEntries);
+  const restoredStateEntries = latestCoverageEntry ? 1 : 0;
+  if (latestCoverageEntry) {
+    restorePersistedState(latestCoverageEntry.data, state);
   }
 
   const repairedBlockIds = repairOffBranchNativeCompactionState(
@@ -217,34 +193,16 @@ function snapshotRestore(
 
   const repairedNudgeWatermarks = repairStaleNudgeWatermarks(branchEntries, state);
 
-  // Pre-v3 snapshot fallback already produces fully-formed block state on
-  // disk; lazy replay would re-run reconstruction unnecessarily (and would
-  // probably fail because the branch is non-replayable). Clear the flag.
-  state.replayPending = false;
-
   return { restoredStateEntries, repairedBlockIds, repairedNudgeWatermarks };
 }
 
 /**
  * Restore runtime state from the active branch.
  *
- * dcp-replay-v3 + replay-on-context: when the branch carries DCP-relevant
- * transcript evidence (successful compress tool results or native compaction
- * entries), do a SCALAR-ONLY restore here (turn counters, prunedToolIds,
- * lifetimeTokensSavedRealized) and set `state.replayPending = true`. The
- * next `context` event runs the actual block reconstruction against pi's
- * live message buffer, which guarantees ref-allocation parity with the
- * agent at compress time.
- *
- * v4 dcp-state entries carry a light block list for non-replayable branches
- * and native-compaction history, but active replayable branches still prefer
- * scalar-only restore: v4 blocks intentionally omit coverage anchors, so using
- * them for live pruning would leave old raw transcript spans uncompressed after
- * reload.
- *
- * Old sessions that pre-date v3 only carry persisted `dcp-state` snapshots
- * and no transcript evidence; those fall back to the legacy snapshot walk
- * here so existing state survives the upgrade.
+ * Direct-restore from the latest coverage-bearing persisted DCP snapshot.
+ * v1/v2/v5 entries carry enough block coverage to resume pruning immediately;
+ * v3/v4 entries are intentionally ignored and therefore clean-reset to empty
+ * state rather than triggering replay-on-resume.
  */
 export function restoreStateFromBranch(
   branchEntries: readonly any[],
@@ -252,70 +210,13 @@ export function restoreStateFromBranch(
   config: DcpConfig,
   allEntries: readonly any[] = branchEntries
 ): RestoreStateFromBranchResult {
-  const latestSchemaVersion = latestMaterialDcpStateSchemaVersion(branchEntries);
-  const replayable = branchIsReplayable(branchEntries);
-
-  if (latestSchemaVersion === 4 && !replayable) {
-    resetState(state);
-    initializeSessionState(state, config);
-
-    let restoredStateEntries = 0;
-    for (const entry of branchEntries) {
-      if (isDcpStateEntry(entry)) {
-        restorePersistedState(entry.data, state);
-        restoredStateEntries++;
-      }
-    }
-    state.replayPending = false;
-
-    const repairedNudgeWatermarks = repairStaleNudgeWatermarks(branchEntries, state);
-
-    return {
-      branchEntryCount: branchEntries.length,
-      restoredStateEntries,
-      repairedBlockIds: [],
-      repairedNudgeWatermarks,
-      mode: "persisted",
-    };
-  }
-
-  if (replayable) {
-    resetState(state);
-    initializeSessionState(state, config);
-
-    // Scalar-only restore: walk dcp-state entries without restoring block logs
-    // so persisted counters (currentTurn, lastNudgeTurn, lastCompressTurn,
-    // prunedToolIds, lifetimeTokensSavedRealized) end up on `state`. Blocks are
-    // reconstructed lazily from the live context buffer; restoring v4 light
-    // block placeholders here would leave active blocks without coverage
-    // anchors and resurrect raw transcript tokens after reload.
-    let restoredStateEntries = 0;
-    for (const entry of branchEntries) {
-      if (isDcpStateEntry(entry)) {
-        restorePersistedStateScalars(entry.data, state);
-        restoredStateEntries++;
-      }
-    }
-    state.replayPending = true;
-
-    const repairedNudgeWatermarks = repairStaleNudgeWatermarks(branchEntries, state);
-
-    return {
-      branchEntryCount: branchEntries.length,
-      restoredStateEntries,
-      repairedBlockIds: [],
-      repairedNudgeWatermarks,
-      mode: "replay-pending",
-    };
-  }
-
-  const fallback = snapshotRestore(branchEntries, state, config, allEntries);
+  const fallback = directRestore(branchEntries, state, config, allEntries);
   return {
     branchEntryCount: branchEntries.length,
     restoredStateEntries: fallback.restoredStateEntries,
     repairedBlockIds: fallback.repairedBlockIds,
     repairedNudgeWatermarks: fallback.repairedNudgeWatermarks,
-    mode: "snapshot-fallback",
+    mode: "persisted",
   };
 }
 
@@ -381,7 +282,6 @@ export function registerSessionHandlers(
       activeCompressionBlockCount: state.compressionBlocks.filter((block) => block.active).length,
       nextBlockId: state.nextBlockId,
       restoreMode: restore.mode,
-      replayError: restore.replayError,
     });
 
     if (ctx.hasUI) updateDcpStatus(ctx, state);
@@ -406,7 +306,6 @@ export function registerSessionHandlers(
       activeCompressionBlockCount: state.compressionBlocks.filter((block) => block.active).length,
       nextBlockId: state.nextBlockId,
       restoreMode: restore.mode,
-      replayError: restore.replayError,
     });
 
     if (ctx.hasUI) updateDcpStatus(ctx, state);

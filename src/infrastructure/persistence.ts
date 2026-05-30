@@ -14,11 +14,13 @@ import {
   type CompressionLogEntry,
   type DcpState,
   type PersistedCompressionBlockV4,
+  type PersistedCompressionBlockV5,
   type PersistedDcpState,
   type PersistedDcpStateV1,
   type PersistedDcpStateV2,
   type PersistedDcpStateV3,
   type PersistedDcpStateV4,
+  type PersistedDcpStateV5,
 } from "../state.js";
 import { normalizeMessageAliasState, serializeMessageAliasState } from "../domain/refs/index.js";
 import type { TranscriptSnapshot } from "../domain/transcript/index.js";
@@ -30,6 +32,40 @@ import type { TranscriptSnapshot } from "../domain/transcript/index.js";
 function asObject(value: unknown): Record<string, unknown> | null {
   if (value === null || typeof value !== "object") return null;
   return value as Record<string, unknown>;
+}
+
+function persistCompressionBlockV5(block: CompressionBlock): PersistedCompressionBlockV5 {
+  if (!block.active) return slimInactiveLegacyBlock(block);
+
+  return {
+    ...block,
+    startTimestamp: Number.isFinite(block.startTimestamp) ? block.startTimestamp : 0,
+    endTimestamp: Number.isFinite(block.endTimestamp) ? block.endTimestamp : 0,
+    anchorTimestamp: Number.isFinite(block.anchorTimestamp)
+      ? block.anchorTimestamp
+      : Number.isFinite(block.endTimestamp)
+        ? block.endTimestamp + 1
+        : 0,
+    startSourceKey: block.startSourceKey ?? null,
+    endSourceKey: block.endSourceKey ?? null,
+    anchorSourceKey: block.anchorSourceKey ?? null,
+    active: true,
+    activityLog: block.activityLog?.map((entry) => ({ ...entry })),
+    metadata: {
+      ...(block.metadata ?? createEmptyCompressionBlockMetadata()),
+      coveredSourceKeys: [...(block.metadata?.coveredSourceKeys ?? [])],
+      coveredSpanKeys: [...(block.metadata?.coveredSpanKeys ?? [])],
+      coveredArtifactRefs: [...(block.metadata?.coveredArtifactRefs ?? [])],
+      coveredToolIds: [...(block.metadata?.coveredToolIds ?? [])],
+      supersededBlockIds: [...(block.metadata?.supersededBlockIds ?? [])],
+      fileReadStats: (block.metadata?.fileReadStats ?? []).map((stat) => ({
+        ...stat,
+        lineSpans: [...stat.lineSpans],
+      })),
+      fileWriteStats: (block.metadata?.fileWriteStats ?? []).map((stat) => ({ ...stat })),
+      commandStats: (block.metadata?.commandStats ?? []).map((stat) => ({ ...stat })),
+    },
+  };
 }
 
 function isFiniteNumber(value: unknown): value is number {
@@ -437,11 +473,10 @@ function slimInactiveV2Block(block: CompressionBlockV2): CompressionBlockV2 {
 }
 
 /**
- * Serialize runtime state into the v3/v4 replay bootstrap shapes.
+ * Serialize runtime state into the current direct-restore shape.
  *
- * Empty sessions keep the tiny v3 scalar marker. Once blocks exist, v4 adds a
- * light block list so post-compaction block records survive restarts without
- * reintroducing legacy fat snapshots.
+ * Empty sessions keep the tiny v3 scalar marker. Once blocks exist, v5 carries
+ * active block coverage and anchors so resume can restore without replay.
  */
 export function serializePersistedState(state: DcpState): PersistedDcpState {
   const scalars = {
@@ -461,10 +496,10 @@ export function serializePersistedState(state: DcpState): PersistedDcpState {
     return persisted;
   }
 
-  const persisted: PersistedDcpStateV4 = {
-    schemaVersion: 4,
+  const persisted: PersistedDcpStateV5 = {
+    schemaVersion: 5,
     ...scalars,
-    blocks: state.compressionBlocks.map(persistCompressionBlockV4),
+    blocks: state.compressionBlocks.map(persistCompressionBlockV5),
     nextBlockId: state.nextBlockId,
   };
   return persisted;
@@ -550,6 +585,28 @@ export function restorePersistedState(data: unknown, state: DcpState): void {
   // marker. Restore is cumulative over branch entries, so this means "keep the
   // state restored from the nearest previous DCP snapshot on this branch".
   if (persisted.unchanged === true) return;
+
+  // v5 direct-restore state. Active blocks carry exact coverage, anchors, and
+  // finite timestamp fallbacks, so live resume does not need replay.
+  if (persisted.schemaVersion === 5) {
+    const blocks = Array.isArray(persisted.blocks)
+      ? persisted.blocks.map(normalizeLegacyBlock).filter((b): b is CompressionBlock => b !== null)
+      : [];
+
+    restorePersistedScalars(persisted, state);
+    state.schemaVersion = 1;
+    state.compressionBlocks = blocks;
+    state.compressionBlocksV2 = [];
+    state.nextBlockId = isFiniteNumber(persisted.nextBlockId)
+      ? persisted.nextBlockId
+      : blocks.length > 0
+        ? Math.max(0, ...blocks.map((b) => b.id)) + 1
+        : 1;
+    state.tokensSaved = blocks
+      .filter((block) => block.active)
+      .reduce((sum, block) => sum + (block.savedTokenEstimate ?? 0), 0);
+    return;
+  }
 
   // v4 scalar bootstrap plus a light legacy-block list. Heavy coverage/log
   // metadata is intentionally not persisted; restored blocks are still useful

@@ -1,20 +1,13 @@
 // ---------------------------------------------------------------------------
-// Integration tests for replay-first restore with snapshot fallback (f3).
+// Integration tests for direct persisted restore.
 // ---------------------------------------------------------------------------
 //
 // These tests drive `restoreStateFromBranch` directly against synthetic
 // branch entries that mimic what `ctx.sessionManager.getBranch()` returns
 // at runtime. They cover:
 //
-//   1. Pure dcp-state snapshot (no transcript)            -> snapshot-fallback
-//   2. Transcript with a successful compress tool result  -> replay
-//   3. Branch with native-compaction entry + snapshot but
-//      no compress transcript                              -> snapshot-fallback
-//   4. Branch with compress events but the assistant
-//      tool-call message is missing (malformed)           -> snapshot-fallback
-//      (no crash; replay tolerates and engine returns
-//       empty blocks; snapshot fallback fires because a
-//       dcp-state entry is also present.)
+// Direct restore uses the latest coverage-bearing dcp-state entry (v1/v2/v5)
+// and intentionally ignores replay-only transcript evidence on resume.
 
 import { describe, expect, test } from "bun:test";
 import { restoreStateFromBranch } from "../../src/application/session-handler.js";
@@ -78,7 +71,7 @@ function nativeCompactionEntry(representedBlockIds: number[]): any {
 }
 
 describe("Legacy session restore (f3)", () => {
-  test("pure dcp-state snapshot -> snapshot-fallback mode", () => {
+  test("pure dcp-state snapshot -> persisted mode", () => {
     const persisted = makeState([block(1, true)]);
     persisted.nextBlockId = 2;
     persisted.tokensSaved = 250;
@@ -87,14 +80,14 @@ describe("Legacy session restore (f3)", () => {
     const state = makeState();
     const result = restoreStateFromBranch(branch, state, makeConfig());
 
-    expect(result.mode).toBe("snapshot-fallback");
+    expect(result.mode).toBe("persisted");
     expect(result.restoredStateEntries).toBe(1);
     expect(state.compressionBlocks).toHaveLength(1);
     expect(state.compressionBlocks[0]?.active).toBe(true);
     expect(state.tokensSaved).toBe(250);
   });
 
-  test("transcript with a successful compress -> replay mode", () => {
+  test("transcript with a successful compress but no coverage snapshot -> clean reset", () => {
     const LONG =
       "This is a verbose user/assistant message body that exists purely so that " +
       "token estimation yields a meaningfully large number for both source items. ".repeat(20);
@@ -147,16 +140,12 @@ describe("Legacy session restore (f3)", () => {
     const state = makeState();
     const result = restoreStateFromBranch(branch, state, makeConfig());
 
-    // dcp-replay-v3 + replay-on-context: restoreStateFromBranch is now
-    // scalar-only. Block reconstruction happens lazily on the first context
-    // event against pi's live message buffer. Verify the scalar restore
-    // marked replayPending and didn't reconstruct blocks here.
-    expect(result.mode).toBe("replay-pending");
-    expect(state.replayPending).toBe(true);
+    expect(result.mode).toBe("persisted");
+    expect(result.restoredStateEntries).toBe(0);
     expect(state.compressionBlocks).toHaveLength(0);
   });
 
-  test("latest v4 dcp-state entry without transcript evidence -> persisted mode", () => {
+  test("latest v5 dcp-state entry without transcript evidence -> persisted mode", () => {
     const persisted = makeState([block(3, true)]);
     persisted.nextBlockId = 4;
     persisted.currentTurn = 12;
@@ -166,7 +155,6 @@ describe("Legacy session restore (f3)", () => {
     const result = restoreStateFromBranch(branch, state, makeConfig());
 
     expect(result.mode).toBe("persisted");
-    expect(state.replayPending).toBe(false);
     expect(state.currentTurn).toBe(12);
     expect(state.nextBlockId).toBe(4);
     expect(state.compressionBlocks).toHaveLength(1);
@@ -174,7 +162,7 @@ describe("Legacy session restore (f3)", () => {
     expect(state.compressionBlocks[0]?.active).toBe(true);
   });
 
-  test("latest v4 dcp-state with replayable transcript -> scalar replay pending", () => {
+  test("latest v5 dcp-state with compress transcript -> direct persisted restore", () => {
     const persisted = makeState([block(3, true)]);
     persisted.nextBlockId = 4;
     persisted.currentTurn = 12;
@@ -215,14 +203,14 @@ describe("Legacy session restore (f3)", () => {
     const state = makeState();
     const result = restoreStateFromBranch(branch, state, makeConfig());
 
-    expect(result.mode).toBe("replay-pending");
-    expect(state.replayPending).toBe(true);
+    expect(result.mode).toBe("persisted");
     expect(state.currentTurn).toBe(12);
-    expect(state.nextBlockId).toBe(1);
-    expect(state.compressionBlocks).toHaveLength(0);
+    expect(state.nextBlockId).toBe(4);
+    expect(state.compressionBlocks).toHaveLength(1);
+    expect(state.compressionBlocks[0]?.id).toBe(3);
   });
 
-  test("compaction entry + snapshot + no compress transcript -> snapshot-fallback", () => {
+  test("compaction entry + snapshot + no compress transcript -> direct persisted restore", () => {
     // Pre-v3 session that compacted under the old runtime: a compaction
     // entry sits on the branch but the original compress tool-call frames
     // are gone (pi rewrote agent.state.messages). The snapshot is the only
@@ -238,14 +226,10 @@ describe("Legacy session restore (f3)", () => {
     const state = makeState();
     const result = restoreStateFromBranch(branch, state, makeConfig());
 
-    // A native-compaction entry makes this branch replayable, so restore
-    // marks replayPending. Block reconstruction (which would deactivate b1
-    // and account for the lifetime savings) happens lazily on the first
-    // context event. Verify scalar fields restored from the persisted v1
-    // snapshot and replayPending is set.
-    expect(result.mode).toBe("replay-pending");
-    expect(state.replayPending).toBe(true);
+    expect(result.mode).toBe("persisted");
     expect(state.lifetimeTokensSavedRealized).toBe(999);
+    expect(state.compressionBlocks).toHaveLength(1);
+    expect(state.compressionBlocks[0]?.active).toBe(false);
   });
 
   test("fallback: malformed compress tool result with no matching assistant call survives", () => {
@@ -270,18 +254,8 @@ describe("Legacy session restore (f3)", () => {
     const state = makeState();
     const result = restoreStateFromBranch(branch, state, makeConfig());
 
-    // Replay sees the compress success, tries to find the matching call,
-    // gets null, skips. Then state.compressionBlocks is empty AND a
-    // snapshot exists, so we take the fallback.
-    // The dangling compress success makes the branch "replayable" by
-    // signature, so restoreStateFromBranch goes scalar-only and sets
-    // replayPending. The orphan toolCallId will be a no-op when lazy replay
-    // runs (no matching assistant call to parse args from), so the next
-    // context event leaves state.compressionBlocks empty. That's the
-    // expected v3 behaviour: the persisted v1 snapshot's blocks survive
-    // ONLY if the branch is non-replayable (pre-v3). Here the branch is
-    // technically replayable, so we accept losing the stale block.
-    expect(result.mode).toBe("replay-pending");
-    expect(state.replayPending).toBe(true);
+    expect(result.mode).toBe("persisted");
+    expect(state.compressionBlocks).toHaveLength(1);
+    expect(state.compressionBlocks[0]?.id).toBe(7);
   });
 });

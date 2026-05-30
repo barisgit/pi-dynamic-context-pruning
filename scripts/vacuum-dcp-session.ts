@@ -100,7 +100,8 @@ function materialKeyOf(data: any): string {
 
 function markerForSchemaVersion(version: unknown): { schemaVersion: number; unchanged: true } {
   const v =
-    typeof version === "number" && (version === 1 || version === 2 || version === 3 || version === 4)
+    typeof version === "number" &&
+    (version === 1 || version === 2 || version === 3 || version === 4 || version === 5)
       ? version
       : 1;
   return { schemaVersion: v, unchanged: true };
@@ -254,19 +255,9 @@ async function vacuumFile(
 }
 
 // ---------------------------------------------------------------------------
-// Verify: vacuum in memory, then assert that the live restore path yields
-// equivalent observables on the original entries vs the vacuumed entries.
-//
-// v3 contract: blocks are reconstructed by REPLAY from the transcript; the
-// snapshot is just a tiny scalar bootstrap. So:
-//   - Replayable branches (compress toolResult or dcp-native-compaction)
-//     are checked: replayDcpState() must produce identical observables
-//     before and after vacuum, since vacuum touches only dcp-state entries
-//     and leaves the transcript byte-identical.
-//   - Non-replayable branches are out-of-contract: their blocks live only
-//     inside the fat-v1/v2 snapshot, which v3 intentionally drops. We mark
-//     these as 'skipped (out-of-contract)' rather than failing — matching
-//     the same legacy/v3 split that scripts/replay-equivalence.ts uses.
+// Verify: vacuum in memory, then assert that replay over the raw append-only
+// transcript yields equivalent observables before and after the rewrite. Replay
+// stays an offline migration verifier; live resume restores from persisted v5.
 // ---------------------------------------------------------------------------
 
 interface VerifyResult {
@@ -335,8 +326,8 @@ export async function verifyFile(path: string): Promise<VerifyResult> {
 
   if (stats.dcpEntries === 0) return result;
 
-  // Non-replayable branches are out-of-contract for v3 verify: their block
-  // precision lives only in the fat snapshot, which v3 drops by design.
+  // Non-replayable branches are out-of-contract for replay-based verify: their
+  // block precision lives only in persisted snapshots, not transcript evidence.
   if (!branchIsReplayable(originalEntries)) {
     result.outOfContractEntries = stats.dcpEntries;
     return result;
@@ -356,7 +347,7 @@ export async function verifyFile(path: string): Promise<VerifyResult> {
     if (diffs.length > 0) {
       result.ok = false;
       for (const d of diffs) {
-        result.mismatches.push({ field: d.field, original: d.snapshot, vacuumed: d.replay });
+        result.mismatches.push({ field: d.field, original: d.directRestore, vacuumed: d.replay });
       }
     }
   } catch (err) {

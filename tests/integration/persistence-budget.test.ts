@@ -3,8 +3,8 @@
 // ---------------------------------------------------------------------------
 //
 // Empty states still write the tiny v3 scalar marker. Once compression blocks
-// exist, v4 persists a light block list so block records survive restarts while
-// dropping heavyweight coverage/log/stat metadata.
+// exist, v5 persists direct-restore coverage for active blocks while slimming
+// inactive blocks.
 
 import { describe, expect, test } from "bun:test";
 import { serializePersistedState } from "../../src/infrastructure/persistence.js";
@@ -13,8 +13,8 @@ import { createEmptyCompressionBlockMetadata } from "../../src/domain/compressio
 import { makeState } from "../helpers/dcp-test-utils.js";
 
 const EMPTY_STATE_BUDGET_BYTES = 4096;
-const POPULATED_STATE_BUDGET_BYTES = 30_000;
-const PER_BLOCK_BUDGET_BYTES = 300;
+const ACTIVE_COVERAGE_PER_BLOCK_BUDGET_BYTES = 4_500;
+const MIXED_STATE_BUDGET_BYTES = 180_000;
 
 function makeFatBlock(id: number, active: boolean): CompressionBlock {
   return {
@@ -71,18 +71,19 @@ describe("dcp-state persistence budget (f4)", () => {
     expect(serializedByteLength(state)).toBeLessThan(EMPTY_STATE_BUDGET_BYTES);
   });
 
-  test("100 compression blocks persist only bounded light metadata", () => {
+  test("100 active compression blocks persist coverage with proportional bounds", () => {
     const state = makeState();
     state.compressionBlocks = Array.from({ length: 100 }, (_, i) => makeFatBlock(i + 1, true));
     state.nextBlockId = 101;
     state.tokensSaved = 200_000;
 
     const bytes = serializedByteLength(state);
-    expect(bytes).toBeLessThan(POPULATED_STATE_BUDGET_BYTES);
-    expect(bytes / state.compressionBlocks.length).toBeLessThan(PER_BLOCK_BUDGET_BYTES);
+    expect(bytes / state.compressionBlocks.length).toBeLessThan(
+      ACTIVE_COVERAGE_PER_BLOCK_BUDGET_BYTES
+    );
 
     const persisted = JSON.parse(JSON.stringify(serializePersistedState(state)));
-    expect(persisted.schemaVersion).toBe(4);
+    expect(persisted.schemaVersion).toBe(5);
     expect(persisted.blocks).toHaveLength(100);
     expect(persisted.compressionBlocks).toBeUndefined();
     expect(persisted.messageAliases).toBeUndefined();
@@ -93,14 +94,13 @@ describe("dcp-state persistence budget (f4)", () => {
     expect(sample.topic).toBe("topic 1");
     expect(sample.summary).toBe("summary 1 with preserved block context");
     expect(sample.active).toBe(true);
-    expect(sample.metadata).toBeUndefined();
-    expect(sample.activityLog).toBeUndefined();
-    expect(sample.coveredSourceKeys).toBeUndefined();
-    expect(sample.fileReadStats).toBeUndefined();
-    expect(sample.commandStats).toBeUndefined();
+    expect(sample.metadata.coveredSourceKeys).toHaveLength(30);
+    expect(sample.metadata.coveredSpanKeys).toHaveLength(10);
+    expect(sample.metadata.fileReadStats).toHaveLength(5);
+    expect(sample.metadata.commandStats).toHaveLength(8);
   });
 
-  test("100 mixed active/inactive blocks stay under the v4 budget", () => {
+  test("100 mixed active/inactive blocks stay bounded by active coverage", () => {
     const state = makeState();
     state.compressionBlocks = Array.from({ length: 100 }, (_, i) =>
       makeFatBlock(i + 1, i % 3 === 0)
@@ -109,7 +109,13 @@ describe("dcp-state persistence budget (f4)", () => {
     state.tokensSaved = 5_000_000;
     state.lifetimeTokensSavedRealized = 12_000_000;
 
-    expect(serializedByteLength(state)).toBeLessThan(POPULATED_STATE_BUDGET_BYTES);
+    const bytes = serializedByteLength(state);
+    expect(bytes).toBeLessThan(MIXED_STATE_BUDGET_BYTES);
+
+    const persisted = JSON.parse(JSON.stringify(serializePersistedState(state)));
+    const inactive = persisted.blocks.find((entry: any) => entry.active === false);
+    expect(inactive.summary).toBe("");
+    expect(inactive.metadata.coveredSourceKeys).toEqual([]);
   });
 
   test("massive messageAliases registry is not persisted", () => {

@@ -237,9 +237,19 @@ export interface PersistedDcpStateV4 extends Omit<PersistedDcpStateV3, "schemaVe
   nextBlockId: number;
 }
 
+/** Persisted v5 block metadata with direct-restore coverage for active blocks. */
+export type PersistedCompressionBlockV5 = CompressionBlock;
+
+/** Persisted v5 DCP state — v3 scalars plus direct-restorable block coverage. */
+export interface PersistedDcpStateV5 extends Omit<PersistedDcpStateV3, "schemaVersion"> {
+  schemaVersion: 5;
+  blocks: PersistedCompressionBlockV5[];
+  nextBlockId: number;
+}
+
 /** Tiny no-op state entry used by offline maintenance to preserve JSONL shape. */
 export interface PersistedDcpStateUnchanged {
-  schemaVersion: 1 | 2 | 3 | 4;
+  schemaVersion: 1 | 2 | 3 | 4 | 5;
   unchanged: true;
 }
 
@@ -249,6 +259,7 @@ export type PersistedDcpState =
   | PersistedDcpStateV2
   | PersistedDcpStateV3
   | PersistedDcpStateV4
+  | PersistedDcpStateV5
   | PersistedDcpStateUnchanged;
 
 /**
@@ -318,17 +329,6 @@ export interface DcpState {
    * Cleared by `saveState` after a successful append.
    */
   pendingSave: boolean;
-
-  // ── Lazy replay ────────────────────────────────────────────────────────────
-  /**
-   * When true, the next `context` event will lazily reconstruct
-   * `state.compressionBlocks` (and related fields) from the live message
-   * buffer pi delivers. Set by `session_start` for v3 sessions that have
-   * replay-eligible transcript evidence; cleared after the first context
-   * event runs replay. Not persisted: it's a runtime-only flag that
-   * defaults to true on a freshly constructed state.
-   */
-  replayPending: boolean;
 
   // ── Nudge state ────────────────────────────────────────────────────────────
   /**

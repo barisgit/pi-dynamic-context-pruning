@@ -92,7 +92,7 @@ describe("vacuumLines (f6)", () => {
     expect(vacuumedEntries[0]!.data.unchanged).toBeUndefined();
   });
 
-  test("material key ignores savedAt: identical v4 payloads collapse to a v4 marker", () => {
+  test("material key ignores savedAt: identical v5 payloads collapse to a v5 marker", () => {
     const state = makeState([makeFatV1Block(1, true)]) as DcpState;
     state.nextBlockId = 2;
     const first = serializePersistedState(state) as any;
@@ -102,7 +102,7 @@ describe("vacuumLines (f6)", () => {
     const { vacuumedEntries, stats } = vacuumLines(lines, /*markers=*/ true);
     expect(stats.dcpEntries).toBe(2);
     expect(stats.unchangedMarkers).toBe(1);
-    expect(vacuumedEntries[1]!.data).toEqual({ schemaVersion: 4, unchanged: true });
+    expect(vacuumedEntries[1]!.data).toEqual({ schemaVersion: 5, unchanged: true });
   });
 
   test("branch isolation: a sibling on a different ancestor does NOT become a marker", () => {
@@ -135,9 +135,9 @@ describe("vacuumLines (f6)", () => {
     expect(vacuumedEntries[1]!.data.unchanged).toBeUndefined();
   });
 
-  test("vacuum preserves scalar observables and converts fat v1 blocks to v4 metadata", () => {
-    // v4 keeps a lightweight block list while still dropping heavyweight
-    // v1 coverage/log/stat fields.
+  test("vacuum preserves scalar observables and converts fat v1 blocks to v5 metadata", () => {
+    // v5 keeps direct-restore block coverage for active blocks while still
+    // slimming inactive blocks.
     const state = makeState() as DcpState;
     state.compressionBlocks.push(makeFatV1Block(1, true));
     state.nextBlockId = 2;
@@ -156,10 +156,10 @@ describe("vacuumLines (f6)", () => {
     restorePersistedState(vacuumedEntries[0]!.data, vacuumed);
     const vacuumedObs = extractObservables(vacuumed);
 
-    expect(vacuumedEntries[0]!.data.schemaVersion).toBe(4);
+    expect(vacuumedEntries[0]!.data.schemaVersion).toBe(5);
     expect(vacuumedEntries[0]!.data.blocks).toHaveLength(1);
-    expect(vacuumedEntries[0]!.data.blocks[0].metadata).toBeUndefined();
-    expect(vacuumedEntries[0]!.data.blocks[0].activityLog).toBeUndefined();
+    expect(vacuumedEntries[0]!.data.blocks[0].metadata).toBeDefined();
+    expect(vacuumedEntries[0]!.data.blocks[0].activityLog).toEqual([]);
 
     expect(vacuumedObs.activeBlockIds).toEqual([1]);
     expect(vacuumedObs.nextBlockId).toBe(2);
@@ -171,7 +171,7 @@ describe("vacuumLines (f6)", () => {
     expect(vacuumed.lifetimeTokensSavedRealized).toBe(999);
   });
 
-  test("vacuumed v4 entries are dramatically smaller than fat v1 entries", () => {
+  test("vacuumed v5 entries are smaller than fat v1 entries", () => {
     const state = makeState() as DcpState;
     for (let i = 1; i <= 20; i++) state.compressionBlocks.push(makeFatV1Block(i, i % 2 === 0));
     state.nextBlockId = 21;
@@ -183,8 +183,8 @@ describe("vacuumLines (f6)", () => {
     const before = Buffer.byteLength(lines[0]!, "utf8");
     const after = Buffer.byteLength(outLines[0]!, "utf8");
     expect(after).toBeLessThan(before);
-    // v4 carries block metadata, but still drops fat coverage/log/stat fields.
-    expect(after).toBeLessThan(10_000);
+    // v5 carries active block coverage, but inactive blocks are still slimmed.
+    expect(after).toBeLessThan(20_000);
   });
 });
 

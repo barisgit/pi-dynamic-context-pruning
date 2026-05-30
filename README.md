@@ -8,7 +8,7 @@ Automatically reduces token usage in Pi coding agent sessions by managing conver
 - **Deduplication** — automatically removes duplicate tool call outputs (same tool, same args) keeping only the most recent result
 - **Error purging** — cleans up failed tool inputs after a configurable number of logical turns
 - **Context nudges** — injects compression reminders into the context at configurable thresholds: soft housekeeping notices, strong emergency warnings, and iteration reminders after long tool-call chains
-- **Session persistence via replay** — compression blocks and pruning state survive session restarts. Restore is replay-first: state is reconstructed from the session transcript, `compress` tool calls/results, and native compaction entries. Each on-disk `dcp-state` entry is a tiny scalar bootstrap (`<4 KiB`) rather than a fat snapshot of every block.
+- **Session persistence via direct restore** — compression blocks and pruning state survive session restarts. Active blocks are persisted with exact coverage/anchor metadata and restored directly; replay is kept only for offline vacuum/verification scripts.
 - **Native pi compaction bridge** — `/dcp compact` can materialize active DCP summaries into a pi-native compaction entry, avoiding pi's default LLM compactor for that run
 - **Debug logging** — optional best-effort JSONL diagnostics at `~/.pi/log/dcp.jsonl`
 - **`/dcp` commands** — inspect context usage, view stats, and trigger compression interactively
@@ -210,22 +210,22 @@ Ideas considered for a more cache-stable future policy:
 - keep tombstoning deterministic but batch it into explicit pruning checkpoints so cache breaks are rarer and easier to reason about
 - prefer representation-driven pruning: remove/minify artifacts only once a durable compression block or receipt represents them
 
-## Session persistence (replay-first restore)
+## Session persistence (direct restore)
 
-DCP reconstructs its in-memory state on restart by **replaying the session transcript** rather than rehydrating a fat snapshot. Each `custom:dcp-state` entry written to the session JSONL is just a tiny scalar bootstrap (schemaVersion 3) with the current turn counters, `prunedToolIds`, and `lifetimeTokensSavedRealized`. Compression blocks, message aliases, and derived statistics are rebuilt by `replayDcpState()` walking assistant `compress` tool calls/results and `dcp-native-compaction` entries in order.
+DCP restores in-memory compression state from the latest coverage-bearing `custom:dcp-state` entry on the active branch. Empty sessions still write a tiny schemaVersion 3 scalar marker. Once blocks exist, DCP writes schemaVersion 5: v3 scalar counters plus active compression blocks with exact `coveredSourceKeys` / `coveredSpanKeys`, source-key anchors, and finite timestamp fallbacks. Inactive blocks are slimmed.
 
 Why this matters in practice:
 
-- Persisted `dcp-state` lines stay under 4 KiB regardless of how many compression blocks the session holds.
-- Restore is deterministic: a session reloaded in any future runtime version produces the same state given the same transcript.
-- Pre-v3 sessions still restore: when the branch contains no replay evidence, restore falls back to the legacy snapshot path and the loaded blocks survive untouched.
+- Resume does not replay the live context buffer, so post-compaction rebuilt buffers cannot erase active block coverage.
+- v1/v2/v5 snapshots restore blocks directly. v3/v4 entries without coverage clean-reset to empty compression state rather than attempting lossy replay.
+- `replayDcpState()` remains available for offline scripts such as vacuuming old session JSONL files, where the raw append-only transcript is still present.
 
 ### Vacuuming old fat snapshots
 
 Long-lived sessions written before v3 keep their fat block payloads in earlier `dcp-state` lines. Two scripts are bundled to shrink them safely:
 
 ```bash
-# Re-serialize every dcp-state entry through restore+serialize (writes the tiny v3 shape).
+# Re-serialize every dcp-state entry through restore+serialize (writes v3 when empty, v5 when blocks exist).
 # Default is dry-run; --write creates a .bak and atomically rewrites the file.
 bun run scripts/vacuum-dcp-session.ts <session.jsonl> [--write]
 
@@ -235,11 +235,11 @@ bun run scripts/vacuum-dcp-session.ts --corpus [--session-dir ~/.pi/agent/sessio
 # Verify-only: replay observables before and after vacuum, assert equivalence.
 bun run vacuum:verify-corpus
 
-# Replay-vs-snapshot equivalence check used by VAL-REPLAY-RESTORES-EQUIVALENT-STATE.
+# Direct-restore-from-serialized-replay equivalence check.
 bun run replay:equivalence
 ```
 
-Verifiers compare four observables across restore paths: `activeBlockIds`, `nextBlockId`, `tokensSaved`, `prunedToolIds`. v3 sessions must round-trip exactly; pre-v3 sessions are reported as compatibility notes because their block precision lives only in the fat snapshot, which v3 intentionally drops.
+Verifiers compare four observables across restore paths: `activeBlockIds`, `nextBlockId`, `tokensSaved`, `prunedToolIds`. Replayable sessions must round-trip exactly through serialized direct restore; non-replayable legacy sessions are reported as compatibility notes because replay cannot reconstruct block precision without transcript evidence.
 
 ## Status indicator
 

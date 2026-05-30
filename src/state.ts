@@ -13,11 +13,13 @@ export type {
   CompressionLogEntry,
   DcpState,
   PersistedCompressionBlockV4,
+  PersistedCompressionBlockV5,
   PersistedDcpState,
   PersistedDcpStateV1,
   PersistedDcpStateV2,
   PersistedDcpStateV3,
   PersistedDcpStateV4,
+  PersistedDcpStateV5,
   ToolRecord,
 } from "./types/state.js";
 
@@ -47,7 +49,6 @@ export function createState(): DcpState {
     lifetimeTokensSavedRealized: 0,
     totalPruneCount: 0,
     pendingSave: false,
-    replayPending: true,
     lastNudgeTurn: -1,
     lastCompressTurn: -1,
   };
@@ -76,7 +77,6 @@ export function resetState(state: DcpState): void {
   state.lifetimeTokensSavedRealized = 0;
   state.totalPruneCount = 0;
   state.pendingSave = false;
-  state.replayPending = true;
   state.lastNudgeTurn = -1;
   state.lastCompressTurn = -1;
 }
