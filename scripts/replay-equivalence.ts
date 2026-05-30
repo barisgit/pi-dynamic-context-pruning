@@ -390,12 +390,10 @@ async function main(): Promise<void> {
   const corpusMode = args.includes("--corpus");
   const verbose = args.includes("--verbose");
   const sessionDirIdx = args.indexOf("--session-dir");
-  const sessionDir =
-    sessionDirIdx >= 0 && args[sessionDirIdx + 1]
-      ? args[sessionDirIdx + 1]!
-      : join(homedir(), ".pi", "agent", "sessions");
+  const sessionDirValue = sessionDirIdx >= 0 ? args[sessionDirIdx + 1] : undefined;
+  const sessionDir = sessionDirValue ?? join(homedir(), ".pi", "agent", "sessions");
 
-  const singleFile = args.find((a) => !a.startsWith("--") && a !== args[sessionDirIdx + 1]);
+  const singleFile = args.find((a) => !a.startsWith("--") && a !== sessionDirValue);
 
   if (!corpusMode && !singleFile) usage();
 
