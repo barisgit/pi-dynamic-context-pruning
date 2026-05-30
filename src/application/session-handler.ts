@@ -24,7 +24,6 @@ function isCoverageBearingDcpState(data: unknown): boolean {
     blocks?: unknown;
   };
   if (persisted.schemaVersion === 5) return Array.isArray(persisted.blocks);
-  if (persisted.schemaVersion === 2) return Array.isArray(persisted.blocks);
   if (persisted.schemaVersion === 1 || persisted.schemaVersion === undefined) {
     return Array.isArray(persisted.compressionBlocks);
   }
@@ -243,7 +242,7 @@ function directRestore(
   let restoreOutcome: RestoreOutcome = "empty";
   let restoredSchemaVersion: number | null = null;
   if (latestCoverageEntry) {
-    // Coverage-bearing snapshots (v1/v2/v5) carry both block coverage and the
+    // Coverage-bearing snapshots (v1/v5) carry both block coverage and the
     // scalar bootstrap (prunedToolIds, turn watermarks, lifetime savings), so a
     // single direct restore reproduces the full runtime state.
     restorePersistedState(latestCoverageEntry.data, state);
@@ -300,7 +299,7 @@ function directRestore(
  * Restore runtime state from the active branch.
  *
  * Direct-restore from the latest coverage-bearing persisted DCP snapshot.
- * v1/v2/v5 entries carry enough block coverage to resume pruning immediately
+ * v1/v5 entries carry enough block coverage to resume pruning immediately
  * (blocks plus scalar bootstrap). When no coverage-bearing entry exists the
  * branch never compressed, so blocks clean-reset to empty, but the latest v3
  * scalar snapshot still restores scalar continuity (tombstones, turn

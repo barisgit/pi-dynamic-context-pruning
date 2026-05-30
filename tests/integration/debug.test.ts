@@ -18,7 +18,6 @@ import {
   makeConfig,
   makeMessages,
   makeState,
-  mapLegacyBlockToSpanRange,
   os,
   path,
   renderCompressedBlockMessage,

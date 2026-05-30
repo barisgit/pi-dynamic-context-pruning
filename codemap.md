@@ -24,13 +24,13 @@ This repo is **post direct-restore**. Persistence restores coverage-bearing bloc
 On `session_start` / `session_tree`, `restoreStateFromBranch()` uses the single `directRestore()` path. `RestoreMode` is literally `"persisted"` (the path name, not a success claim):
 
 - `resetState()` + `initializeSessionState()` prepare an empty runtime state.
-- Latest coverage-bearing `dcp-state` entry (v1/v2/v5) → `restorePersistedState()` restores full block state plus scalar continuity directly (`restoredStateEntries = 1`).
+- Latest coverage-bearing `dcp-state` entry (v1/v5) → `restorePersistedState()` restores full block state plus scalar continuity directly (`restoredStateEntries = 1`).
 - No coverage-bearing entry → latest `dcp-state` entry, if any, restores scalar continuity only via `restorePersistedStateScalars()` (`prunedToolIds`, turn watermarks, `lifetimeTokensSavedRealized`); blocks stay empty, which is safe for lossy legacy v4.
 - Then `repairOffBranchNativeCompactionState()` and `repairStaleNudgeWatermarks()` run. The context handler has no replay trigger.
 
 ### Active runtime path
 
-`state.compressionBlocks` is still the live block log used by runtime pruning. `src/domain/replay/index.ts` is retained for offline scripts/tests only. `compressionBlocksV2` and `src/domain/compression/materialize.ts` are inert scaffolding/deferred-dead code, reachable only via never-written legacy schema v2.
+`state.compressionBlocks` is the live block log used by runtime pruning. `src/domain/replay/index.ts` is retained for offline scripts/tests only. `src/domain/compression/materialize.ts` now contains only shared compressed-block rendering helpers.
 
 ### Removed legacy runtime paths
 
@@ -91,7 +91,7 @@ On `session_start` / `session_tree`, `restoreStateFromBranch()` uses the single 
 session_start / session_tree
     └─ restoreStateFromBranch() → directRestore() (mode: "persisted")
         ├─ resetState() + initializeSessionState()
-        ├─ latest coverage-bearing dcp-state (v1/v2/v5)?
+        ├─ latest coverage-bearing dcp-state (v1/v5)?
         │   └─ restorePersistedState() — full block state + scalars
         ├─ else latest dcp-state?
         │   └─ restorePersistedStateScalars() — scalar continuity only; blocks stay empty

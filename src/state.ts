@@ -5,8 +5,6 @@ import type { DcpState } from "./types/state.js";
 export type {
   CompressionBlock,
   CompressionBlockMetadata,
-  CompressionBlockStatus,
-  CompressionBlockV2,
   CompressionCommandStat,
   CompressionFileReadStat,
   CompressionFileWriteStat,
@@ -16,7 +14,6 @@ export type {
   PersistedCompressionBlockV5,
   PersistedDcpState,
   PersistedDcpStateV1,
-  PersistedDcpStateV2,
   PersistedDcpStateV3,
   PersistedDcpStateV4,
   PersistedDcpStateV5,
@@ -36,7 +33,6 @@ export function createState(): DcpState {
     prunedToolIds: new Set(),
     schemaVersion: 1,
     compressionBlocks: [],
-    compressionBlocksV2: [],
     nextBlockId: 1,
     lastRenderedMessages: [],
     lastLiveOwnerKeys: [],
@@ -65,7 +61,6 @@ export function resetState(state: DcpState): void {
   state.prunedToolIds.clear();
   state.schemaVersion = 1;
   state.compressionBlocks = [];
-  state.compressionBlocksV2 = [];
   state.nextBlockId = 1;
   state.lastRenderedMessages = [];
   state.lastLiveOwnerKeys = [];

@@ -38,7 +38,7 @@ does not delete prior entries). This is what makes offline migration possible.
 
 ## Migration approach (chosen): no forced migration
 
-1. **Ship direct-restore.** v1/v2/v5 sessions restore their compression
+1. **Ship direct-restore.** v1/v5 sessions restore their compression
    automatically — no action needed. The real failing session (all v1 fat
    snapshots) is fixed by this alone.
 2. **v4/v3 sessions clean-reset on resume**: they resume uncompressed and are
@@ -51,7 +51,7 @@ does not delete prior entries). This is what makes offline migration possible.
    the bootstrap as v5. This is where replay legitimately earns its keep:
    offline, against original messages, not the rebuilt buffer.
 
-Why not force-convert everything: sole user, local files, and v1/v2 already work.
+Why not force-convert everything: sole user, local files, and v1 and v5 already work.
 A blanket migration adds risk for little gain. Clean-reset is the predictable
 default; vacuum is the surgical recovery tool.
 

@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Defines the accepted behavior for DCP persisted `dcp-state`. On restart, the latest coverage-bearing entry (v1/v2/v5) restores `state.compressionBlocks` directly; non-compressing sessions restore scalar continuity only; persistence stays bounded. DCP writes v3 scalar-only markers when no blocks exist and v5 coverage-bearing snapshots once blocks exist. Legacy v4 (lossy) and v2 remain readable for backward compatibility but are never written; v5 is the first correct persisted shape.
+Defines the accepted behavior for DCP persisted `dcp-state`. On restart, the latest coverage-bearing entry (v1/v5) restores `state.compressionBlocks` directly; non-compressing sessions restore scalar continuity only; persistence stays bounded. DCP writes v3 scalar-only markers when no blocks exist and v5 coverage-bearing snapshots once blocks exist. Legacy v4 is lossy read-only compatibility; v5 is the first correct persisted shape.
 
 ## Requirements
 

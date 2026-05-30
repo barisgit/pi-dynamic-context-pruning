@@ -79,10 +79,7 @@ export interface CompressionBlock {
   metadata?: CompressionBlockMetadata;
 }
 
-/** Status for a v2 span-key compression block. */
-export type CompressionBlockStatus = "active" | "superseded" | "decompressed";
-
-/** Deterministic log entry rendered inside a v2 compressed block. */
+/** Deterministic log entry rendered inside a compressed block. */
 export interface CompressionLogEntry {
   kind:
     | "user_excerpt"
@@ -97,14 +94,14 @@ export interface CompressionLogEntry {
   text: string;
 }
 
-/** Hidden per-file read stats attached to a v2 compressed block. */
+/** Hidden per-file read stats attached to a compressed block. */
 export interface CompressionFileReadStat {
   path: string;
   count: number;
   lineSpans: string[];
 }
 
-/** Hidden per-file write stats attached to a v2 compressed block. */
+/** Hidden per-file write stats attached to a compressed block. */
 export interface CompressionFileWriteStat {
   path: string;
   editCount: number;
@@ -112,13 +109,13 @@ export interface CompressionFileWriteStat {
   removedLines: number;
 }
 
-/** Hidden per-command stats attached to a v2 compressed block. */
+/** Hidden per-command stats attached to a compressed block. */
 export interface CompressionCommandStat {
   command: string;
   status: "ok" | "error" | "other";
 }
 
-/** Hidden deterministic metadata attached to a v2 compressed block. */
+/** Hidden deterministic metadata attached to a compressed block. */
 export interface CompressionBlockMetadata {
   coveredSourceKeys: string[];
   coveredSpanKeys: string[];
@@ -128,39 +125,6 @@ export interface CompressionBlockMetadata {
   fileReadStats: CompressionFileReadStat[];
   fileWriteStats: CompressionFileWriteStat[];
   commandStats: CompressionCommandStat[];
-}
-
-/**
- * Draft v2 compression block.
- *
- * v2 uses canonical span keys instead of raw timestamps and explicitly records
- * deterministic rendered activity plus hidden coverage metadata. Phase 1 only
- * introduces the type and persistence scaffolding — the active runtime still
- * materializes legacy v1 blocks.
- */
-export interface CompressionBlockV2 {
-  /** Auto-incrementing integer ID */
-  id: number;
-  /** Short human-readable topic label */
-  topic: string;
-  /** LLM-generated summary text */
-  summary: string;
-  /** Canonical span key for the first covered span */
-  startSpanKey: string;
-  /** Canonical span key for the last covered span */
-  endSpanKey: string;
-  /** Lifecycle status of this block */
-  status: CompressionBlockStatus;
-  /** Token estimate for the summary text itself */
-  summaryTokenEstimate: number;
-  /** Wall-clock time the block was created (Date.now()) */
-  createdAt: number;
-  /** Version of the deterministic visible activity log format */
-  activityLogVersion: 1;
-  /** Deterministic chronological activity log shown in the rendered block */
-  activityLog: CompressionLogEntry[];
-  /** Hidden exact coverage and artifact metadata */
-  metadata: CompressionBlockMetadata;
 }
 
 /** Persisted v1 DCP state stored in session history. */
@@ -178,21 +142,6 @@ export interface PersistedDcpStateV1 {
   /** Optional: monotonic tokens already realized by native compaction. */
   lifetimeTokensSavedRealized?: number;
   totalPruneCount: number;
-  currentTurn?: number;
-  lastNudgeTurn?: number;
-  lastCompressTurn?: number;
-}
-
-/** Persisted v2 DCP state stored in session history. */
-export interface PersistedDcpStateV2 {
-  schemaVersion: 2;
-  blocks: CompressionBlockV2[];
-  nextBlockId: number;
-  messageAliases?: {
-    bySourceKey: Record<string, string>;
-    byRef: Record<string, string>;
-    nextRef: number;
-  };
   currentTurn?: number;
   lastNudgeTurn?: number;
   lastCompressTurn?: number;
@@ -256,7 +205,6 @@ export interface PersistedDcpStateUnchanged {
 /** Any persisted DCP state shape supported during migration. */
 export type PersistedDcpState =
   | PersistedDcpStateV1
-  | PersistedDcpStateV2
   | PersistedDcpStateV3
   | PersistedDcpStateV4
   | PersistedDcpStateV5
@@ -274,11 +222,9 @@ export interface DcpState {
 
   // ── Compression ────────────────────────────────────────────────────────────
   /** Highest persisted schema version currently loaded into runtime state */
-  schemaVersion: 1 | 2;
+  schemaVersion: 1;
   /** Legacy v1 timestamp-based compression blocks (active runtime path today) */
   compressionBlocks: CompressionBlock[];
-  /** Draft v2 span-key blocks loaded or preserved during migration work */
-  compressionBlocksV2: CompressionBlockV2[];
   /** Monotonically increasing counter used to assign compression block IDs */
   nextBlockId: number;
   /** Latest rendered visible transcript returned from the `context` hook. */

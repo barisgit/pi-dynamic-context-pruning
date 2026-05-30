@@ -6,13 +6,13 @@ Pure compression logic: render active legacy blocks into synthetic transcript me
 
 ## Design
 
-| File             | Responsibility                                                                                                                                                                                                                                                     |
-| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `materialize.ts` | Inert/deferred-dead v2 scaffold: renders `CompressionBlockV2` into `DcpMessage`s (`full` / `compact` / `minimal`) only for the never-written `schemaVersion === 2` path. Stamps `INTERNAL_BLOCK_ID` so `buildSourceItemKey` emits stable `synth:block:b<id>` keys. |
-| `range.ts`       | Expand timestamp-bounded ranges to include atomic assistant/tool-result groups. Resolve indices from timestamps; token estimates. Imported directly by pruning and compress-tool (not re-exported from `index.ts`).                                                |
-| `metadata.ts`    | Factory for empty `CompressionBlockMetadata` (`coveredSourceKeys`, `coveredSpanKeys`, tool IDs, file/command stats).                                                                                                                                               |
-| `tooling.ts`     | Boundary validation, planning hints, activity-log/metadata assembly, supersession resolution, ID/timestamp/source-key resolution, `(bN)` placeholder expansion.                                                                                                    |
-| `index.ts`       | Re-exports `materialize`, `metadata`, `tooling` only.                                                                                                                                                                                                              |
+| File             | Responsibility                                                                                                                                                                                                      |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `materialize.ts` | Shared compressed-block renderer: renders block text/messages at `full` / `compact` / `minimal` detail and stamps `INTERNAL_BLOCK_ID` so `buildSourceItemKey` emits stable `synth:block:b<id>` keys.                |
+| `range.ts`       | Expand timestamp-bounded ranges to include atomic assistant/tool-result groups. Resolve indices from timestamps; token estimates. Imported directly by pruning and compress-tool (not re-exported from `index.ts`). |
+| `metadata.ts`    | Factory for empty `CompressionBlockMetadata` (`coveredSourceKeys`, `coveredSpanKeys`, tool IDs, file/command stats).                                                                                                |
+| `tooling.ts`     | Boundary validation, planning hints, activity-log/metadata assembly, supersession resolution, ID/timestamp/source-key resolution, `(bN)` placeholder expansion.                                                     |
+| `index.ts`       | Re-exports `materialize`, `metadata`, `tooling` only.                                                                                                                                                               |
 
 ### `tooling.ts` — planning hints
 
@@ -44,7 +44,6 @@ Pure compression logic: render active legacy blocks into synthetic transcript me
 1. Runtime pruning selects active legacy `state.compressionBlocks` and replaces covered spans with synthetic block messages.
 2. Synthetic block messages are stamped with `INTERNAL_BLOCK_ID`.
 3. `buildSourceItemKey` emits `synth:block:b<id>`; downstream snapshot, owner derivation, and provider-payload filtering use these keys.
-4. `materializeTranscript` / `CompressionBlockV2` remain inert scaffolding, reachable only through the never-written `schemaVersion === 2` state path.
 
 ### Compress tool / nudge path
 

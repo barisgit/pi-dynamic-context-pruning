@@ -1,32 +1,11 @@
 // ---------------------------------------------------------------------------
-// Dynamic Context Pruning (DCP) — v2 materialization scaffolding
+// Dynamic Context Pruning (DCP) — compressed block rendering
 // ---------------------------------------------------------------------------
 
 import { stripDcpMetadataTags } from "../refs/metadata.js";
 import { INTERNAL_BLOCK_ID } from "../transcript/index.js";
-import type { CompressionBlockV2, CompressionLogEntry } from "../../types/state.js";
+import type { CompressionLogEntry } from "../../types/state.js";
 import type { DcpMessage } from "../../types/message.js";
-import { buildBlockOwnerKey, buildSourceOwnerKey } from "../transcript/index.js";
-import type { TranscriptSnapshot } from "../transcript/index.js";
-
-/** Result of v2 transcript materialization. */
-export interface MaterializedTranscript {
-  /** Outbound message list to send to the provider */
-  messages: DcpMessage[];
-  /** Active v2 block IDs rendered into the transcript */
-  renderedBlockIds: number[];
-  /** Internal owner key for each rendered message, index-aligned with messages. */
-  messageOwnerKeys: string[];
-  /** Stable source key for each rendered message, index-aligned with messages. */
-  messageSourceKeys: string[];
-}
-
-export interface MaterializeTranscriptOptions {
-  /** Number of newest active rendered blocks shown with full detail. */
-  renderFullBlockCount?: number;
-  /** Number of active rendered blocks after the full-detail window shown compactly. */
-  renderCompactBlockCount?: number;
-}
 
 export type CompressionBlockRenderDetail = "full" | "compact" | "minimal";
 
@@ -45,7 +24,7 @@ const MAX_ACTIVITY_LOG_CHARS = 800;
 const MAX_COMPACT_SUMMARY_CHARS = 640;
 const MAX_MINIMAL_SUMMARY_CHARS = 240;
 
-function cloneMessage(message: any): any {
+export function cloneMessage(message: any): any {
   const clone = { ...message };
   if (Array.isArray(clone.content)) {
     clone.content = clone.content.map((block: any) =>
@@ -53,24 +32,6 @@ function cloneMessage(message: any): any {
     );
   }
   return clone;
-}
-
-function resolveRenderDetailByBlockId(
-  blocks: CompressionBlockV2[],
-  options: MaterializeTranscriptOptions
-): Map<number, CompressionBlockRenderDetail> {
-  const fullCount = Math.max(0, Math.floor(options.renderFullBlockCount ?? 0));
-  const compactCount = Math.max(0, Math.floor(options.renderCompactBlockCount ?? 0));
-  const details = new Map<number, CompressionBlockRenderDetail>();
-
-  const blocksByRecency = [...blocks].sort((a, b) => (b.createdAt ?? b.id) - (a.createdAt ?? a.id));
-  blocksByRecency.forEach((block, index) => {
-    const detailLevel =
-      index < fullCount ? "full" : index < fullCount + compactCount ? "compact" : "minimal";
-    details.set(block.id, detailLevel);
-  });
-
-  return details;
 }
 
 function normalizeInlineWhitespace(text: string): string {
@@ -107,10 +68,7 @@ export function renderCompressedBlockText(block: CompressionBlockRenderData): st
   const summary = block.summary.trim();
   const normalizedSummary = normalizeInlineWhitespace(summary);
   const activityLog = (block.activityLog ?? []).slice(0, MAX_ACTIVITY_LOG_LINES);
-  const parts = [
-    `[Compressed section: ${block.topic}]`,
-    `<dcp-block-id>b${block.id}</dcp-block-id>`,
-  ];
+  const parts = [`[Compressed section: ${block.topic}]`, ``];
 
   if (detailLevel === "minimal") {
     parts.push(truncateText(normalizedSummary, MAX_MINIMAL_SUMMARY_CHARS));
@@ -132,13 +90,9 @@ export function renderCompressedBlockText(block: CompressionBlockRenderData): st
 /**
  * Render a synthetic compressed-block message.
  *
- * Shared by the legacy v1 runtime path and the draft v2 materializer so the
- * visible block shape can evolve in one place.
- *
  * Stamps the `INTERNAL_BLOCK_ID` Symbol on the synthesized message so
  * `buildSourceItemKey` produces a stable `synth:block:bN` key regardless of
- * where the block sits in the materialized buffer (decisions in
- * openspec/changes/stable-source-keys).
+ * where the block sits in the materialized buffer.
  */
 export function renderCompressedBlockMessage(block: CompressionBlockRenderData): DcpMessage {
   const msg: DcpMessage = {
@@ -152,89 +106,4 @@ export function renderCompressedBlockMessage(block: CompressionBlockRenderData):
   };
   (msg as any)[INTERNAL_BLOCK_ID] = block.id;
   return msg;
-}
-
-/**
- * Materialize a transcript snapshot plus active v2 blocks.
- *
- * Invalid, unresolved, or overlapping active blocks are skipped conservatively:
- * untouched source messages remain cloned into the materialized transcript.
- */
-export function materializeTranscript(
-  snapshot: TranscriptSnapshot,
-  blocks: CompressionBlockV2[],
-  options: MaterializeTranscriptOptions = {}
-): MaterializedTranscript {
-  const sourceItemByKey = new Map(snapshot.sourceItems.map((item) => [item.key, item]));
-  const spanIndexByKey = new Map(snapshot.spans.map((span, index) => [span.key, index]));
-  const activeBlocks = blocks.filter((block) => block.status === "active");
-  const detailByBlockId = resolveRenderDetailByBlockId(activeBlocks, options);
-  const replacementByStartIndex = new Map<
-    number,
-    { block: CompressionBlockV2; endIndex: number; detailLevel: CompressionBlockRenderDetail }
-  >();
-  const coveredSpanIndexes = new Set<number>();
-
-  for (const block of activeBlocks) {
-    const startIndex = spanIndexByKey.get(block.startSpanKey);
-    const endIndex = spanIndexByKey.get(block.endSpanKey);
-    if (startIndex === undefined || endIndex === undefined || startIndex > endIndex) continue;
-
-    let overlapsRenderedBlock = false;
-    for (let index = startIndex; index <= endIndex; index++) {
-      if (coveredSpanIndexes.has(index)) {
-        overlapsRenderedBlock = true;
-        break;
-      }
-    }
-    if (overlapsRenderedBlock) continue;
-
-    for (let index = startIndex; index <= endIndex; index++) {
-      coveredSpanIndexes.add(index);
-    }
-    replacementByStartIndex.set(startIndex, {
-      block,
-      endIndex,
-      detailLevel: detailByBlockId.get(block.id) ?? "minimal",
-    });
-  }
-
-  const messages: DcpMessage[] = [];
-  const renderedBlockIds: number[] = [];
-  const messageOwnerKeys: string[] = [];
-  const messageSourceKeys: string[] = [];
-
-  for (let spanIndex = 0; spanIndex < snapshot.spans.length; spanIndex++) {
-    const replacement = replacementByStartIndex.get(spanIndex);
-    if (replacement) {
-      messages.push(
-        renderCompressedBlockMessage({
-          ...replacement.block,
-          detailLevel: replacement.detailLevel,
-        })
-      );
-      renderedBlockIds.push(replacement.block.id);
-      messageOwnerKeys.push(buildBlockOwnerKey(replacement.block.id));
-      messageSourceKeys.push(buildBlockOwnerKey(replacement.block.id));
-      spanIndex = replacement.endIndex;
-      continue;
-    }
-
-    const span = snapshot.spans[spanIndex]!;
-    for (const sourceKey of span.sourceKeys) {
-      const sourceItem = sourceItemByKey.get(sourceKey);
-      if (sourceItem) {
-        messages.push(cloneMessage(sourceItem.message));
-        messageOwnerKeys.push(buildSourceOwnerKey(sourceItem.ordinal));
-        messageSourceKeys.push(sourceItem.key);
-      }
-    }
-  }
-
-  return {
-    messages,
-    renderedBlockIds,
-    messageOwnerKeys,
-    messageSourceKeys,
-  };
 }

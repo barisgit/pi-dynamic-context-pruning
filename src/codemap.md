@@ -29,7 +29,6 @@ Domain modules must not import from `@mariozechner/pi-coding-agent`, filesystem 
 - `toolCalls: Map<toolCallId, ToolRecord>` — bookkeeping for dedup/error purging
 - `prunedToolIds: Set<toolCallId>` — tombstones applied each context pass
 - `compressionBlocks: CompressionBlock[]` — **active runtime path** (legacy timestamp-backed blocks)
-- `compressionBlocksV2: CompressionBlockV2[]` — inert scaffolding/deferred-dead code; only reachable through never-written legacy schema v2
 - `messageAliases` / `messageRefSnapshot` / `messageOwnerSnapshot` — stable visible-ref bookkeeping
 - `currentTurn`, `tokensSaved`, `lastNudgeTurn`, `lastCompressTurn` — session metrics and debounce watermarks
 - `pendingSave: boolean` — dirty flag; mutation sites (compress success, prune tombstones, native-compaction commit) set it; `saveState()` no-ops when false
@@ -41,7 +40,7 @@ On disk, `serializePersistedState()` writes **v3** (scalar-only marker) when no 
 `session_start` / `session_tree` restore via one `restoreStateFromBranch()` → `directRestore()` path. `RestoreMode` is exactly `"persisted"` (the path name, not a success assertion):
 
 1. Reset and initialize runtime state with `resetState()` + `initializeSessionState()`.
-2. Latest coverage-bearing `dcp-state` entry (v1/v2/v5): `restorePersistedState()` restores full block state plus scalar continuity directly (`restoredStateEntries = 1`).
+2. Latest coverage-bearing `dcp-state` entry (v1/v5): `restorePersistedState()` restores full block state plus scalar continuity directly (`restoredStateEntries = 1`).
 3. No coverage-bearing entry: latest `dcp-state`, if any, restores scalar continuity only via `restorePersistedStateScalars()` (`prunedToolIds`, turn watermarks, `lifetimeTokensSavedRealized`); blocks stay empty, safe for lossy legacy v4.
 4. Finish with `repairOffBranchNativeCompactionState()` and `repairStaleNudgeWatermarks()`.
 
@@ -74,8 +73,8 @@ src/
 ├── index.ts                     # Extension entry point — wires all registrations
 ├── state.ts                     # DcpState factory, reset, input fingerprint
 ├── types/
-│   ├── state.ts                 # DcpState, CompressionBlock (v1), CompressionBlockV2 (scaffold),
-│   │                              ToolRecord, PersistedDcpStateV3/V5, pendingSave
+│   ├── state.ts                 # DcpState, CompressionBlock, ToolRecord,
+│   │                              PersistedDcpStateV3/V5, pendingSave
 │   ├── config.ts                # DcpConfig shape
 │   ├── message.ts               # DcpMessage, DcpContentPart normalized shapes
 │   └── api.ts                   # Host/provider boundary types (DcpMessageEvent, etc.)
@@ -86,8 +85,7 @@ src/
 │   │                              nudge type decision, hot-tail helpers
 │   ├── compression/
 │   │   ├── index.ts             # Re-exports
-│   │   ├── materialize.ts       # renderCompressedBlockText/Message (shared v1/v2),
-│   │   │                          materializeTranscript (v2 scaffolding)
+│   │   ├── materialize.ts       # renderCompressedBlockText/Message shared renderer
 │   │   ├── range.ts            # expandCompressionIndexRange, resolveCompressionRangeIndices
 │   │   ├── tooling.ts          # buildCompressionPlanningHints, resolveIdToTimestamp,
 │   │   │                          resolveSupersededBlockIdsForRange, expandBlockPlaceholders,
@@ -115,7 +113,7 @@ src/
 │       └── estimate.ts          # estimateTokens, estimateMessageTokens via gpt-tokenizer
 ├── application/
 │   ├── context-handler.ts       # registerContextHandler — context hook, nudge emission,
-│   │                              materializeContextMessages dispatch (v1/v2)
+│   │                              materializeContextMessages pruning path
 │   ├── session-handler.ts       # registerSessionHandlers, restoreStateFromBranch,
 │   │                              saveState — direct restore; dirty-flag persistence
 │   ├── provider-handler.ts       # registerProviderHandler — before_provider_request hook,
@@ -161,14 +159,14 @@ src/
 
 ### State and config
 
-| File                                | Role                                                                                                                                                                              |
-| ----------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `src/state.ts`                      | `createState()`, `resetState()` (includes `pendingSave`), `createInputFingerprint()`. Exported types re-exported from `types/state.ts`.                                           |
-| `src/types/state.ts`                | `DcpState`, `CompressionBlock` (v1), inert `CompressionBlockV2` scaffold, `ToolRecord`, `PersistedDcpStateV3/V5`.                                                                 |
-| `src/types/config.ts`               | `DcpConfig` — all knobs: thresholds, cadence, rendering, native-compaction, strategies.                                                                                           |
-| `src/types/message.ts`              | `DcpMessage` normalized shape; `DcpContentPart` union.                                                                                                                            |
-| `src/infrastructure/config.ts`      | `loadConfig()` — layered merge of defaults + global + env + project configs.                                                                                                      |
-| `src/infrastructure/persistence.ts` | `serializePersistedState()` (v3 empty / v5 with coverage-bearing blocks), `restorePersistedState()`, `restorePersistedStateScalars()`, legacy v1/v2 serializers for tests/vacuum. |
+| File                                | Role                                                                                                                                                                          |
+| ----------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/state.ts`                      | `createState()`, `resetState()` (includes `pendingSave`), `createInputFingerprint()`. Exported types re-exported from `types/state.ts`.                                       |
+| `src/types/state.ts`                | `DcpState`, `CompressionBlock`, `ToolRecord`, `PersistedDcpStateV3/V5`.                                                                                                       |
+| `src/types/config.ts`               | `DcpConfig` — all knobs: thresholds, cadence, rendering, native-compaction, strategies.                                                                                       |
+| `src/types/message.ts`              | `DcpMessage` normalized shape; `DcpContentPart` union.                                                                                                                        |
+| `src/infrastructure/config.ts`      | `loadConfig()` — layered merge of defaults + global + env + project configs.                                                                                                  |
+| `src/infrastructure/persistence.ts` | `serializePersistedState()` (v3 empty / v5 with coverage-bearing blocks), `restorePersistedState()`, `restorePersistedStateScalars()`, legacy v1 serializer for tests/vacuum. |
 
 ### Core domain
 
@@ -176,7 +174,7 @@ src/
 | --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `src/domain/pruning/index.ts`           | `applyPruning()` — the main transform. Calls `applyCompressionBlocks`, `repairOrphanedToolPairs`, `applyDeduplication`, `applyErrorPurging`, `applyToolOutputPruning`, `injectMessageIds`. Also exports `getNudgeType()`, `exceedsMaxContextLimit()`. |
 | `src/domain/compression/range.ts`       | `expandCompressionIndexRange()`, `resolveCompressionRangeIndices()`. Atomic assistant+tool-result expansion rules.                                                                                                                                    |
-| `src/domain/compression/materialize.ts` | `renderCompressedBlockText()`, `renderCompressedBlockMessage()` (shared v1/v2). `materializeTranscript()` — v2 span-key materialization scaffold.                                                                                                     |
+| `src/domain/compression/materialize.ts` | `renderCompressedBlockText()`, `renderCompressedBlockMessage()` shared compressed-block renderer.                                                                                                                                                     |
 | `src/domain/compression/tooling.ts`     | Planning hints with passthrough-span absorption; boundary validation for refs inside compressed blocks; `resolveSupersededBlockIdsForRange()`, `buildCompressionArtifactsForRange()`, protected-tail helpers.                                         |
 | `src/domain/transcript/index.ts`        | `buildTranscriptSnapshot()` — source items + tool-exchange spans. `buildLiveOwnerKeys()`, `countLogicalTurns()`, `resolveLogicalTurnTailStartTimestamp()`. `buildSourceItemKey()`, `buildSourceOwnerKey()`, `buildBlockOwnerKey()`.                   |
 | `src/domain/refs/index.ts`              | `parseVisibleRef()`, `formatMessageRef()`, `formatBlockRef()`, `allocateMessageRef()`. `MessageAliasState`, `MessageRefSnapshotEntry`.                                                                                                                |
@@ -277,7 +275,7 @@ session event messages
 ```text
 session_start / session_tree → restoreStateFromBranch() → directRestore()
   → resetState() + initializeSessionState()
-  → latest coverage-bearing dcp-state (v1/v2/v5)?
+  → latest coverage-bearing dcp-state (v1/v5)?
       YES → restorePersistedState() (full block state + scalars)
       NO  → latest dcp-state?
               YES → restorePersistedStateScalars() (scalar continuity only)

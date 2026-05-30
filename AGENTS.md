@@ -91,9 +91,9 @@ This repo is post **direct-restore**: persistence restores coverage-bearing bloc
 
 - empty on-disk `dcp-state` entries remain tiny scalar bootstraps (`PersistedDcpStateV3`)
 - once blocks exist, `serializePersistedState()` writes `PersistedDcpStateV5`: scalars plus active blocks with exact coverage, source-key anchors, and finite timestamp fallbacks; inactive blocks are slimmed
-- `src/application/session-handler.ts` restores the latest coverage-bearing v1/v2/v5 `dcp-state` entry directly; v3/v4 entries without coverage clean-reset to empty block state
+- `src/application/session-handler.ts` restores the latest coverage-bearing v1/v5 `dcp-state` entry directly; v3/v4 entries without coverage clean-reset to empty block state
 - `src/domain/replay/` is retained for offline scripts such as `scripts/vacuum-dcp-session.ts` and `scripts/replay-equivalence.ts`, not for live resume
-- `compressionBlocksV2` and `src/domain/compression/materialize.ts` remain scaffolding / shared renderer support; the runtime still materializes legacy blocks, not full v2 span-key blocks
+- `src/domain/compression/materialize.ts` contains only the shared compressed-block renderer used by the legacy runtime path and offline replay/native-compaction support
 
 ---
 

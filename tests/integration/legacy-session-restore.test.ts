@@ -6,7 +6,7 @@
 // branch entries that mimic what `ctx.sessionManager.getBranch()` returns
 // at runtime. They cover:
 //
-// Direct restore uses the latest coverage-bearing dcp-state entry (v1/v2/v5)
+// Direct restore uses the latest coverage-bearing dcp-state entry (v1/v5)
 // and intentionally ignores replay-only transcript evidence on resume.
 
 import { describe, expect, test } from "bun:test";

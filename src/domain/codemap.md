@@ -22,12 +22,12 @@ Consumed by: `application/compress-tool/registration.ts`, `application/context-h
 | File             | Responsibility                                                                                                                                                                                                       |
 | ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `range.ts`       | Expand timestamp-bounded ranges to include atomic assistant/tool-result groups. Resolve indices from timestamps.                                                                                                     |
-| `materialize.ts` | Inert/deferred-dead v2 scaffolding for rendering `CompressionBlockV2` into `DcpMessage`s when `state.schemaVersion === 2`; current persisted v5 runtime uses legacy `compressionBlocks`.                             |
+| `materialize.ts` | Shared compressed-block renderer for `CompressionBlock` summaries; stamps synthetic block messages for stable source keys.                                                                                           |
 | `metadata.ts`    | Factory for empty `CompressionBlockMetadata` (covered source keys, span keys, tool IDs, file/command stats).                                                                                                         |
 | `tooling.ts`     | Core compression helpers: boundary validation (including refs inside active blocks), passthrough-span absorption in planning hints, activity-log/metadata assembly, supersession resolution, protected-tail helpers. |
 | `index.ts`       | Re-exports for all submodules.                                                                                                                                                                                       |
 
-**Key types:** `CompressionCandidateRange`, `CompressionPlanningHints` (`candidateRanges`, `totalCandidateCount`, `totalCompressibleTokens`, protected-tail IDs), `CompressionBlockRenderDetail`, `MaterializedTranscript`.
+**Key types:** `CompressionCandidateRange`, `CompressionPlanningHints` (`candidateRanges`, `totalCandidateCount`, `totalCompressibleTokens`, protected-tail IDs), `CompressionBlockRenderDetail`.
 
 ---
 
@@ -193,4 +193,4 @@ The `transcript/` snapshot is the canonical source of truth for source items and
 
 **Application layer** owns: pi hook registration, tool registration, command registration, config loading, state persistence, debug logging, and provider-payload adaptation.
 
-**Persistence (direct-restore v5):** empty sessions persist v3 scalar markers only; sessions with blocks persist v5 scalars plus full active block state, exact `coveredSourceKeys`/`coveredSpanKeys`, finite timestamp fallbacks, and `nextBlockId`. Runtime restore directly loads the latest coverage-bearing v1/v2/v5 `dcp-state` entry, or restores scalar continuity only from the latest non-coverage entry. `replayDcpState()` is retained for offline scripts/tests, not live restore. `validateCompressionRangeBoundaryIds()` rejects raw `mNNNN` refs inside active compressed spans with actionable `bN` boundary guidance.
+**Persistence (direct-restore v5):** empty sessions persist v3 scalar markers only; sessions with blocks persist v5 scalars plus full active block state, exact `coveredSourceKeys`/`coveredSpanKeys`, finite timestamp fallbacks, and `nextBlockId`. Runtime restore directly loads the latest coverage-bearing v1/v5 `dcp-state` entry, or restores scalar continuity only from the latest non-coverage entry. `replayDcpState()` is retained for offline scripts/tests, not live restore. `validateCompressionRangeBoundaryIds()` rejects raw `mNNNN` refs inside active compressed spans with actionable `bN` boundary guidance.

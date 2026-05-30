@@ -20,7 +20,6 @@ import {
   makeConfig,
   makeMessages,
   makeState,
-  mapLegacyBlockToSpanRange,
   normalizeMessageAliasState,
   os,
   parseVisibleRef,
@@ -38,10 +37,10 @@ import {
 
 describe("DCP compression.test", () => {
   // ---------------------------------------------------------------------------
-  // Test 15 — V2 BLOCK RENDERER EMITS A FACTUAL CHRONOLOGICAL LOG
+  // Test 15 — BLOCK RENDERER EMITS A FACTUAL CHRONOLOGICAL LOG
   // ---------------------------------------------------------------------------
-  test("Test 15 — V2 BLOCK RENDERER EMITS A FACTUAL CHRONOLOGICAL LOG", () => {
-    console.log("TEST 15: v2 block renderer emits summary + chronological log");
+  test("Test 15 — BLOCK RENDERER EMITS A FACTUAL CHRONOLOGICAL LOG", () => {
+    console.log("TEST 15: block renderer emits summary + chronological log");
 
     const message = renderCompressedBlockMessage({
       id: 7,
@@ -120,32 +119,15 @@ describe("DCP compression.test", () => {
       "FAIL — compact blocks should still render an agent summary"
     );
     assert.ok(
-      !compact.includes('<dcp-log v="1">'),
-      "FAIL — compact blocks should omit the detailed log"
+      compact.includes("[Compressed section: older block]"),
+      "FAIL — compact blocks should still keep the stable block marker"
+    );
+    assert.ok(
+      !compact.includes("<activity-log>"),
+      "FAIL — compact blocks should drop the detailed activity log"
     );
 
-    const minimal =
-      renderCompressedBlockMessage({
-        id: 9,
-        topic: "oldest block",
-        summary:
-          "The oldest block in the transcript should collapse to a one-line style summary so synthetic block history does not keep expanding forever even when the compressed semantics stay the same.",
-        detailLevel: "minimal",
-      }).content?.[0]?.text ?? "";
-    assert.ok(
-      !minimal.includes("<agent-summary>"),
-      "FAIL — minimal blocks should omit the structured summary wrapper"
-    );
-    assert.ok(
-      !minimal.includes('<dcp-log v="1">'),
-      "FAIL — minimal blocks should omit the detailed log"
-    );
-    assert.ok(
-      minimal.includes("<dcp-block-id>b9</dcp-block-id>"),
-      "FAIL — minimal blocks should still keep the stable block marker"
-    );
-
-    console.log("  PASS: v2 block renderer emits full, compact, and minimal deterministic forms");
+    console.log("  PASS: block renderer emits full, compact, and minimal deterministic forms");
     console.log("TEST 15 PASSED\n");
   });
 

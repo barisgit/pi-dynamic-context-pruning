@@ -217,7 +217,7 @@ DCP restores in-memory compression state from the latest coverage-bearing `custo
 Why this matters in practice:
 
 - Resume does not replay the live context buffer, so post-compaction rebuilt buffers cannot erase active block coverage.
-- v1/v2/v5 snapshots restore blocks directly. v3/v4 entries without coverage clean-reset to empty compression state rather than attempting lossy replay.
+- v1/v5 snapshots restore blocks directly. v3/v4 entries without coverage clean-reset to empty compression state rather than attempting lossy replay.
 - `replayDcpState()` remains available for offline scripts such as vacuuming old session JSONL files, where the raw append-only transcript is still present.
 
 ### Vacuuming old fat snapshots

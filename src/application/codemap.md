@@ -67,7 +67,7 @@ Registers session lifecycle hooks (`session_start`, `session_tree`, `session_shu
 
 - **`session_start` / `session_tree`** — calls `restoreStateFromBranch()`:
   - Runs a single direct-restore path: `resetState(state)` + `initializeSessionState(state, config)`.
-  - If `findLatestCoverageBearingDcpStateEntry(branchEntries)` finds v1/v2/v5 coverage, `restorePersistedState()` restores full block state plus scalars directly (`restoredStateEntries = 1`).
+  - If `findLatestCoverageBearingDcpStateEntry(branchEntries)` finds v1/v5 coverage, `restorePersistedState()` restores full block state plus scalars directly (`restoredStateEntries = 1`).
   - Otherwise `findLatestDcpStateEntry(branchEntries)` + `restorePersistedStateScalars()` restores scalar continuity only (`prunedToolIds`, turn watermarks, `lifetimeTokensSavedRealized`) and never resurrects blocks.
   - Always finishes with `repairOffBranchNativeCompactionState()` and `repairStaleNudgeWatermarks()`.
 - **`session_shutdown` / `agent_end`** — calls `saveState()` when `state.pendingSave` is true. Guarded by `ctx.hasUI` (skip in `-p` print mode).
@@ -103,7 +103,7 @@ Application layer never contains compression overlap logic, liveness computation
 
 - **Runtime state** lives in `DcpState` (in-memory, mutated per event).
 - **Dirty-flag persistence** — mutation sites set `pendingSave = true`; `saveState()` serializes only when dirty (v3 scalar marker when block-less, v5 coverage-bearing block state otherwise).
-- **Direct restore** — `restoreStateFromBranch()` always uses the single direct-restore path: latest coverage-bearing v1/v2/v5 entry restores full blocks plus scalars; otherwise the latest `dcp-state` entry restores scalars only.
+- **Direct restore** — `restoreStateFromBranch()` always uses the single direct-restore path: latest coverage-bearing v1/v5 entry restores full blocks plus scalars; otherwise the latest `dcp-state` entry restores scalars only.
 
 ### Direct restore on session lifecycle
 
@@ -111,7 +111,7 @@ Application layer never contains compression overlap logic, liveness computation
 
 ### Materialization dispatch
 
-`materializeContextMessages` is the single dispatch point for current legacy block materialization. The v2/span-key path is inert scaffold reachable only from the never-written `schemaVersion === 2` legacy shape.
+`materializeContextMessages` is the single dispatch point for current legacy block materialization and always uses the v1 pruning path.
 
 ### Native compaction as a bridge
 
@@ -147,7 +147,6 @@ Native compaction auto-trigger queues a request via `queueDcpAutoNativeCompactio
 | Source                                          | Target                                  | Direction | Purpose                                                                                  |
 | ----------------------------------------------- | --------------------------------------- | --------- | ---------------------------------------------------------------------------------------- |
 | `src/application/context-handler.ts`            | `src/domain/pruning/`                   | calls     | `applyPruning`, `exceedsMaxContextLimit`, `getNudgeType`, `finalizeMaterializedMessages` |
-| `src/application/context-handler.ts`            | `src/domain/compression/materialize.ts` | calls     | `materializeTranscript`                                                                  |
 | `src/application/context-handler.ts`            | `src/domain/compression/tooling.ts`     | calls     | `buildCompressionPlanningHints`, `renderCompressionPlanningHints`                        |
 | `src/application/context-handler.ts`            | `src/domain/transcript/`                | calls     | `buildTranscriptSnapshot`, `buildLiveOwnerKeys`                                          |
 | `src/application/context-handler.ts`            | `src/infrastructure/debug-log.js`       | calls     | `appendDebugLog`, `buildSessionDebugPayload`                                             |

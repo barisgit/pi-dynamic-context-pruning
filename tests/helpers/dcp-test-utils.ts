@@ -32,10 +32,7 @@ export {
   getNudgeDecisionReason,
   registerContextHandler,
 } from "../../src/application/context-handler.js";
-export {
-  restorePersistedState,
-  mapLegacyBlockToSpanRange,
-} from "../../src/infrastructure/persistence.js";
+export { restorePersistedState } from "../../src/infrastructure/persistence.js";
 export { renderCompressedBlockMessage } from "../../src/domain/compression/materialize.js";
 export {
   allocateMessageRef,
@@ -108,7 +105,6 @@ export function makeState(compressionBlocks: DcpState["compressionBlocks"] = [])
     prunedToolIds: new Set(),
     schemaVersion: 1,
     compressionBlocks,
-    compressionBlocksV2: [],
     nextBlockId: 1,
     lastRenderedMessages: [],
     lastLiveOwnerKeys: [],

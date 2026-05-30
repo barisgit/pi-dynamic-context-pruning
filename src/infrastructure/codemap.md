@@ -66,14 +66,13 @@ They must not be imported by domain modules (`src/domain/`). Application modules
   - **v5** — direct restore of scalars plus full block state with coverage anchors, span keys, finite timestamps, `nextBlockId`, and active-block token savings.
   - **v4** — legacy lossy light blocks; still understood for back-compat, but never written anymore and restored without coverage anchors.
   - **v3** — scalars only; no blocks restored.
-  - **v2 / `Array.isArray(blocks)`** — legacy/deferred-dead `compressionBlocksV2` scaffolding; not a live written shape.
   - **v1** — legacy fat snapshot for back-compat, retro vacuum, and test fixtures.
-- Exposes `serializeLegacyV1PersistedState(state)` and `serializeLegacyV2PersistedState(state)` — test/vacuum round-trip only; not called by live runtime.
-- Provides normalization helpers (`normalizeLegacyBlock`, `normalizeV2Block`, `normalizePersistedCompressionBlockV4`, `restorePersistedCompressionBlockV5`, metadata/stat/log normalizers, etc.). All return `null` or sentinel values on bad input rather than throwing.
+- Exposes `serializeLegacyV1PersistedState(state)` — test/vacuum round-trip only; not called by live runtime.
+- Provides normalization helpers (`normalizeLegacyBlock`, `normalizePersistedCompressionBlockV4`, metadata/stat/log normalizers, etc.). All return `null` or sentinel values on bad input rather than throwing.
 
 **Notably:** Persistence does not own read/write I/O — `session-handler` calls `pi.appendEntry` / reads branch entries. Restore dispatch is post direct-restore:
 
-- **Coverage-bearing entry (v1/v2/v5)** — `restorePersistedState()` restores the full block state plus scalars directly.
+- **Coverage-bearing entry (v1/v5)** — `restorePersistedState()` restores the full block state plus scalars directly.
 - **No coverage-bearing entry** — `restorePersistedStateScalars()` restores scalar continuity only; blocks remain empty, which is safe for lossy legacy v4.
 - **Replay domain** — `replayDcpState` remains available for offline scripts (`scripts/replay-equivalence.ts`, `scripts/vacuum-dcp-session.ts`) and tests, not live/session restore.
 
@@ -95,7 +94,7 @@ They must not be imported by domain modules (`src/domain/`). Application modules
 session_start / session_tree
   └─> session-handler.ts
         └─> restoreStateFromBranch()
-              ├─> latest coverage-bearing dcp-state (v1/v2/v5)
+              ├─> latest coverage-bearing dcp-state (v1/v5)
               │     └─> restorePersistedState() (full blocks + scalars)
               └─> otherwise latest dcp-state
                     └─> restorePersistedStateScalars() (scalar continuity only)
