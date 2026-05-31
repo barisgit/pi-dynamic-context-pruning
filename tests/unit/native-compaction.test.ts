@@ -237,7 +237,7 @@ describe("DCP native pi compaction bridge", () => {
     expect(autoOverride.compaction.details.requestedBlockIds).toEqual([3]);
   });
 
-  test("queued auto native compaction fires on awaited turn_end and clears on session_compact", async () => {
+  test("auto native compaction fires fire-and-forget on turn_end and posts the resume prompt on session_compact", async () => {
     const messages: any[] = [
       {
         role: "user",
@@ -310,14 +310,15 @@ describe("DCP native pi compaction bridge", () => {
 
     expect(compactCalled).toBe(true);
     expect(compactCompleteCb).not.toBeNull();
+    // turn_end is fire-and-forget: it kicks compaction off and returns without
+    // awaiting completion. Awaiting here would deadlock the live session, since
+    // ctx.compact() can only finish after the current turn goes idle and
+    // turn_end is part of that turn. The resume prompt is therefore NOT sent
+    // from turn_end; firing onComplete only resolves trigger's internal promise
+    // as the host eventually would.
     if (compactCompleteCb) compactCompleteCb({ firstKeptEntryId: "entry-tail" });
     await turnEndPromise;
-
-    // After auto compaction the agent stopped at turn_end; DCP must post a
-    // continuation prompt so the session resumes against the compacted
-    // transcript instead of sitting idle.
-    expect(sentUserMessages.length).toBe(1);
-    expect(sentUserMessages[0]).toContain("[dcp-auto-compaction]");
+    expect(sentUserMessages.length).toBe(0);
 
     // Single-shot: queue must be drained immediately so the next turn_end
     // does not re-fire compaction. This holds even before `session_compact`
@@ -353,6 +354,10 @@ describe("DCP native pi compaction bridge", () => {
       },
       ctx
     );
+    // The resume prompt is posted from session_compact (reason "auto"), only
+    // after compaction has actually committed.
+    expect(sentUserMessages.length).toBe(1);
+    expect(sentUserMessages[0]).toContain("[dcp-auto-compaction]");
     expect(hasPendingDcpAutoNativeCompaction(state)).toBe(false);
     expect(state.compressionBlocks.find((b) => b.id === 4)?.active).toBe(false);
     expect(state.lastCompressTurn).toBe(-1);
@@ -363,13 +368,100 @@ describe("DCP native pi compaction bridge", () => {
     expect(state.tokensSaved).toBe(0);
   });
 
+  test("turn_end settles promptly even when ctx.compact never calls back (regression: uninterruptible hang)", async () => {
+    // Production deadlock: pi's ctx.compact() is fire-and-forget (returns void)
+    // and its internal `await session.compact()` only settles after the current
+    // turn goes idle. turn_end IS the current turn, so if turn_end awaits
+    // compaction completion, onComplete/onError can never fire -> the turn_end
+    // promise never resolves -> Pi sits in an uninterruptible "Working...".
+    // The pre-existing behavioral tests hide this by MANUALLY invoking
+    // onComplete/onError. This mock NEVER calls back, mirroring the real host.
+    const messages: any[] = [
+      { role: "user", content: [{ type: "text", text: "covered" }], timestamp: 1000 },
+      { role: "user", content: [{ type: "text", text: "tail" }], timestamp: 2000 },
+    ];
+    const artifacts = buildCompressionArtifactsForRange(messages, makeState(), 1000, 1000);
+    const block: CompressionBlock = {
+      id: 12,
+      topic: "Deadlock guard",
+      summary: "Covered.",
+      startTimestamp: 1000,
+      endTimestamp: 1000,
+      anchorTimestamp: 1001,
+      startSourceKey: artifacts.metadata.coveredSourceKeys[0],
+      endSourceKey: artifacts.metadata.coveredSourceKeys.at(-1),
+      anchorSourceKey: artifacts.metadata.coveredSourceKeys[1] ?? "tail:1000",
+      active: true,
+      summaryTokenEstimate: 10,
+      savedTokenEstimate: 20,
+      createdAt: 40,
+      metadata: artifacts.metadata,
+    };
+    const state = makeState([block]);
+    const config = makeConfig();
+    const handlers = new Map<string, any>();
+    const sentUserMessages: string[] = [];
+    const pi = {
+      on(event: string, handler: any) {
+        handlers.set(event, handler);
+      },
+      appendEntry: () => undefined,
+      sendUserMessage: (content: string) => {
+        sentUserMessages.push(content);
+      },
+    };
+    let compactCalled = false;
+    const ctx = {
+      hasUI: false,
+      ui: { notify: () => undefined },
+      // Fire-and-forget: never invokes onComplete/onError, exactly like the host
+      // during an in-flight turn. A correct turn_end must NOT block on this.
+      compact: () => {
+        compactCalled = true;
+      },
+      hasPendingMessages: () => false,
+      sessionManager: {
+        getSessionId: () => "s",
+        getCwd: () => "/tmp",
+        getSessionDir: () => "/tmp",
+        getSessionFile: () => "/tmp/s.jsonl",
+        getLeafId: () => "entry-tail",
+      },
+    };
+
+    registerDcpNativeCompactionBridge(pi as any, state, config);
+    queueDcpAutoNativeCompaction(state, [12]);
+
+    const turnEnd = handlers.get("turn_end");
+    const settled = Symbol("settled");
+    const timedOut = Symbol("timedOut");
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeoutPromise = new Promise<symbol>((resolve) => {
+      timer = setTimeout(() => resolve(timedOut), 200);
+    });
+    const outcome = await Promise.race([
+      Promise.resolve(turnEnd({}, ctx)).then(() => settled),
+      timeoutPromise,
+    ]);
+    if (timer) clearTimeout(timer);
+
+    // Compaction must still be kicked off...
+    expect(compactCalled).toBe(true);
+    // ...but turn_end must return without waiting for it to complete.
+    expect(outcome).toBe(settled);
+  });
+
   test("auto native compaction does NOT loop or send a resume prompt when compaction is cancelled", async () => {
-    // Regression: previously `pendingAutoRequests` was only cleared on
-    // session_compact (success path). When compaction was cancelled, the
-    // queue stayed populated and the resume prompt I posted on `started:
-    // true` (which fired even on errors) would spawn a new turn whose
-    // turn_end re-fired compaction — infinite loop. Lock it in: cancel must
-    // drain the queue and must not send a resume prompt.
+    // Regression (two layered guards):
+    //   1. `pendingAutoRequests` is drained up front in turn_end, so a
+    //      cancelled compaction cannot leave the queue populated and re-fire on
+    //      the next turn_end — the original infinite-loop bug.
+    //   2. The resume prompt now lives in `session_compact`, which only fires
+    //      when compaction actually COMMITS. A cancel/error never commits, so
+    //      it reaches neither the prompt nor a re-trigger.
+    // Lock both in: cancel must drain the queue and must not send a resume
+    // prompt. (turn_end is fire-and-forget, so firing onError just resolves
+    // trigger's internal promise; it does not gate any prompt here.)
     const messages: any[] = [
       { role: "user", content: [{ type: "text", text: "covered" }], timestamp: 1000 },
       { role: "user", content: [{ type: "text", text: "tail" }], timestamp: 2000 },
@@ -506,6 +598,33 @@ describe("DCP native pi compaction bridge", () => {
     if (compactCompleteCb) compactCompleteCb({ firstKeptEntryId: "entry-tail" });
     await turnEndPromise;
 
+    // The pending-input gate now lives in session_compact, where the resume
+    // prompt is posted. Drive a committed auto compaction and confirm the
+    // prompt is suppressed because the user already has input queued.
+    const sessionCompact = handlers.get("session_compact");
+    await sessionCompact(
+      {
+        compactionEntry: {
+          details: {
+            source: "dcp-native-compaction",
+            version: 1,
+            requestId: "x",
+            reason: "auto",
+            representedBlockIds: [9],
+            requestedBlockIds: [9],
+            firstKeptEntryId: "entry-tail",
+            hiddenMessageCount: 0,
+            uncoveredHiddenMessageCount: 0,
+            renderedUncoveredExcerptCount: 0,
+            truncatedUncoveredExcerptCount: 0,
+            readFiles: [],
+            modifiedFiles: [],
+          },
+        },
+      },
+      ctx
+    );
+
     expect(sentUserMessages.length).toBe(0);
   });
 
@@ -563,11 +682,36 @@ describe("DCP native pi compaction bridge", () => {
 
     registerDcpNativeCompactionBridge(pi as any, state, config);
 
-    // Reason "command" goes through triggerDcpNativeCompaction directly, not
-    // through the turn_end handler, so it must not produce a resume prompt.
+    // Manual `/dcp compact` triggers compaction with reason "command". The
+    // resume prompt is gated on reason === "auto" in session_compact, so a
+    // committed command compaction must NOT post a continuation prompt.
     const triggerPromise = triggerDcpNativeCompaction(ctx as any, state, "command");
     if (compactCompleteCb) compactCompleteCb({ firstKeptEntryId: "entry-tail" });
     await triggerPromise;
+
+    const sessionCompact = handlers.get("session_compact");
+    await sessionCompact(
+      {
+        compactionEntry: {
+          details: {
+            source: "dcp-native-compaction",
+            version: 1,
+            requestId: "x",
+            reason: "command",
+            representedBlockIds: [11],
+            requestedBlockIds: [11],
+            firstKeptEntryId: "entry-tail",
+            hiddenMessageCount: 0,
+            uncoveredHiddenMessageCount: 0,
+            renderedUncoveredExcerptCount: 0,
+            truncatedUncoveredExcerptCount: 0,
+            readFiles: [],
+            modifiedFiles: [],
+          },
+        },
+      },
+      ctx
+    );
 
     expect(sentUserMessages.length).toBe(0);
   });

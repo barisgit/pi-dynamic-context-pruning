@@ -767,48 +767,62 @@ export function registerDcpNativeCompactionBridge(
 
     if (ctx.hasUI) updateDcpStatus(ctx, state);
     saveState(pi, state, config, "native_compaction", buildSessionDebugPayload(ctx.sessionManager));
+
+    // Post the auto-compaction continuation prompt HERE, not from `turn_end`.
+    // `session_compact` fires only after compaction has actually committed, so
+    // reaching this point already implies success — no started/completed
+    // bookkeeping needed. Gating:
+    //   - reason === "auto": manual `/dcp compact` ("command") and host-driven
+    //     ("host") compactions must NOT auto-resume; only the post-`compress`
+    //     auto path should continue the interrupted task on its own.
+    //   - !hasPendingMessages(): if the user typed during compaction, pi will
+    //     deliver their input next turn, so a stacked resume prompt is noise.
+    // The cancel/error path never reaches `session_compact` (no entry is
+    // committed), so it inherently posts no prompt.
+    if (details.reason === "auto" && !ctx.hasPendingMessages()) {
+      try {
+        pi.sendUserMessage(
+          "[dcp-auto-compaction] Session was just compacted to free context. Continue with the task you were working on, using the compaction summary and active DCP blocks as ground truth for prior work."
+        );
+        appendDebugLog(config, "native_compaction_auto_resume_sent", {
+          ...buildSessionDebugPayload(ctx.sessionManager),
+        });
+      } catch (error) {
+        appendDebugLog(config, "native_compaction_auto_resume_failed", {
+          ...buildSessionDebugPayload(ctx.sessionManager),
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
   });
 
   pi.on("turn_end", async (_event, ctx) => {
     const pending = pendingAutoRequests.get(state);
     if (!pending) return;
 
-    // Consume the queue entry up front, BEFORE the await. This is single-shot
-    // semantics: a successful `compress` queues exactly one native compaction
-    // attempt. Whether that attempt succeeds, errors, or gets cancelled, the
-    // queue must drain so the next turn_end does not re-fire compaction in a
-    // loop. The previous design only cleared it on `session_compact` (success
-    // path), which combined with the auto-resume prompt below produced an
-    // infinite cancel/retry loop when compaction was cancelled.
+    // Consume the queue entry up front. This is single-shot semantics: a
+    // successful `compress` queues exactly one native compaction attempt.
+    // Whether that attempt succeeds, errors, or gets cancelled, the queue must
+    // drain so the next turn_end does not re-fire compaction in a loop.
     pendingAutoRequests.delete(state);
 
     if (!state.compressionBlocks.some((block) => block.active)) return;
 
-    const result = await triggerDcpNativeCompaction(ctx, state, "auto", pending.requestedBlockIds);
-
-    // Only post a continuation prompt when compaction actually completed.
-    // Cancellation / error paths must not stack a follow-up turn, because:
-    //   - the user may have cancelled deliberately
-    //   - the next turn would just re-trigger the same failure if state was
-    //     somehow re-queued by other code
-    //   - chaining "continue" prompts after every failure is loop bait
-    // Also skip when the user already typed something during compaction; pi
-    // will deliver their input on the next turn on its own.
-    if (!result.started || !result.completed) return;
-    if (ctx.hasPendingMessages()) return;
-
-    try {
-      pi.sendUserMessage(
-        "[dcp-auto-compaction] Session was just compacted to free context. Continue with the task you were working on, using the compaction summary and active DCP blocks as ground truth for prior work."
-      );
-      appendDebugLog(config, "native_compaction_auto_resume_sent", {
-        ...buildSessionDebugPayload(ctx.sessionManager),
-      });
-    } catch (error) {
-      appendDebugLog(config, "native_compaction_auto_resume_failed", {
+    // CRITICAL: fire-and-forget. `ctx.compact()` is void; internally it awaits
+    // `session.compact()` -> `waitForIdle()`, which cannot resolve until the
+    // CURRENT turn goes idle. `turn_end` IS part of that turn (the host awaits
+    // this handler before advancing), so awaiting compaction here is a circular
+    // wait that deadlocks the session into an uninterruptible "Working...".
+    // Kick compaction off and return immediately; the continuation prompt is
+    // posted from the `session_compact` handler once compaction commits. The
+    // returned promise resolves (never rejects) on onComplete/onError, but a
+    // synchronous throw from ctx.compact would reject it; catch defensively so
+    // a fire-and-forget rejection cannot become an unhandled rejection.
+    triggerDcpNativeCompaction(ctx, state, "auto", pending.requestedBlockIds).catch((error) => {
+      appendDebugLog(config, "native_compaction_auto_trigger_failed", {
         ...buildSessionDebugPayload(ctx.sessionManager),
         error: error instanceof Error ? error.message : String(error),
       });
-    }
+    });
   });
 }
