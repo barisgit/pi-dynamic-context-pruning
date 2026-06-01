@@ -46,44 +46,67 @@ export {
   validateCompressionRangeBoundaryIds,
 } from "../../domain/compression/tooling.js";
 
-function buildCurrentBranchMessages(ctx: any): any[] {
-  const branchEntries = ctx.sessionManager.getBranch(ctx.sessionManager.getLeafId() ?? undefined);
-  const messages: any[] = [];
+/**
+ * Flatten branch entries into the LLM message array, tracking which session
+ * entry produced each message. The `entryId` side-channel lets callers map a
+ * branch entry id (e.g. a compaction's `firstKeptEntryId`) back to its ordinal
+ * position in the flattened message array, which is exactly the ordinal space
+ * `buildTranscriptSnapshot` assigns (ordinal === message-array index).
+ */
+function flattenBranchEntries(branchEntries: any[]): { message: any; entryId: string | null }[] {
+  const out: { message: any; entryId: string | null }[] = [];
 
   for (const entry of branchEntries) {
+    const entryId = typeof entry?.id === "string" ? entry.id : null;
+
     if (entry?.type === "message" && entry.message) {
-      messages.push(entry.message);
+      out.push({ message: entry.message, entryId });
       continue;
     }
 
     if (entry?.type === "custom_message") {
-      messages.push({
-        role: "custom_message",
-        content: entry.content,
-        timestamp: Date.parse(entry.timestamp),
+      out.push({
+        message: {
+          role: "custom_message",
+          content: entry.content,
+          timestamp: Date.parse(entry.timestamp),
+        },
+        entryId,
       });
       continue;
     }
 
     if (entry?.type === "branch_summary") {
-      messages.push({
-        role: "branch_summary",
-        content: [{ type: "text", text: entry.summary }],
-        timestamp: Date.parse(entry.timestamp),
+      out.push({
+        message: {
+          role: "branch_summary",
+          content: [{ type: "text", text: entry.summary }],
+          timestamp: Date.parse(entry.timestamp),
+        },
+        entryId,
       });
       continue;
     }
 
     if (entry?.type === "compaction") {
-      messages.push({
-        role: "compaction",
-        content: [{ type: "text", text: entry.summary }],
-        timestamp: Date.parse(entry.timestamp),
+      out.push({
+        message: {
+          role: "compaction",
+          content: [{ type: "text", text: entry.summary }],
+          timestamp: Date.parse(entry.timestamp),
+        },
+        entryId,
       });
     }
   }
 
-  return messages;
+  return out;
+}
+
+function buildCurrentBranchMessages(ctx: any): any[] {
+  const branchEntries = ctx.sessionManager.getBranch(ctx.sessionManager.getLeafId() ?? undefined);
+  if (!Array.isArray(branchEntries)) return [];
+  return flattenBranchEntries(branchEntries).map((entry) => entry.message);
 }
 
 function resolveEffectiveRangeTopic(
@@ -201,8 +224,9 @@ function clampRatio(value: number): number {
 }
 
 /**
- * Resolve the timestamp at which the live, TUI-rendered window begins: the
- * timestamp of the latest compaction's `firstKeptEntryId` entry.
+ * Resolve the ordinal (index in the flattened branch message array) at which
+ * the live, TUI-rendered window begins: the position of the latest
+ * compaction's `firstKeptEntryId` entry.
  *
  * Mirrors pi's `buildSessionContext`, which — when a compaction is on the
  * branch — renders the compaction summary plus every entry from
@@ -213,11 +237,18 @@ function clampRatio(value: number): number {
  * already compacted keeps counting thousands of hidden historical messages and
  * re-fires `force-threshold` against a tiny visible transcript.
  *
+ * An ordinal boundary (not a timestamp) is used deliberately: pi finds the
+ * boundary by entry id in branch order, so two entries sharing a millisecond
+ * timestamp must not be mis-windowed. The returned ordinal lives in the same
+ * space as `buildTranscriptSnapshot` source-item ordinals (message-array
+ * index), so the estimator can drop hidden items with a precise `<` compare.
+ *
  * Returns `null` when the branch has no compaction entry (the whole branch is
  * the live window) or the boundary entry cannot be resolved (conservative
- * fallback to full lineage).
+ * fallback to full lineage — this can only over-count, never under-count, so a
+ * needed render-pressure compaction is never silently suppressed).
  */
-export function resolveLiveCompactionWindowStartTimestamp(ctx: any): number | null {
+export function resolveLiveCompactionWindowStartOrdinal(ctx: any): number | null {
   const branchEntries = ctx.sessionManager.getBranch(ctx.sessionManager.getLeafId() ?? undefined);
   if (!Array.isArray(branchEntries)) return null;
 
@@ -227,11 +258,9 @@ export function resolveLiveCompactionWindowStartTimestamp(ctx: any): number | nu
   }
   if (!compaction || typeof compaction.firstKeptEntryId !== "string") return null;
 
-  const firstKept = branchEntries.find((entry: any) => entry?.id === compaction.firstKeptEntryId);
-  if (!firstKept || typeof firstKept.timestamp !== "string") return null;
-
-  const boundary = Date.parse(firstKept.timestamp);
-  return Number.isFinite(boundary) ? boundary : null;
+  const flattened = flattenBranchEntries(branchEntries);
+  const ordinal = flattened.findIndex((entry) => entry.entryId === compaction.firstKeptEntryId);
+  return ordinal >= 0 ? ordinal : null;
 }
 
 /**
@@ -239,15 +268,15 @@ export function resolveLiveCompactionWindowStartTimestamp(ctx: any): number | nu
  *
  * The snapshot is built over the FULL lineage so source-item ordinals (and thus
  * exact `coveredSourceKeys`, which embed the ordinal) stay aligned with how
- * each block minted them at compress time. The live window and protected tail
- * are then applied as timestamp filters, which are window-stable — re-slicing
- * the message array would re-ordinate items and silently break exact-key
- * coverage matching.
+ * each block minted them at compress time. The live-window boundary is then
+ * applied as an exact ordinal filter (same ordinal space as the snapshot), and
+ * the protected tail as a timestamp filter — re-slicing the message array would
+ * re-ordinate items and silently break exact-key coverage matching.
  */
 function estimateCompactableSourceItems(
   currentMessages: readonly any[],
   config: DcpConfig,
-  windowStartTimestamp: number | null
+  windowStartOrdinal: number | null
 ) {
   const snapshot = buildTranscriptSnapshot([...currentMessages]);
   const tailStartTimestamp = resolveLogicalTurnTailStartTimestamp(
@@ -257,13 +286,10 @@ function estimateCompactableSourceItems(
 
   return snapshot.sourceItems.filter((item) => {
     if (NATIVE_COMPACTION_PASSTHROUGH_ROLES.has(item.role)) return false;
-    // Drop hidden pre-compaction history: kept on disk for lineage but no
-    // longer TUI-rendered (before firstKeptEntryId).
-    if (
-      windowStartTimestamp !== null &&
-      item.timestamp !== null &&
-      item.timestamp < windowStartTimestamp
-    ) {
+    // Drop hidden pre-window history (entries before firstKeptEntryId): kept on
+    // disk for lineage but no longer TUI-rendered. Ordinal compare is exact and
+    // immune to same-timestamp boundary collisions.
+    if (windowStartOrdinal !== null && item.ordinal < windowStartOrdinal) {
       return false;
     }
     // Protect the recent logical-turn tail.
@@ -317,12 +343,12 @@ export function decideNativeCompactionAutoTrigger(
   state: DcpState,
   config: DcpConfig,
   newBlockCount: number,
-  windowStartTimestamp: number | null = null
+  windowStartOrdinal: number | null = null
 ): NativeCompactionAutoTriggerDecision {
   const estimatedCompactableSourceItems = estimateCompactableSourceItems(
     currentMessages,
     config,
-    windowStartTimestamp
+    windowStartOrdinal
   );
   const estimatedCompactableMessageCount = estimatedCompactableSourceItems.length;
   const lowerMessageThreshold = Math.max(
@@ -633,7 +659,7 @@ export function registerCompressTool(pi: ExtensionAPI, state: DcpState, config: 
           state,
           config,
           plannedBlocks.length,
-          resolveLiveCompactionWindowStartTimestamp(ctx)
+          resolveLiveCompactionWindowStartOrdinal(ctx)
         );
         const nativeCompactionRequested = nativeCompactionAutoTrigger.queued;
         if (nativeCompactionRequested) {
