@@ -176,7 +176,7 @@ function countLlmMessages(messages: readonly any[]): number {
 
 const NATIVE_COMPACTION_ESTIMATED_COVERAGE_MARGIN = 0.05;
 
-interface NativeCompactionAutoTriggerDecision {
+export interface NativeCompactionAutoTriggerDecision {
   queued: boolean;
   reason:
     | "disabled"
@@ -200,10 +200,29 @@ function clampRatio(value: number): number {
   return Math.min(1, Math.max(0, value));
 }
 
+/**
+ * Returns the live, TUI-rendered window of a branch: every entry after the
+ * most recent `compaction` boundary. Native compaction leaves the
+ * pre-compaction `message` entries on disk for lineage, but the TUI only
+ * renders the compaction summary plus everything after it. The auto-trigger
+ * must measure that live window — not the full root→leaf lineage — otherwise a
+ * session that already compacted keeps counting thousands of hidden historical
+ * messages and re-fires `force-threshold` against a tiny visible transcript.
+ */
+function sliceToLiveCompactionWindow(messages: readonly any[]): readonly any[] {
+  let lastCompactionIndex = -1;
+  for (let i = 0; i < messages.length; i++) {
+    if (messages[i]?.role === "compaction") lastCompactionIndex = i;
+  }
+  if (lastCompactionIndex < 0) return messages;
+  return messages.slice(lastCompactionIndex + 1);
+}
+
 function estimateCompactableSourceItems(currentMessages: readonly any[], config: DcpConfig) {
-  const snapshot = buildTranscriptSnapshot([...currentMessages]);
+  const liveWindow = sliceToLiveCompactionWindow(currentMessages);
+  const snapshot = buildTranscriptSnapshot([...liveWindow]);
   const tailStartTimestamp = resolveLogicalTurnTailStartTimestamp(
-    [...currentMessages],
+    [...liveWindow],
     config.compress.protectRecentTurns
   );
 
@@ -254,7 +273,7 @@ function estimateDcpCoverageRatio(
   return coveredCount / compactableSourceItems.length;
 }
 
-function decideNativeCompactionAutoTrigger(
+export function decideNativeCompactionAutoTrigger(
   currentMessages: readonly any[],
   state: DcpState,
   config: DcpConfig,
