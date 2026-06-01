@@ -201,33 +201,72 @@ function clampRatio(value: number): number {
 }
 
 /**
- * Returns the live, TUI-rendered window of a branch: every entry after the
- * most recent `compaction` boundary. Native compaction leaves the
- * pre-compaction `message` entries on disk for lineage, but the TUI only
- * renders the compaction summary plus everything after it. The auto-trigger
- * must measure that live window — not the full root→leaf lineage — otherwise a
- * session that already compacted keeps counting thousands of hidden historical
- * messages and re-fires `force-threshold` against a tiny visible transcript.
+ * Resolve the timestamp at which the live, TUI-rendered window begins: the
+ * timestamp of the latest compaction's `firstKeptEntryId` entry.
+ *
+ * Mirrors pi's `buildSessionContext`, which — when a compaction is on the
+ * branch — renders the compaction summary plus every entry from
+ * `firstKeptEntryId` onward (the kept-tail that sits *before* the compaction
+ * entry, then everything after it). Entries before `firstKeptEntryId` stay on
+ * disk for lineage but are no longer rendered. The auto-trigger must measure
+ * that live window — not the full root→leaf lineage — otherwise a session that
+ * already compacted keeps counting thousands of hidden historical messages and
+ * re-fires `force-threshold` against a tiny visible transcript.
+ *
+ * Returns `null` when the branch has no compaction entry (the whole branch is
+ * the live window) or the boundary entry cannot be resolved (conservative
+ * fallback to full lineage).
  */
-function sliceToLiveCompactionWindow(messages: readonly any[]): readonly any[] {
-  let lastCompactionIndex = -1;
-  for (let i = 0; i < messages.length; i++) {
-    if (messages[i]?.role === "compaction") lastCompactionIndex = i;
+export function resolveLiveCompactionWindowStartTimestamp(ctx: any): number | null {
+  const branchEntries = ctx.sessionManager.getBranch(ctx.sessionManager.getLeafId() ?? undefined);
+  if (!Array.isArray(branchEntries)) return null;
+
+  let compaction: any = null;
+  for (const entry of branchEntries) {
+    if (entry?.type === "compaction") compaction = entry;
   }
-  if (lastCompactionIndex < 0) return messages;
-  return messages.slice(lastCompactionIndex + 1);
+  if (!compaction || typeof compaction.firstKeptEntryId !== "string") return null;
+
+  const firstKept = branchEntries.find((entry: any) => entry?.id === compaction.firstKeptEntryId);
+  if (!firstKept || typeof firstKept.timestamp !== "string") return null;
+
+  const boundary = Date.parse(firstKept.timestamp);
+  return Number.isFinite(boundary) ? boundary : null;
 }
 
-function estimateCompactableSourceItems(currentMessages: readonly any[], config: DcpConfig) {
-  const liveWindow = sliceToLiveCompactionWindow(currentMessages);
-  const snapshot = buildTranscriptSnapshot([...liveWindow]);
+/**
+ * Estimate the compactable source items in the live render window.
+ *
+ * The snapshot is built over the FULL lineage so source-item ordinals (and thus
+ * exact `coveredSourceKeys`, which embed the ordinal) stay aligned with how
+ * each block minted them at compress time. The live window and protected tail
+ * are then applied as timestamp filters, which are window-stable — re-slicing
+ * the message array would re-ordinate items and silently break exact-key
+ * coverage matching.
+ */
+function estimateCompactableSourceItems(
+  currentMessages: readonly any[],
+  config: DcpConfig,
+  windowStartTimestamp: number | null
+) {
+  const snapshot = buildTranscriptSnapshot([...currentMessages]);
   const tailStartTimestamp = resolveLogicalTurnTailStartTimestamp(
-    [...liveWindow],
+    [...currentMessages],
     config.compress.protectRecentTurns
   );
 
   return snapshot.sourceItems.filter((item) => {
     if (NATIVE_COMPACTION_PASSTHROUGH_ROLES.has(item.role)) return false;
+    // Drop hidden pre-compaction history: kept on disk for lineage but no
+    // longer TUI-rendered (before firstKeptEntryId).
+    if (
+      windowStartTimestamp !== null &&
+      item.timestamp !== null &&
+      item.timestamp < windowStartTimestamp
+    ) {
+      return false;
+    }
+    // Protect the recent logical-turn tail.
     if (tailStartTimestamp === null) return true;
     if (item.timestamp === null) return true;
     return item.timestamp < tailStartTimestamp;
@@ -277,9 +316,14 @@ export function decideNativeCompactionAutoTrigger(
   currentMessages: readonly any[],
   state: DcpState,
   config: DcpConfig,
-  newBlockCount: number
+  newBlockCount: number,
+  windowStartTimestamp: number | null = null
 ): NativeCompactionAutoTriggerDecision {
-  const estimatedCompactableSourceItems = estimateCompactableSourceItems(currentMessages, config);
+  const estimatedCompactableSourceItems = estimateCompactableSourceItems(
+    currentMessages,
+    config,
+    windowStartTimestamp
+  );
   const estimatedCompactableMessageCount = estimatedCompactableSourceItems.length;
   const lowerMessageThreshold = Math.max(
     1,
@@ -588,7 +632,8 @@ export function registerCompressTool(pi: ExtensionAPI, state: DcpState, config: 
           currentMessages,
           state,
           config,
-          plannedBlocks.length
+          plannedBlocks.length,
+          resolveLiveCompactionWindowStartTimestamp(ctx)
         );
         const nativeCompactionRequested = nativeCompactionAutoTrigger.queued;
         if (nativeCompactionRequested) {
