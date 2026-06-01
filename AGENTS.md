@@ -147,9 +147,13 @@ This logical-turn model is used by:
 DCP intentionally changes older rendered context in a few places. Treat these as cache-cost trade-offs, not bugs:
 
 - Compression blocks replace covered raw transcript spans with rendered `bN` blocks. This is the primary intentional prefix-cache break and should buy significant token savings.
-- `applyErrorPurging()` marks old errored `toolResult`s after `purgeErrors.turns` logical turns by adding their `toolCallId` to `state.prunedToolIds`.
-- `applyDeduplication()` marks older duplicate `toolResult`s in `state.prunedToolIds` while keeping the newest result.
-- Both strategies are gated by `strategies.pruneCadenceTurns`. Eligibility is computed against a bucketed turn `floor(currentTurn / N) * N`, so additions to `state.prunedToolIds` can only happen at bucket boundaries. Default `1` is the legacy per-turn behavior; higher values (e.g. `10`, `20`) batch all dedup/purge tombstone transitions inside a bucket into a single context pass — trading slightly more carried tokens for at most one prefix-cache break per N turns. The gate is intentionally stateless: it is a pure function of `currentTurn`, so reloads cannot trigger a flush the previous session did not produce.
+- `collectErrorPurgeCandidates()` marks old errored `toolResult`s after `purgeErrors.turns` logical turns for tombstoning by their `toolCallId`.
+- `collectDeduplicationCandidates()` marks older duplicate `toolResult`s for tombstoning while keeping the newest result.
+- Both strategies are gated by **two** independent gates inside `commitHeuristicPruning()` before any `toolCallId` enters `state.prunedToolIds`:
+  - **Cadence (`strategies.pruneCadenceTurns`) — _when_ may we mutate old context.** Eligibility is computed against a bucketed turn `floor(currentTurn / N) * N`, so additions to `state.prunedToolIds` can only happen at bucket boundaries. Default `1` is the legacy per-turn behavior; higher values (e.g. `10`, `20`) batch all dedup/purge tombstone transitions inside a bucket into a single context pass — trading slightly more carried tokens for at most one prefix-cache break per N turns. The gate is intentionally stateless: it is a pure function of `currentTurn`, so reloads cannot trigger a flush the previous session did not produce.
+  - **Min net savings (`strategies.minPruneItemSavedTokens` / `minPruneBatchSavedTokens`) — _whether_ the mutation is worth a cache break.** Mirrors Anthropic's `clear_at_least`. Per-candidate `netSaved = record.tokenEstimate - tombstoneTokens` (fixed tombstone strings cost ~13/15 tokens). The per-item gate drops candidates below `minPruneItemSavedTokens` (skip tiny outputs); the batch gate holds the entire eligible flush until its summed `netSaved` clears `minPruneBatchSavedTokens`. Both default to `0` (gates off → every eligible candidate commits, identical to legacy). Both are pure functions of the transcript + tool records, so they do **not** break replay determinism.
+  - **Red-zone override — _ignore cache efficiency, we need space._** When the live effective context from the PREVIOUS `context` pass exceeds `compress.maxContextPercent` / `compress.maxContextTokens` (`state.lastEffectiveContextPercent` / `lastEffectiveContextTokens`, set by the context handler), both savings gates are bypassed and all cadence-eligible candidates commit. This signal is live-only and intentionally absent during replay (replay never sets it → defaults to no red zone), which is safe because live resume is direct-restore of persisted `prunedToolIds`, not replay.
+- Logical-turn note: "turns" here is the DCP logical-turn model, not user turns. A standalone visible message is one turn and an assistant tool-call batch plus its matching tool results is one turn, so cadence advances during tool-only autonomous loops with no user message.
 - `applyToolOutputPruning()` does **not** remove the whole assistant/tool pair; it replaces matching `toolResult.content` with a stable tombstone. The cache break happens when the ID first enters `state.prunedToolIds`; later renders should be stable.
 - Render detail aging can change older block text when blocks move full → compact → minimal according to `renderFullBlockCount` / `renderCompactBlockCount`.
 - Provider-payload filtering is separate from visible transcript rendering. The newest represented successful `compress` exchange is minified to a receipt; older represented pairs are suppressed.
@@ -157,14 +161,14 @@ DCP intentionally changes older rendered context in a few places. Treat these as
 Ideas discussed but not currently implemented:
 
 - replace N-turn error purging with compression-driven or compaction-only pruning
-- make stale error/dedup pruning emergency/context-pressure-driven instead of time/turn-driven
+- make stale error/dedup pruning _fully_ emergency/context-pressure-driven instead of time/turn-driven (the red-zone override is a partial step: it only bypasses the savings gates, it does not yet drive pruning purely by pressure)
 - batch tombstone transitions into explicit deterministic pruning checkpoints
 - prefer representation-driven artifact pruning, where old artifacts are removed/minified only after a durable block or receipt represents them
 
 ### 6. Debug logging
 
 - `config.debug` writes best-effort JSONL diagnostics to `~/.pi/log/dcp.jsonl`.
-- Current logs include extension/session lifecycle, state saves, context evaluation, nudge emission, provider-payload filtering, and `compress` success/failure.
+- Current logs include extension/session lifecycle, state saves, context evaluation, `heuristic_prune_evaluated` (per-pass dedup/error-purge gate decision: candidate counts, item/batch gate outcome, redZone, cadence bucket, committed count), nudge emission, provider-payload filtering, and `compress` success/failure.
 - Debug logging must never affect runtime behavior.
 
 ---

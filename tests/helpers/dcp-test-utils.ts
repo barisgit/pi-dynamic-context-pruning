@@ -91,6 +91,8 @@ export function makeConfig(): DcpConfig {
     },
     strategies: {
       pruneCadenceTurns: 1,
+      minPruneItemSavedTokens: 0,
+      minPruneBatchSavedTokens: 0,
       deduplication: { enabled: false, protectedTools: [] },
       purgeErrors: { enabled: false, turns: 4, protectedTools: [] },
     },
@@ -109,6 +111,9 @@ export function makeState(compressionBlocks: DcpState["compressionBlocks"] = [])
     lastRenderedMessages: [],
     lastLiveOwnerKeys: [],
     lastDcpEstimatedTokens: 0,
+    lastEffectiveContextPercent: null,
+    lastEffectiveContextTokens: null,
+    lastHeuristicPruneDecision: null,
     messageAliases: createMessageAliasState(),
     messageRefSnapshot: new Map(),
     messageIdSnapshot: new Map(),

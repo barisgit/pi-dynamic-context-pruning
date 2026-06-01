@@ -51,6 +51,22 @@ export interface DcpConfig {
      * cannot trigger a spurious flush.
      */
     pruneCadenceTurns: number;
+    /**
+     * Minimum net tokens a single dedup/error tombstone must save before it is
+     * allowed to break the prefix cache. `netSaved = toolResultTokens -
+     * tombstoneTokens`. Candidates below this are kept fully rendered. `0`
+     * (default) disables the per-item gate, preserving legacy behavior.
+     */
+    minPruneItemSavedTokens: number;
+    /**
+     * Minimum aggregate net tokens an eligible tombstone *batch* must save
+     * before any of it is committed in a given context pass. Mirrors
+     * Anthropic's `clear_at_least`: don't rewrite old context unless the whole
+     * flush is worth the single prefix-cache break. `0` (default) disables the
+     * batch gate. Bypassed when the live effective context is in the red zone
+     * (see `compress.maxContextPercent` / `compress.maxContextTokens`).
+     */
+    minPruneBatchSavedTokens: number;
     deduplication: {
       enabled: boolean;
       protectedTools: string[];

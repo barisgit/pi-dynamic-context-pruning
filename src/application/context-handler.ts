@@ -273,6 +273,12 @@ export function registerContextHandler(pi: ExtensionAPI, state: DcpState, config
     // (max host, DCP estimate) without re-running the state-mutating
     // applyPruning pass at tool-call time.
     state.lastDcpEstimatedTokens = dcpEstimatedTokens;
+    // Stash this pass's effective context so the NEXT pass's applyPruning can
+    // evaluate the heuristic-pruning red-zone bypass. applyPruning runs before
+    // effective context is known within a pass, so the gate reads this
+    // prior-pass value (one-pass lag is acceptable under gradual pressure).
+    state.lastEffectiveContextPercent = effectivePercent;
+    state.lastEffectiveContextTokens = effectiveTokens;
     updateDcpStatus(ctx, state);
 
     appendDebugLog(config, "context_evaluated", {
@@ -294,6 +300,15 @@ export function registerContextHandler(pi: ExtensionAPI, state: DcpState, config
       nudgeType,
       nudgeDecisionReason,
     });
+
+    if (state.lastHeuristicPruneDecision) {
+      appendDebugLog(config, "heuristic_prune_evaluated", {
+        ...buildSessionDebugPayload(ctx.sessionManager),
+        ...state.lastHeuristicPruneDecision,
+        contextPercent,
+        currentTurn: state.currentTurn,
+      });
+    }
 
     return { messages: prunedMessages as any[] };
   });

@@ -37,6 +37,9 @@ export function createState(): DcpState {
     lastRenderedMessages: [],
     lastLiveOwnerKeys: [],
     lastDcpEstimatedTokens: 0,
+    lastEffectiveContextPercent: null,
+    lastEffectiveContextTokens: null,
+    lastHeuristicPruneDecision: null,
     messageAliases: createMessageAliasState(),
     messageRefSnapshot: new Map(),
     messageIdSnapshot: new Map(),
@@ -65,6 +68,9 @@ export function resetState(state: DcpState): void {
   state.lastRenderedMessages = [];
   state.lastLiveOwnerKeys = [];
   state.lastDcpEstimatedTokens = 0;
+  state.lastEffectiveContextPercent = null;
+  state.lastEffectiveContextTokens = null;
+  state.lastHeuristicPruneDecision = null;
   state.messageAliases = createMessageAliasState();
   state.messageRefSnapshot.clear();
   state.messageIdSnapshot.clear();

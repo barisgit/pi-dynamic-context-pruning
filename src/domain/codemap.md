@@ -148,7 +148,7 @@ New blocks persist `startSourceKey`, `endSourceKey`, and `anchorSourceKey` for s
 
 ### 5. Bucket-Gated Tombstone Transitions
 
-`applyDeduplication` and `applyErrorPurging` use `bucketedTurn = floor(currentTurn / pruneCadenceTurns) * pruneCadenceTurns` so additions to `state.prunedToolIds` only happen at bucket boundaries. Default cadence of 1 is per-turn; higher values batch multiple transitions into one prefix-cache break.
+`collectDeduplicationCandidates` and `collectErrorPurgeCandidates` use `bucketedTurn = floor(currentTurn / pruneCadenceTurns) * pruneCadenceTurns` so additions to `state.prunedToolIds` only happen at bucket boundaries. Default cadence of 1 is per-turn; higher values batch multiple transitions into one prefix-cache break. `commitHeuristicPruning` then applies opt-in net-savings gates (`minPruneItemSavedTokens` per-candidate, `minPruneBatchSavedTokens` per-flush; both default `0` = off), bypassed when the prior-pass effective context is in the red zone (`compress.maxContextPercent`/`maxContextTokens`).
 
 ### 6. Block Render Detail by Recency
 

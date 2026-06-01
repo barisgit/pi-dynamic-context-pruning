@@ -37,6 +37,8 @@ const DEFAULT_CONFIG: DcpConfig = {
   },
   strategies: {
     pruneCadenceTurns: 1,
+    minPruneItemSavedTokens: 0,
+    minPruneBatchSavedTokens: 0,
     deduplication: {
       enabled: true,
       protectedTools: [],
@@ -94,6 +96,13 @@ const DEFAULT_CONFIG_FILE_CONTENT = `{
   //   // prefix-cache invalidations. 1 = current per-turn behavior; values like
   //   // 5 or 10 group additions so a cache break happens at most every N turns.
   //   "pruneCadenceTurns": 1,
+  //   // Minimum net tokens saved before a dedup/error tombstone is allowed to
+  //   // break the prefix cache. Per-item skips tiny outputs; batch refuses to
+  //   // rewrite old context unless the whole flush clears the bar. 0 = off.
+  //   // Both gates are bypassed when effective context enters the red zone
+  //   // (compress.maxContextPercent / maxContextTokens).
+  //   "minPruneItemSavedTokens": 0,
+  //   "minPruneBatchSavedTokens": 0,
   //   "deduplication": { "enabled": true, "protectedTools": [] },
   //   "purgeErrors": { "enabled": true, "turns": 4, "protectedTools": [] }
   // },

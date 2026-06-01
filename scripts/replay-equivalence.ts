@@ -27,7 +27,10 @@ import { join } from "node:path";
 import { Glob } from "bun";
 import { createState } from "../src/state.js";
 import type { DcpConfig } from "../src/types/config.js";
-import { restorePersistedState, serializePersistedState } from "../src/infrastructure/persistence.js";
+import {
+  restorePersistedState,
+  serializePersistedState,
+} from "../src/infrastructure/persistence.js";
 import { replayDcpState } from "../src/domain/replay/index.js";
 
 // ---------------------------------------------------------------------------
@@ -63,6 +66,8 @@ export const EQUIVALENCE_CONFIG: DcpConfig = {
   },
   strategies: {
     pruneCadenceTurns: 1,
+    minPruneItemSavedTokens: 0,
+    minPruneBatchSavedTokens: 0,
     deduplication: { enabled: false, protectedTools: [] },
     purgeErrors: { enabled: false, turns: 4, protectedTools: [] },
   },
@@ -211,16 +216,32 @@ export interface BranchMismatch {
 export function diffObservables(directRestore: Observables, replay: Observables): BranchMismatch[] {
   const mismatches: BranchMismatch[] = [];
   if (!arraysEqual(directRestore.activeBlockIds, replay.activeBlockIds)) {
-    mismatches.push({ field: "activeBlockIds", directRestore: directRestore.activeBlockIds, replay: replay.activeBlockIds });
+    mismatches.push({
+      field: "activeBlockIds",
+      directRestore: directRestore.activeBlockIds,
+      replay: replay.activeBlockIds,
+    });
   }
   if (directRestore.nextBlockId !== replay.nextBlockId) {
-    mismatches.push({ field: "nextBlockId", directRestore: directRestore.nextBlockId, replay: replay.nextBlockId });
+    mismatches.push({
+      field: "nextBlockId",
+      directRestore: directRestore.nextBlockId,
+      replay: replay.nextBlockId,
+    });
   }
   if (directRestore.tokensSaved !== replay.tokensSaved) {
-    mismatches.push({ field: "tokensSaved", directRestore: directRestore.tokensSaved, replay: replay.tokensSaved });
+    mismatches.push({
+      field: "tokensSaved",
+      directRestore: directRestore.tokensSaved,
+      replay: replay.tokensSaved,
+    });
   }
   if (!arraysEqual(directRestore.prunedToolIds, replay.prunedToolIds)) {
-    mismatches.push({ field: "prunedToolIds", directRestore: directRestore.prunedToolIds, replay: replay.prunedToolIds });
+    mismatches.push({
+      field: "prunedToolIds",
+      directRestore: directRestore.prunedToolIds,
+      replay: replay.prunedToolIds,
+    });
   }
   return mismatches;
 }
@@ -361,15 +382,17 @@ function printFileResult(result: FileResult, verbose: boolean): void {
   console.log(`\n${hasMismatch ? "MISMATCH" : "OK"} [${tag}]: ${result.file}`);
   console.log(
     `  branches=${result.branches} replayable=${result.replayableBranches} ` +
-    `equivalent=${result.equivalentBranches} mismatch=${result.mismatchedBranches} ` +
-    `skip=${result.skippedBranches} errors=${result.errors.length}`
+      `equivalent=${result.equivalentBranches} mismatch=${result.mismatchedBranches} ` +
+      `skip=${result.skippedBranches} errors=${result.errors.length}`
   );
 
   for (const detail of result.branchDetails) {
     if (detail.status === "mismatch") {
       console.log(`  branch ${detail.branchId ?? "root"}: MISMATCH`);
       for (const m of detail.mismatches ?? []) {
-        console.log(`    ${m.field}: directRestore=${JSON.stringify(m.directRestore)} replay=${JSON.stringify(m.replay)}`);
+        console.log(
+          `    ${m.field}: directRestore=${JSON.stringify(m.directRestore)} replay=${JSON.stringify(m.replay)}`
+        );
       }
     } else if (detail.status === "error") {
       console.log(`  branch ${detail.branchId ?? "root"}: ERROR ${detail.error}`);
@@ -449,8 +472,8 @@ async function main(): Promise<void> {
 
   console.log(
     `\nSummary: files=${filesChecked} (v3=${v3Files} legacy=${legacyFiles}) ` +
-    `equivalent=${totalEquivalent} in-contract-mismatch=${inContractMismatches} ` +
-    `legacy-mismatch=${legacyMismatches} skip=${totalSkipped} errors=${totalErrors}`
+      `equivalent=${totalEquivalent} in-contract-mismatch=${inContractMismatches} ` +
+      `legacy-mismatch=${legacyMismatches} skip=${totalSkipped} errors=${totalErrors}`
   );
 
   if (inContractMismatches > 0) {
@@ -460,7 +483,7 @@ async function main(): Promise<void> {
   if (legacyMismatches > 0) {
     console.log(
       `\nNOTE: ${legacyMismatches} pre-v3 legacy branch mismatch(es) reported as compatibility notes ` +
-      `(outside the v3 equivalence contract).`
+        `(outside the v3 equivalence contract).`
     );
   }
 

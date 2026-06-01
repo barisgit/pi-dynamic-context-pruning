@@ -107,6 +107,15 @@ DCP uses a layered configuration system (later layers override earlier ones):
     // strategies combined. Stateless: nothing is persisted, so reloads can
     // never trigger a spurious flush.
     "pruneCadenceTurns": 1,
+    // Minimum net tokens a tombstone must save before it is worth a
+    // prefix-cache break (Anthropic clear_at_least analogue). netSaved =
+    // toolResultTokens - tombstoneTokens. Per-item skips tiny outputs; batch
+    // refuses to rewrite old context unless the whole flush clears the bar.
+    // 0 = off (every cadence-eligible candidate commits). Both gates are
+    // bypassed when effective context enters the red zone
+    // (compress.maxContextPercent / compress.maxContextTokens).
+    "minPruneItemSavedTokens": 0,
+    "minPruneBatchSavedTokens": 0,
     "deduplication": {
       "enabled": true,
       // Additional tools to exclude from dedup
@@ -198,7 +207,9 @@ DCP optimizes context size first, but some strategies intentionally mutate previ
 - **Compression blocks:** replacing old raw messages with a `[Compressed section: …]` block is the largest intentional prefix change, usually justified by much larger token savings.
 - **Error purging:** when an errored tool result crosses the `purgeErrors.turns` age threshold, its old output changes to the error tombstone once. The `toolCallId` then stays in `state.prunedToolIds`, so later renders are stable.
 - **Deduplication:** when an older duplicate result becomes pruned, its old output changes to the generic tombstone once.
-- **Pruning cadence (`strategies.pruneCadenceTurns`):** dedup/purge additions to `state.prunedToolIds` are gated by a bucketed turn `floor(currentTurn / N) * N`. With the default `1` the gate is a no-op (legacy behavior). With higher values, eligibility flips only at bucket boundaries, so all dedup/purge tombstone additions from a bucket land in a single context pass — turning many small prefix-cache breaks into at most one per N turns, regardless of how often errors or duplicates arrive. The gate is stateless on purpose: it is a pure function of `currentTurn`, so reloading the session cannot produce a flush that the previous session did not.
+- **Pruning cadence (`strategies.pruneCadenceTurns`) — _when_ may we mutate old context:** dedup/purge additions to `state.prunedToolIds` are gated by a bucketed turn `floor(currentTurn / N) * N`. With the default `1` the gate is a no-op (legacy behavior). With higher values, eligibility flips only at bucket boundaries, so all dedup/purge tombstone additions from a bucket land in a single context pass — turning many small prefix-cache breaks into at most one per N turns, regardless of how often errors or duplicates arrive. The gate is stateless on purpose: it is a pure function of `currentTurn`, so reloading the session cannot produce a flush that the previous session did not. Note "turns" is the DCP logical-turn model (standalone message _or_ assistant tool-call batch + its results), so cadence still advances during tool-only autonomous loops with no user message.
+- **Minimum net savings (`strategies.minPruneItemSavedTokens` / `minPruneBatchSavedTokens`) — _whether_ the mutation is worth a cache break:** before any tombstone is committed, DCP checks net tokens saved (`toolResultTokens - tombstoneTokens`, the tombstone string itself costs ~13–15 tokens). The per-item gate skips candidates that don't individually clear `minPruneItemSavedTokens` (e.g. tiny 20-token outputs); the batch gate refuses to rewrite old context unless the whole eligible flush nets at least `minPruneBatchSavedTokens`. Both default to `0` (off → identical to legacy). This is the Anthropic `clear_at_least` idea: don't bust prefix cache for trivial savings.
+- **Red-zone override — _ignore cache efficiency, we need space:_** when the live effective context from the previous pass exceeds `compress.maxContextPercent` / `compress.maxContextTokens`, both net-savings gates are bypassed and every cadence-eligible candidate is pruned immediately. Cadence still applies. This pressure signal is live-only (never reconstructed during offline replay).
 - **Block detail aging:** when newer blocks are added, older blocks can move from full → compact → minimal according to `renderFullBlockCount` / `renderCompactBlockCount` (defaults: 4 full, 8 compact), changing prior block text.
 - **Nudges:** reminder text is appended near the active context tail, so it is usually a suffix change rather than an old-prefix rewrite.
 - **Provider-payload filtering:** hidden provider artifacts can be suppressed or minified independently of the visible transcript. Represented successful `compress` artifacts keep only the newest compact receipt and suppress older represented pairs.
@@ -206,7 +217,7 @@ DCP optimizes context size first, but some strategies intentionally mutate previ
 Ideas considered for a more cache-stable future policy:
 
 - disable age-based automatic error purging and only prune errors during compression or explicit sweep events
-- make stale error/dedup pruning context-pressure or emergency-only instead of N-turn-based
+- make stale error/dedup pruning _fully_ context-pressure or emergency-only instead of N-turn-based (the red-zone override is a partial step: it only bypasses the savings gates, it does not yet drive pruning purely by pressure)
 - keep tombstoning deterministic but batch it into explicit pruning checkpoints so cache breaks are rarer and easier to reason about
 - prefer representation-driven pruning: remove/minify artifacts only once a durable compression block or receipt represents them
 

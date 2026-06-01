@@ -210,6 +210,22 @@ export type PersistedDcpState =
   | PersistedDcpStateV5
   | PersistedDcpStateUnchanged;
 
+/** Runtime-only summary of a heuristic-pruning pass decision. */
+export interface HeuristicPruneDecision {
+  dedupCandidates: number;
+  errorCandidates: number;
+  uniqueCandidates: number;
+  keptAfterItemGate: number;
+  droppedByItemGate: number;
+  batchSavedTokens: number;
+  committed: number;
+  cadenceBucket: number;
+  minItem: number;
+  minBatch: number;
+  heldByBatchGate: boolean;
+  redZone: boolean;
+}
+
 /**
  * Full runtime state for the DCP extension.
  */
@@ -240,6 +256,27 @@ export interface DcpState {
    * resume cannot silently suppress an emergency compression.
    */
   lastDcpEstimatedTokens: number;
+  /**
+   * Effective context percent (0-1) observed on the PREVIOUS `context` pass,
+   * i.e. `max(host, DCP estimate) / window`. Runtime-only (never persisted).
+   * `applyPruning` runs before the current pass's effective context is known,
+   * so the heuristic-pruning red-zone bypass reads this prior-pass value. The
+   * one-pass lag is acceptable because context pressure rises gradually.
+   * `null` until the first pass populates it (and after reset/reload).
+   */
+  lastEffectiveContextPercent: number | null;
+  /**
+   * Effective context tokens observed on the PREVIOUS `context` pass. Runtime
+   * companion to `lastEffectiveContextPercent` used for the absolute-token red
+   * zone (`compress.maxContextTokens`). `null` until first populated.
+   */
+  lastEffectiveContextTokens: number | null;
+  /**
+   * Latest heuristic-pruning gate decision from the previous materialization
+   * pass. Runtime-only (never persisted). `null` when no candidates were
+   * evaluated on that pass.
+   */
+  lastHeuristicPruneDecision: HeuristicPruneDecision | null;
 
   // ── Message ID snapshot ────────────────────────────────────────────────────
   /** Persisted source-key → visible-ref aliases for model-facing compression refs. */

@@ -1,4 +1,4 @@
-import type { DcpState } from "../../types/state.js";
+import type { DcpState, HeuristicPruneDecision } from "../../types/state.js";
 import type { DcpConfig } from "../../types/config.js";
 import type { DcpMessage } from "../../types/message.js";
 import { stripDcpHallucinationsFromString } from "../refs/metadata.js";
@@ -223,17 +223,43 @@ function bucketedTurn(currentTurn: number, config: DcpConfig): number {
   return Math.floor(currentTurn / cadence) * cadence;
 }
 
+// Fixed tombstone strings that replace a pruned tool result's content. Defined
+// once so the heuristic-pruning net-savings gate can subtract their token cost
+// from each candidate's saved tokens (a tombstone is not free).
+const ERROR_TOMBSTONE_TEXT = "[Error output removed - tool failed more than N turns ago]";
+const OUTPUT_TOMBSTONE_TEXT =
+  "[Output removed to save context - information superseded or no longer needed]";
+const ERROR_TOMBSTONE_TOKENS = estimateTokens(ERROR_TOMBSTONE_TEXT);
+const OUTPUT_TOMBSTONE_TOKENS = estimateTokens(OUTPUT_TOMBSTONE_TEXT);
+
 /**
- * Apply deduplication: mark redundant tool outputs for pruning.
- * Mutates state.prunedToolIds.
+ * A tool result that is eligible to be tombstoned this pass, paired with the
+ * net tokens its removal would save (`toolResultTokens - tombstoneTokens`).
+ */
+interface PruneCandidate {
+  toolCallId: string;
+  netSaved: number;
+}
+
+function tombstoneTokenCost(isError: boolean): number {
+  return isError ? ERROR_TOMBSTONE_TOKENS : OUTPUT_TOMBSTONE_TOKENS;
+}
+
+/**
+ * Collect deduplication candidates: redundant tool outputs eligible for a
+ * tombstone this pass. Pure — does not mutate state.
  *
- * Only tombstones duplicate results that originated in a closed bucket
- * (turnIndex < bucketedTurn). Duplicates inside the currently-open bucket stay
- * fully rendered until the next bucket boundary, so additions to
+ * Only duplicate results that originated in a closed bucket
+ * (turnIndex < bucketedTurn) are returned. Duplicates inside the currently-open
+ * bucket stay fully rendered until the next bucket boundary, so additions to
  * `prunedToolIds` only happen at multiples of `pruneCadenceTurns`.
  */
-function applyDeduplication(messages: any[], state: DcpState, config: DcpConfig): void {
-  if (!config.strategies.deduplication.enabled) return;
+function collectDeduplicationCandidates(
+  messages: any[],
+  state: DcpState,
+  config: DcpConfig
+): PruneCandidate[] {
+  if (!config.strategies.deduplication.enabled) return [];
 
   const protectedTools = new Set([
     ...ALWAYS_PROTECTED_DEDUP,
@@ -263,6 +289,7 @@ function applyDeduplication(messages: any[], state: DcpState, config: DcpConfig)
 
   // For each fingerprint with duplicates, prune all but the last —
   // but only ones whose originating turn falls in a closed bucket.
+  const candidates: PruneCandidate[] = [];
   for (const [, ids] of fingerprintMap) {
     if (ids.length <= 1) continue;
     for (let i = 0; i < ids.length - 1; i++) {
@@ -270,28 +297,35 @@ function applyDeduplication(messages: any[], state: DcpState, config: DcpConfig)
       if (!record) continue;
       if (record.turnIndex >= bucket) continue;
       if (state.prunedToolIds.has(ids[i])) continue;
-      state.prunedToolIds.add(ids[i]);
-      state.totalPruneCount++;
-      state.pendingSave = true;
+      candidates.push({
+        toolCallId: ids[i],
+        netSaved: record.tokenEstimate - tombstoneTokenCost(record.isError),
+      });
     }
   }
+  return candidates;
 }
 
 /**
- * Apply error purging: mark old error tool outputs for pruning.
- * Mutates state.prunedToolIds.
+ * Collect error-purge candidates: old error tool outputs eligible for a
+ * tombstone this pass. Pure — does not mutate state.
  *
  * Age is measured against the bucketed turn, so eligibility flips only at
  * bucket boundaries (multiples of `pruneCadenceTurns`). With the default
  * cadence of 1 the behavior is identical to measuring against currentTurn.
  */
-function applyErrorPurging(messages: any[], state: DcpState, config: DcpConfig): void {
-  if (!config.strategies.purgeErrors.enabled) return;
+function collectErrorPurgeCandidates(
+  messages: any[],
+  state: DcpState,
+  config: DcpConfig
+): PruneCandidate[] {
+  if (!config.strategies.purgeErrors.enabled) return [];
 
   const protectedTools = new Set(config.strategies.purgeErrors.protectedTools ?? []);
   const turnsThreshold = config.strategies.purgeErrors.turns ?? 3;
   const bucket = bucketedTurn(state.currentTurn, config);
 
+  const candidates: PruneCandidate[] = [];
   for (const msg of messages) {
     if (msg.role !== "toolResult") continue;
     if (!msg.isError) continue;
@@ -304,11 +338,120 @@ function applyErrorPurging(messages: any[], state: DcpState, config: DcpConfig):
     if (state.prunedToolIds.has(msg.toolCallId)) continue;
 
     if (bucket - record.turnIndex >= turnsThreshold) {
-      state.prunedToolIds.add(msg.toolCallId);
-      state.totalPruneCount++;
-      state.pendingSave = true;
+      candidates.push({
+        toolCallId: msg.toolCallId,
+        netSaved: record.tokenEstimate - tombstoneTokenCost(true),
+      });
     }
   }
+  return candidates;
+}
+
+/**
+ * Whether the live effective context observed on the PREVIOUS `context` pass is
+ * in the red zone. Used to bypass the net-savings gate so heuristic pruning can
+ * reclaim space even when a flush would not otherwise clear the savings bar.
+ *
+ * `applyPruning` runs before the current pass computes effective context, so we
+ * read the prior-pass snapshot stashed on state. Replay and tests never set it,
+ * so the red zone defaults to `false` there (deterministic).
+ */
+function isHeuristicPruneRedZone(state: DcpState, config: DcpConfig): boolean {
+  const pct = state.lastEffectiveContextPercent;
+  const tokens = state.lastEffectiveContextTokens;
+  // No prior-pass signal at all (fresh state / replay): not in the red zone.
+  if ((pct === null || pct === undefined) && (tokens === null || tokens === undefined)) {
+    return false;
+  }
+  // percent and tokens are independent red-zone triggers (ORed by
+  // exceedsMaxContextLimit). A host that does not report a context window
+  // yields a null percent but a known token count, so the absolute-token red
+  // zone (compress.maxContextTokens) must still be able to fire. Pass 0 for a
+  // missing percent so only the token path can trip in that case.
+  return exceedsMaxContextLimit(pct ?? 0, config, tokens);
+}
+
+/**
+ * Gate and commit heuristic tombstones (dedup + error purge) for this pass.
+ * Mutates state.prunedToolIds / totalPruneCount / pendingSave.
+ *
+ * Two opt-in net-savings gates decide whether the prefix-cache break is worth
+ * it (mirroring Anthropic's `clear_at_least`):
+ *  - per-item (`minPruneItemSavedTokens`): drop candidates that don't
+ *    individually clear the bar (e.g. tiny 20-token outputs).
+ *  - batch (`minPruneBatchSavedTokens`): refuse to rewrite old context unless
+ *    the whole flush nets at least this many tokens.
+ *
+ * Both default to `0` (gates off → every eligible candidate commits, identical
+ * to the legacy unconditional behavior). Both are bypassed when the live
+ * effective context is in the red zone: under pressure we reclaim space and
+ * ignore cache efficiency.
+ */
+function commitHeuristicPruning(
+  messages: any[],
+  state: DcpState,
+  config: DcpConfig
+): HeuristicPruneDecision | null {
+  const dedup = collectDeduplicationCandidates(messages, state, config);
+  const errors = collectErrorPurgeCandidates(messages, state, config);
+  const collected = [...dedup, ...errors];
+  if (collected.length === 0) return null;
+
+  // Dedupe by toolCallId (a duplicated error result can appear in both lists);
+  // first occurrence wins, preserving dedup-before-error-purge precedence.
+  const candidates: PruneCandidate[] = [];
+  const seen = new Set<string>();
+  for (const candidate of collected) {
+    if (seen.has(candidate.toolCallId)) continue;
+    seen.add(candidate.toolCallId);
+    candidates.push(candidate);
+  }
+
+  const redZone = isHeuristicPruneRedZone(state, config);
+  const minItem = Math.max(0, Math.floor(config.strategies.minPruneItemSavedTokens ?? 0));
+  const minBatch = Math.max(0, Math.floor(config.strategies.minPruneBatchSavedTokens ?? 0));
+  const cadenceBucket = bucketedTurn(state.currentTurn, config);
+
+  // Per-item gate (opt-in, bypassed in the red zone).
+  const kept =
+    minItem > 0 && !redZone
+      ? candidates.filter((candidate) => candidate.netSaved >= minItem)
+      : candidates;
+  const batchSavedTokens = kept.reduce((sum, candidate) => sum + candidate.netSaved, 0);
+  const decision: HeuristicPruneDecision = {
+    dedupCandidates: dedup.length,
+    errorCandidates: errors.length,
+    uniqueCandidates: candidates.length,
+    keptAfterItemGate: kept.length,
+    droppedByItemGate: candidates.length - kept.length,
+    batchSavedTokens,
+    committed: 0,
+    cadenceBucket,
+    minItem,
+    minBatch,
+    heldByBatchGate: false,
+    redZone,
+  };
+  if (kept.length === 0) return decision;
+
+  // Batch gate (opt-in, bypassed in the red zone): hold the entire flush until
+  // a later pass when the accumulated net savings justify a single cache break.
+  if (minBatch > 0 && !redZone) {
+    if (batchSavedTokens < minBatch) {
+      decision.heldByBatchGate = true;
+      return decision;
+    }
+  }
+
+  for (const candidate of kept) {
+    if (state.prunedToolIds.has(candidate.toolCallId)) continue;
+    state.prunedToolIds.add(candidate.toolCallId);
+    state.totalPruneCount++;
+    state.pendingSave = true;
+    decision.committed++;
+  }
+
+  return decision;
 }
 
 /**
@@ -320,21 +463,12 @@ function applyToolOutputPruning(messages: any[], state: DcpState): void {
     if (msg.role !== "toolResult") continue;
     if (!state.prunedToolIds.has(msg.toolCallId)) continue;
 
-    if (msg.isError) {
-      msg.content = [
-        {
-          type: "text",
-          text: "[Error output removed - tool failed more than N turns ago]",
-        },
-      ];
-    } else {
-      msg.content = [
-        {
-          type: "text",
-          text: "[Output removed to save context - information superseded or no longer needed]",
-        },
-      ];
-    }
+    msg.content = [
+      {
+        type: "text",
+        text: msg.isError ? ERROR_TOMBSTONE_TEXT : OUTPUT_TOMBSTONE_TEXT,
+      },
+    ];
   }
 }
 
@@ -498,8 +632,7 @@ export function finalizeMaterializedMessages(
   stripGeneratedDcpHallucinations(msgs);
   state.currentTurn = countLogicalTurns(options.turnMessages ?? msgs);
   repairOrphanedToolPairs(msgs);
-  applyDeduplication(msgs, state, config);
-  applyErrorPurging(msgs, state, config);
+  state.lastHeuristicPruneDecision = commitHeuristicPruning(msgs, state, config);
   applyToolOutputPruning(msgs, state);
   injectMessageIds(msgs, state);
 

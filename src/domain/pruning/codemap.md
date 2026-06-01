@@ -20,6 +20,10 @@ Apply all active runtime pruning to the message array on each `context` pass: co
 
 Tombstoning decisions (dedup + error purge) are bucketed against `floor(currentTurn / pruneCadenceTurns) * pruneCadenceTurns`. With default cadence `1` this is per-turn; higher values batch transitions so at most one prefix-cache break fires per N turns. The gate is pure and stateless — reloads cannot produce a spurious flush.
 
+### Min net-savings gating
+
+`collectDeduplicationCandidates` / `collectErrorPurgeCandidates` produce `PruneCandidate{toolCallId, netSaved}` (where `netSaved = record.tokenEstimate - tombstoneTokens`); `commitHeuristicPruning` then applies the cadence-collected candidates through two opt-in gates before adding to `prunedToolIds`: per-item (`minPruneItemSavedTokens`, drop tiny outputs) and batch (`minPruneBatchSavedTokens`, hold the whole flush until it clears the bar). Both default `0` (off → legacy unconditional commit) and are pure functions of the transcript. The red-zone override (`state.lastEffectiveContextPercent`/`lastEffectiveContextTokens` from the previous pass exceeding `compress.maxContextPercent`/`maxContextTokens`) bypasses both savings gates. The red-zone signal is live-only — replay never sets it, so determinism holds.
+
 ### Logical turns
 
 One standalone visible message = one turn. One assistant tool-batch + matching tool results = one turn. Used for nudge debounce, error-purge age, and hot-tail protection.

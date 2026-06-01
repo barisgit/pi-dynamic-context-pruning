@@ -8,3 +8,6 @@ coverage/
 
 # Transient subagent QA output
 qa-artifacts/
+
+# Generated DCP eval/correlation run output (keep raw captures + reports out of git)
+research/eval-runs/
