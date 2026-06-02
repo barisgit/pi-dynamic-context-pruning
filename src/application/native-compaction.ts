@@ -112,11 +112,25 @@ export function computeDcpHiddenCoverage(
 ): { ratio: number; hiddenMessageCount: number; coveredHiddenCount: number } {
   const records = buildBranchMessageRecords(branchEntries);
   const firstKeptBranchIndex = resolveFirstKeptBranchIndex(branchEntries, firstKeptEntryId);
+  // Lower-bound the hidden set at the live render-window start (the latest
+  // PRIOR compaction's firstKeptEntryId). Entries before it were already hidden
+  // by that compaction and pi no longer renders them, so this new compaction is
+  // not hiding them again. Without this bound the denominator counts the entire
+  // on-disk lineage, so in an already-compacted session the ratio collapses
+  // (e.g. 8/2187) below minHiddenCoverageRatio and pi's LLM summarizer runs
+  // instead of DCP — even though the live window is ~96% DCP-covered.
+  const windowStartBranchIndex = resolveLiveWindowStartBranchIndex(branchEntries);
   const snapshot = buildTranscriptSnapshot(records.map((record) => record.message));
   const hiddenKeys = new Set<string>();
   for (const item of snapshot.sourceItems) {
     const rec = records[item.ordinal];
-    if (rec && rec.branchIndex < firstKeptBranchIndex) hiddenKeys.add(item.key);
+    if (
+      rec &&
+      rec.branchIndex >= windowStartBranchIndex &&
+      rec.branchIndex < firstKeptBranchIndex
+    ) {
+      hiddenKeys.add(item.key);
+    }
   }
   const hiddenMessageCount = hiddenKeys.size;
   if (hiddenMessageCount === 0) {
@@ -215,6 +229,29 @@ function resolveFirstKeptBranchIndex(
 ): number {
   const index = branchEntries.findIndex((entry) => entry.id === firstKeptEntryId);
   return index >= 0 ? index : branchEntries.length;
+}
+
+/**
+ * Branch index where the live (currently TUI-rendered) window begins: the
+ * position of the latest EXISTING compaction's `firstKeptEntryId`. Mirrors pi's
+ * `buildSessionContext`, which renders only from the latest compaction's
+ * `firstKeptEntryId` onward. Entries before it remain on disk for lineage but
+ * are not rendered, so they must be excluded from both the hidden-coverage
+ * denominator and raw-excerpt embedding. Returns 0 when the branch has no prior
+ * compaction (the whole branch is the live window) or the boundary entry cannot
+ * be resolved (conservative: count from the start).
+ */
+function resolveLiveWindowStartBranchIndex(branchEntries: SessionEntry[]): number {
+  let latestCompaction: { firstKeptEntryId?: unknown } | null = null;
+  for (const entry of branchEntries) {
+    if ((entry as { type?: unknown }).type === "compaction") {
+      latestCompaction = entry as { firstKeptEntryId?: unknown };
+    }
+  }
+  if (!latestCompaction || typeof latestCompaction.firstKeptEntryId !== "string") return 0;
+  const firstKeptEntryId = latestCompaction.firstKeptEntryId;
+  const index = branchEntries.findIndex((entry) => entry.id === firstKeptEntryId);
+  return index >= 0 ? index : 0;
 }
 
 function resolveNativeFirstKeptBranchIndex(
@@ -340,6 +377,7 @@ function formatMessageLabel(record: BranchMessageRecord): string {
 function buildRawExcerpts(
   records: BranchMessageRecord[],
   snapshot: ReturnType<typeof buildTranscriptSnapshot>,
+  windowStartBranchIndex: number,
   firstKeptBranchIndex: number,
   coveredSourceKeys: Set<string>
 ): RawExcerptResult {
@@ -352,6 +390,7 @@ function buildRawExcerpts(
   for (const sourceItem of snapshot.sourceItems) {
     const record = records[sourceItem.ordinal];
     if (!record || record.branchIndex >= firstKeptBranchIndex) continue;
+    if (record.branchIndex < windowStartBranchIndex) continue;
     if (coveredSourceKeys.has(sourceItem.key)) continue;
 
     uncoveredCount++;
@@ -566,9 +605,20 @@ export function buildDcpNativeCompactionResult({
     preparation.firstKeptEntryId
   );
   const firstKeptEntryId = branchEntries[firstKeptBranchIndex]?.id ?? preparation.firstKeptEntryId;
+  // Window the hidden set at the live render-window start, consistent with the
+  // coverage gate: only messages newly hidden by THIS compaction count, not
+  // already-compacted history still resident on disk.
+  const windowStartBranchIndex = resolveLiveWindowStartBranchIndex(branchEntries);
   const hiddenSourceKeys = new Set(
     snapshot.sourceItems
-      .filter((item) => records[item.ordinal]?.branchIndex < firstKeptBranchIndex)
+      .filter((item) => {
+        const branchIndex = records[item.ordinal]?.branchIndex;
+        return (
+          branchIndex !== undefined &&
+          branchIndex >= windowStartBranchIndex &&
+          branchIndex < firstKeptBranchIndex
+        );
+      })
       .map((item) => item.key)
   );
   const hiddenMessageCount = hiddenSourceKeys.size;
@@ -576,6 +626,7 @@ export function buildDcpNativeCompactionResult({
   const rawExcerpts = buildRawExcerpts(
     records,
     snapshot,
+    windowStartBranchIndex,
     firstKeptBranchIndex,
     represented.coveredSourceKeys
   );

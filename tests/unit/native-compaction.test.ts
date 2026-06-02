@@ -25,6 +25,22 @@ function messageEntry(id: string, message: any, parentId: string | null = null):
   };
 }
 
+function compactionEntry(
+  id: string,
+  firstKeptEntryId: string,
+  parentId: string,
+  timestamp: number
+): any {
+  return {
+    type: "compaction",
+    id,
+    parentId,
+    timestamp: new Date(timestamp).toISOString(),
+    summary: "prior compaction summary",
+    firstKeptEntryId,
+  };
+}
+
 describe("DCP native pi compaction bridge", () => {
   test("builds a pi compaction result from hidden DCP blocks and bounded raw gaps", () => {
     const messages: any[] = [
@@ -787,6 +803,74 @@ describe("DCP native pi compaction bridge", () => {
       }
     );
     expect(result).toBeUndefined();
+  });
+
+  test("computeDcpHiddenCoverage windows the hidden set at the prior compaction, not full lineage", () => {
+    // 10 messages already hidden by a PRIOR compaction (resident on disk, no
+    // longer rendered), then the prior compaction entry, then a small live
+    // window of 3 messages, then the tail pi proposes to keep.
+    const preCompaction: any[] = [];
+    for (let i = 0; i < 10; i++) {
+      preCompaction.push({
+        role: "user",
+        content: [{ type: "text", text: `ancient ${i}` }],
+        timestamp: 1000 + i,
+      });
+    }
+    const liveMessages: any[] = [
+      { role: "user", content: [{ type: "text", text: "live 0" }], timestamp: 1020 },
+      { role: "user", content: [{ type: "text", text: "live 1" }], timestamp: 1021 },
+      { role: "user", content: [{ type: "text", text: "live 2" }], timestamp: 1022 },
+    ];
+    const tailMessage = {
+      role: "user",
+      content: [{ type: "text", text: "tail" }],
+      timestamp: 2000,
+    };
+
+    // A DCP block covering the live window only (timestamp fallback path: its
+    // exact coveredSourceKeys were minted over a small array, so they cannot
+    // match the re-ordinated full-lineage snapshot keys).
+    const artifacts = buildCompressionArtifactsForRange(liveMessages, makeState(), 1020, 1022);
+    const block: CompressionBlock = {
+      id: 11,
+      topic: "Live window",
+      summary: "Covers the live messages.",
+      startTimestamp: 1020,
+      endTimestamp: 1022,
+      anchorTimestamp: 1023,
+      startSourceKey: artifacts.metadata.coveredSourceKeys[0],
+      endSourceKey: artifacts.metadata.coveredSourceKeys.at(-1),
+      anchorSourceKey: artifacts.metadata.coveredSourceKeys.at(-1) ?? "",
+      active: true,
+      summaryTokenEstimate: 5,
+      savedTokenEstimate: 20,
+      createdAt: 50,
+      metadata: artifacts.metadata,
+    };
+    const state = makeState([block]);
+
+    const branchEntries = [
+      ...preCompaction.map((m, i) => messageEntry(`ancient-${i}`, m)),
+      compactionEntry("prior-compaction", "live-0", "ancient-9", 1015),
+      messageEntry("live-0", liveMessages[0], "prior-compaction"),
+      messageEntry("live-1", liveMessages[1], "live-0"),
+      messageEntry("live-2", liveMessages[2], "live-1"),
+      messageEntry("tail-entry", tailMessage, "live-2"),
+    ];
+
+    // pi's NEW proposed cut is the tail; the live window to be hidden is the 3
+    // messages between the prior compaction's firstKeptEntryId and the new cut.
+    const coverage = computeDcpHiddenCoverage(state, branchEntries, "tail-entry");
+
+    // Windowed: only the 3 live messages count, fully covered -> gate passes.
+    expect(coverage.hiddenMessageCount).toBe(3);
+    expect(coverage.ratio).toBe(1);
+    // Without the lower bound this would have counted ~13 lineage items at
+    // ratio ~0.23, below the default minHiddenCoverageRatio (pi summarizer).
+    expect(coverage.ratio).toBeGreaterThanOrEqual(
+      makeConfig().nativeCompaction.minHiddenCoverageRatio
+    );
   });
 
   test("buildDcpFallbackCustomInstructions emits authoritative block sections", () => {
