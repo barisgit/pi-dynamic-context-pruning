@@ -55,16 +55,19 @@ export interface DcpConfig {
      * Minimum net tokens a single dedup/error tombstone must save before it is
      * allowed to break the prefix cache. `netSaved = toolResultTokens -
      * tombstoneTokens`. Candidates below this are kept fully rendered. `0`
-     * (default) disables the per-item gate, preserving legacy behavior.
+     * disables the per-item gate (legacy behavior). Shipped default `25` drops
+     * net-negative and trivially-small tombstones that bust cache for no gain.
      */
     minPruneItemSavedTokens: number;
     /**
      * Minimum aggregate net tokens an eligible tombstone *batch* must save
      * before any of it is committed in a given context pass. Mirrors
      * Anthropic's `clear_at_least`: don't rewrite old context unless the whole
-     * flush is worth the single prefix-cache break. `0` (default) disables the
-     * batch gate. Bypassed when the live effective context is in the red zone
-     * (see `compress.maxContextPercent` / `compress.maxContextTokens`).
+     * flush is worth the single prefix-cache break. `0` disables the batch gate
+     * (legacy behavior). Shipped default `100` holds trivial flushes until they
+     * accumulate a worthwhile saving. Bypassed when the live effective context
+     * is in the red zone (see `compress.maxContextPercent` /
+     * `compress.maxContextTokens`).
      */
     minPruneBatchSavedTokens: number;
     deduplication: {
@@ -75,6 +78,13 @@ export interface DcpConfig {
       enabled: boolean;
       turns: number; // prune error inputs after N logical turns (default: 4)
       protectedTools: string[];
+    };
+    clearStaleResults: {
+      enabled: boolean;
+      /** Skip successful results smaller than this to avoid net-negative tombstones. */
+      minResultTokens: number;
+      /** Tool names whose old successful results may be cleared; omitted names stay protected. */
+      clearTools: string[];
     };
   };
   protectedFilePatterns: string[];

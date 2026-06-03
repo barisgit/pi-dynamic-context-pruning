@@ -37,8 +37,8 @@ const DEFAULT_CONFIG: DcpConfig = {
   },
   strategies: {
     pruneCadenceTurns: 1,
-    minPruneItemSavedTokens: 0,
-    minPruneBatchSavedTokens: 0,
+    minPruneItemSavedTokens: 25,
+    minPruneBatchSavedTokens: 100,
     deduplication: {
       enabled: true,
       protectedTools: [],
@@ -47,6 +47,11 @@ const DEFAULT_CONFIG: DcpConfig = {
       enabled: true,
       turns: 4,
       protectedTools: [],
+    },
+    clearStaleResults: {
+      enabled: true,
+      minResultTokens: 300,
+      clearTools: ["Read", "Bash", "Grep", "read", "bash", "grep"],
     },
   },
   protectedFilePatterns: [],
@@ -98,13 +103,21 @@ const DEFAULT_CONFIG_FILE_CONTENT = `{
   //   "pruneCadenceTurns": 1,
   //   // Minimum net tokens saved before a dedup/error tombstone is allowed to
   //   // break the prefix cache. Per-item skips tiny outputs; batch refuses to
-  //   // rewrite old context unless the whole flush clears the bar. 0 = off.
+  //   // rewrite old context unless the whole flush clears the bar. 0 = off;
+  //   // shipped defaults 25 / 100 drop net-negative and trivial tombstones.
   //   // Both gates are bypassed when effective context enters the red zone
   //   // (compress.maxContextPercent / maxContextTokens).
-  //   "minPruneItemSavedTokens": 0,
-  //   "minPruneBatchSavedTokens": 0,
+  //   "minPruneItemSavedTokens": 25,
+  //   "minPruneBatchSavedTokens": 100,
   //   "deduplication": { "enabled": true, "protectedTools": [] },
-  //   "purgeErrors": { "enabled": true, "turns": 4, "protectedTools": [] }
+  //   "purgeErrors": { "enabled": true, "turns": 4, "protectedTools": [] },
+  //   // Clear old large successful results only for listed tool names, and
+  //   // only once prior-pass context reaches the cleanup band.
+  //   "clearStaleResults": {
+  //     "enabled": true,
+  //     "minResultTokens": 300,
+  //     "clearTools": ["Read", "Bash", "Grep", "read", "bash", "grep"]
+  //   }
   // },
   // "protectedFilePatterns": [],
   // "pruneNotification": "detailed"
@@ -119,10 +132,23 @@ const LEGACY_GLOBAL_CONFIG_PATH = path.join(os.homedir(), ".config", "pi", "dcp.
 // ---------------------------------------------------------------------------
 
 /**
- * Recursively merge `override` into `base`. Arrays are union-merged (deduped).
+ * Array config keys that REPLACE rather than union-merge on override.
+ *
+ * Most arrays (e.g. `protectedTools`, `protectedFilePatterns`) are protect-lists
+ * where union is safe: a later layer can only ADD protection. `clearTools` is
+ * the opposite — a safety allowlist of tools whose output may be cleared — so a
+ * user/project layer must be able to NARROW it (the conservative direction).
+ * Union-merging it would make narrowing impossible (defaults would always leak
+ * back in), so it replaces instead.
+ */
+const REPLACE_MERGE_ARRAY_KEYS = new Set(["clearTools"]);
+
+/**
+ * Recursively merge `override` into `base`. Arrays are union-merged (deduped)
+ * except for keys in `REPLACE_MERGE_ARRAY_KEYS`, which replace wholesale.
  * Returns a new object; does not mutate inputs.
  */
-function deepMerge<T>(base: T, override: Partial<T>): T {
+export function deepMerge<T>(base: T, override: Partial<T>): T {
   if (override === null || override === undefined) return base;
   if (typeof base !== "object" || typeof override !== "object") {
     return override as T;
@@ -135,9 +161,14 @@ function deepMerge<T>(base: T, override: Partial<T>): T {
     const overVal = (override as Record<string, unknown>)[key];
 
     if (Array.isArray(baseVal) && Array.isArray(overVal)) {
-      // Union merge: combine and deduplicate by value
-      const combined = [...baseVal, ...overVal];
-      result[key] = [...new Set(combined)];
+      if (REPLACE_MERGE_ARRAY_KEYS.has(key)) {
+        // Replace wholesale so a later layer can narrow a safety allowlist.
+        result[key] = [...overVal];
+      } else {
+        // Union merge: combine and deduplicate by value
+        const combined = [...baseVal, ...overVal];
+        result[key] = [...new Set(combined)];
+      }
     } else if (
       overVal !== null &&
       typeof overVal === "object" &&

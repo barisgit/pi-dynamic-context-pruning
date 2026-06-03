@@ -239,6 +239,8 @@ const OUTPUT_TOMBSTONE_TOKENS = estimateTokens(OUTPUT_TOMBSTONE_TEXT);
 interface PruneCandidate {
   toolCallId: string;
   netSaved: number;
+  strategy: "dedup" | "error" | "stale";
+  turnIndex: number;
 }
 
 function tombstoneTokenCost(isError: boolean): number {
@@ -300,6 +302,8 @@ function collectDeduplicationCandidates(
       candidates.push({
         toolCallId: ids[i],
         netSaved: record.tokenEstimate - tombstoneTokenCost(record.isError),
+        strategy: "dedup",
+        turnIndex: record.turnIndex,
       });
     }
   }
@@ -341,8 +345,69 @@ function collectErrorPurgeCandidates(
       candidates.push({
         toolCallId: msg.toolCallId,
         netSaved: record.tokenEstimate - tombstoneTokenCost(true),
+        strategy: "error",
+        turnIndex: record.turnIndex,
       });
     }
+  }
+  return candidates;
+}
+/**
+ * Whether the live effective context observed on the PREVIOUS `context` pass is
+ * in the cleanup band. Stale-result clearing is intentionally live-only: replay
+ * never sets the prior-pass context pressure signal, so it returns false there.
+ */
+function isHeuristicPruneCleanupZone(state: DcpState, config: DcpConfig): boolean {
+  const pct = state.lastEffectiveContextPercent;
+  const tokens = state.lastEffectiveContextTokens;
+  if (pct !== null && pct !== undefined && pct >= config.compress.minContextPercent) return true;
+  const minTokens = config.compress.minContextTokens;
+  return (
+    tokens !== null && tokens !== undefined && typeof minTokens === "number" && tokens >= minTokens
+  );
+}
+
+/**
+ * Collect stale-result candidates: old large successful tool outputs eligible
+ * for a tombstone this pass. Pure — does not mutate state.
+ *
+ * Unlike dedup/error purge, this strategy only activates in the live cleanup
+ * band and skips the protected recent tail so recent successful work remains
+ * fully rendered.
+ */
+function collectStaleResultCandidates(
+  messages: any[],
+  state: DcpState,
+  config: DcpConfig
+): PruneCandidate[] {
+  const staleConfig = config.strategies.clearStaleResults;
+  if (!staleConfig.enabled) return [];
+  if (!isHeuristicPruneCleanupZone(state, config)) return [];
+
+  const clearTools = new Set(staleConfig.clearTools ?? []);
+  const minResultTokens = Math.max(0, Math.floor(staleConfig.minResultTokens ?? 0));
+  const bucket = bucketedTurn(state.currentTurn, config);
+  const protectedTailStart = Math.max(0, state.currentTurn - config.compress.protectRecentTurns);
+
+  const candidates: PruneCandidate[] = [];
+  for (const msg of messages) {
+    if (msg.role !== "toolResult" && msg.role !== "bashExecution") continue;
+
+    const record = state.toolCalls.get(msg.toolCallId);
+    if (!record) continue;
+    if (record.isError) continue;
+    if (!clearTools.has(record.toolName)) continue;
+    if (record.tokenEstimate < minResultTokens) continue;
+    if (record.turnIndex >= bucket) continue;
+    if (record.turnIndex >= protectedTailStart) continue;
+    if (state.prunedToolIds.has(msg.toolCallId)) continue;
+
+    candidates.push({
+      toolCallId: msg.toolCallId,
+      netSaved: record.tokenEstimate - tombstoneTokenCost(false),
+      strategy: "stale",
+      turnIndex: record.turnIndex,
+    });
   }
   return candidates;
 }
@@ -372,7 +437,7 @@ function isHeuristicPruneRedZone(state: DcpState, config: DcpConfig): boolean {
 }
 
 /**
- * Gate and commit heuristic tombstones (dedup + error purge) for this pass.
+ * Gate and commit heuristic tombstones (dedup + error purge + stale results) for this pass.
  * Mutates state.prunedToolIds / totalPruneCount / pendingSave.
  *
  * Two opt-in net-savings gates decide whether the prefix-cache break is worth
@@ -394,7 +459,8 @@ function commitHeuristicPruning(
 ): HeuristicPruneDecision | null {
   const dedup = collectDeduplicationCandidates(messages, state, config);
   const errors = collectErrorPurgeCandidates(messages, state, config);
-  const collected = [...dedup, ...errors];
+  const stale = collectStaleResultCandidates(messages, state, config);
+  const collected = [...dedup, ...errors, ...stale];
   if (collected.length === 0) return null;
 
   // Dedupe by toolCallId (a duplicated error result can appear in both lists);
@@ -421,11 +487,14 @@ function commitHeuristicPruning(
   const decision: HeuristicPruneDecision = {
     dedupCandidates: dedup.length,
     errorCandidates: errors.length,
+    staleCandidates: stale.length,
     uniqueCandidates: candidates.length,
     keptAfterItemGate: kept.length,
     droppedByItemGate: candidates.length - kept.length,
     batchSavedTokens,
     committed: 0,
+    committedByStrategy: { dedup: 0, error: 0, stale: 0 },
+    oldestMutatedDepth: 0,
     cadenceBucket,
     minItem,
     minBatch,
@@ -443,12 +512,22 @@ function commitHeuristicPruning(
     }
   }
 
+  let oldestCommittedTurn: number | null = null;
   for (const candidate of kept) {
     if (state.prunedToolIds.has(candidate.toolCallId)) continue;
     state.prunedToolIds.add(candidate.toolCallId);
     state.totalPruneCount++;
     state.pendingSave = true;
     decision.committed++;
+    decision.committedByStrategy[candidate.strategy]++;
+    oldestCommittedTurn =
+      oldestCommittedTurn === null
+        ? candidate.turnIndex
+        : Math.min(oldestCommittedTurn, candidate.turnIndex);
+  }
+
+  if (oldestCommittedTurn !== null) {
+    decision.oldestMutatedDepth = Math.max(0, state.currentTurn - oldestCommittedTurn);
   }
 
   return decision;
@@ -456,11 +535,11 @@ function commitHeuristicPruning(
 
 /**
  * Apply explicit tool output pruning from state.prunedToolIds.
- * Replaces content of matching toolResult messages in place.
+ * Replaces content of matching toolResult/bashExecution messages in place.
  */
 function applyToolOutputPruning(messages: any[], state: DcpState): void {
   for (const msg of messages) {
-    if (msg.role !== "toolResult") continue;
+    if (msg.role !== "toolResult" && msg.role !== "bashExecution") continue;
     if (!state.prunedToolIds.has(msg.toolCallId)) continue;
 
     msg.content = [
@@ -469,6 +548,29 @@ function applyToolOutputPruning(messages: any[], state: DcpState): void {
         text: msg.isError ? ERROR_TOMBSTONE_TEXT : OUTPUT_TOMBSTONE_TEXT,
       },
     ];
+  }
+}
+
+/**
+ * Drop tombstone ids whose result message is no longer present after
+ * materialization. Runs after tombstone rendering so still-present ids are
+ * applied before stale ids folded away by compression/native compaction are GC'd.
+ */
+function gcPrunedToolIds(messages: any[], state: DcpState): void {
+  if (state.prunedToolIds.size === 0) return;
+
+  const liveToolCallIds = new Set<string>();
+  for (const msg of messages) {
+    if (msg.role !== "toolResult" && msg.role !== "bashExecution") continue;
+    if (typeof msg.toolCallId === "string") {
+      liveToolCallIds.add(msg.toolCallId);
+    }
+  }
+
+  for (const toolCallId of state.prunedToolIds) {
+    if (liveToolCallIds.has(toolCallId)) continue;
+    state.prunedToolIds.delete(toolCallId);
+    state.pendingSave = true;
   }
 }
 
@@ -634,6 +736,7 @@ export function finalizeMaterializedMessages(
   repairOrphanedToolPairs(msgs);
   state.lastHeuristicPruneDecision = commitHeuristicPruning(msgs, state, config);
   applyToolOutputPruning(msgs, state);
+  gcPrunedToolIds(msgs, state);
   injectMessageIds(msgs, state);
 
   return msgs;

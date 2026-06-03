@@ -214,11 +214,14 @@ export type PersistedDcpState =
 export interface HeuristicPruneDecision {
   dedupCandidates: number;
   errorCandidates: number;
+  staleCandidates: number;
   uniqueCandidates: number;
   keptAfterItemGate: number;
   droppedByItemGate: number;
   batchSavedTokens: number;
   committed: number;
+  committedByStrategy: { dedup: number; error: number; stale: number };
+  oldestMutatedDepth: number;
   cadenceBucket: number;
   minItem: number;
   minBatch: number;
