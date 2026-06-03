@@ -15,6 +15,14 @@ import {
 } from "../helpers/dcp-test-utils.js";
 import type { CompressionBlock } from "../../src/types/state.js";
 
+async function flushMacrotasks(): Promise<void> {
+  // The auto-resume prompt is posted via setTimeout(..., 0) so it runs after the
+  // awaited session_compact handler chain unwinds (mirroring pi's own deferred
+  // post-compaction continue()). Yield one macrotask so the deferred
+  // pi.sendUserMessage has fired before assertions inspect sentUserMessages.
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 function messageEntry(id: string, message: any, parentId: string | null = null): any {
   return {
     type: "message",
@@ -371,7 +379,9 @@ describe("DCP native pi compaction bridge", () => {
       ctx
     );
     // The resume prompt is posted from session_compact (reason "auto"), only
-    // after compaction has actually committed.
+    // after compaction has actually committed. It is deferred a macrotask so the
+    // kick escapes the awaited handler chain before re-entering agent.prompt().
+    await flushMacrotasks();
     expect(sentUserMessages.length).toBe(1);
     expect(sentUserMessages[0]).toContain("[dcp-auto-compaction]");
     expect(hasPendingDcpAutoNativeCompaction(state)).toBe(false);
@@ -551,7 +561,17 @@ describe("DCP native pi compaction bridge", () => {
     expect(sentUserMessages.length).toBe(0);
   });
 
-  test("auto native compaction skips resume prompt when the user has pending input", async () => {
+  test("auto native compaction still kicks a turn when the user has pending input (regression: steering message stall)", async () => {
+    // Regression for the "session just stopped" bug. The user typed a steering
+    // message DURING compaction. The extension-driven ctx.compact() path
+    // (AgentSession.compact) swaps the message buffer and returns idle WITHOUT
+    // draining the steering queue or kicking a turn, and the agent run loop
+    // (the only automatic steering drain) is not running once compaction
+    // finishes. So the queued steering message is stranded unless DCP starts a
+    // turn. The previous gate suppressed the resume prompt on
+    // hasPendingMessages(), which is exactly the case that strands the message.
+    // The fix always posts the resume prompt on the auto path; starting a run
+    // lets the run's initial steering poll deliver the queued message too.
     const messages: any[] = [
       { role: "user", content: [{ type: "text", text: "covered" }], timestamp: 1000 },
       { role: "user", content: [{ type: "text", text: "tail" }], timestamp: 2000 },
@@ -593,9 +613,10 @@ describe("DCP native pi compaction bridge", () => {
       compact: (options: any) => {
         compactCompleteCb = options.onComplete;
       },
-      // Simulate the user typing something while compaction was running. Pi
-      // will deliver their input on the next turn, so DCP must not stack a
-      // redundant continuation prompt on top of it.
+      // Simulate the user typing a steering message while compaction was
+      // running. pi does NOT auto-deliver it on this compaction path, so DCP
+      // must still kick a turn; the started run's steering poll then delivers
+      // the queued message alongside the resume prompt.
       hasPendingMessages: () => true,
       sessionManager: {
         getSessionId: () => "s",
@@ -614,9 +635,9 @@ describe("DCP native pi compaction bridge", () => {
     if (compactCompleteCb) compactCompleteCb({ firstKeptEntryId: "entry-tail" });
     await turnEndPromise;
 
-    // The pending-input gate now lives in session_compact, where the resume
-    // prompt is posted. Drive a committed auto compaction and confirm the
-    // prompt is suppressed because the user already has input queued.
+    // Drive a committed auto compaction. The resume prompt is posted from
+    // session_compact regardless of pending input — the kick is what wakes the
+    // session so the queued steering message is delivered instead of stranded.
     const sessionCompact = handlers.get("session_compact");
     await sessionCompact(
       {
@@ -641,7 +662,12 @@ describe("DCP native pi compaction bridge", () => {
       ctx
     );
 
-    expect(sentUserMessages.length).toBe(0);
+    // The kick is deferred a macrotask; flush it, then assert the resume prompt
+    // was posted DESPITE pending input — this is what wakes the session so the
+    // queued steering message is delivered instead of stranded.
+    await flushMacrotasks();
+    expect(sentUserMessages.length).toBe(1);
+    expect(sentUserMessages[0]).toContain("[dcp-auto-compaction]");
   });
 
   test("manual /dcp compact does not auto-send a resume prompt", async () => {
@@ -729,6 +755,9 @@ describe("DCP native pi compaction bridge", () => {
       ctx
     );
 
+    // command-reason compaction must not post a resume prompt even after the
+    // deferred kick window elapses.
+    await flushMacrotasks();
     expect(sentUserMessages.length).toBe(0);
   });
 

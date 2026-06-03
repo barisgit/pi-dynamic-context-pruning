@@ -826,24 +826,46 @@ export function registerDcpNativeCompactionBridge(
     //   - reason === "auto": manual `/dcp compact` ("command") and host-driven
     //     ("host") compactions must NOT auto-resume; only the post-`compress`
     //     auto path should continue the interrupted task on its own.
-    //   - !hasPendingMessages(): if the user typed during compaction, pi will
-    //     deliver their input next turn, so a stacked resume prompt is noise.
     // The cancel/error path never reaches `session_compact` (no entry is
     // committed), so it inherently posts no prompt.
-    if (details.reason === "auto" && !ctx.hasPendingMessages()) {
-      try {
-        pi.sendUserMessage(
-          "[dcp-auto-compaction] Session was just compacted to free context. Continue with the task you were working on, using the compaction summary and active DCP blocks as ground truth for prior work."
-        );
-        appendDebugLog(config, "native_compaction_auto_resume_sent", {
-          ...buildSessionDebugPayload(ctx.sessionManager),
-        });
-      } catch (error) {
-        appendDebugLog(config, "native_compaction_auto_resume_failed", {
-          ...buildSessionDebugPayload(ctx.sessionManager),
-          error: error instanceof Error ? error.message : String(error),
-        });
-      }
+    //
+    // We intentionally do NOT gate on `ctx.hasPendingMessages()`. The earlier
+    // assumption was that, if the user typed during compaction, pi would
+    // deliver their input on the next turn and a stacked resume prompt would be
+    // noise. That is false for THIS compaction path: `ctx.compact()` routes
+    // through `AgentSession.compact()`, which swaps `agent.state.messages` and
+    // returns idle WITHOUT draining the steering/follow-up queues and WITHOUT
+    // kicking a turn. The only automatic steering drain lives inside the agent
+    // run loop, which is not running once compaction finishes. (pi's OWN
+    // auto-compaction kicks `agent.continue()` for exactly this reason, but
+    // that kick does not exist on the extension-driven `compact()` path.) So a
+    // steering message queued during compaction is stranded with no turn to
+    // deliver it — the session just stops. Always posting the resume prompt on
+    // the auto path starts a fresh run; that run's initial steering poll drains
+    // the queued message and delivers it alongside the resume prompt.
+    if (details.reason === "auto") {
+      // Defer the kick to a fresh macrotask. `session_compact` is awaited by
+      // `AgentSession.compact()` BEFORE its `finally { _reconnectToAgent() }`,
+      // so starting a turn synchronously here would re-enter `agent.prompt()`
+      // while compaction is still mid-cleanup (risking a run whose messages
+      // bypass the session manager). pi defers its own post-compaction
+      // `continue()` via setTimeout "to break out of event handler chain" for
+      // the same reason; we mirror that here.
+      setTimeout(() => {
+        try {
+          pi.sendUserMessage(
+            "[dcp-auto-compaction] Session was just compacted to free context. Continue with the task you were working on, using the compaction summary and active DCP blocks as ground truth for prior work."
+          );
+          appendDebugLog(config, "native_compaction_auto_resume_sent", {
+            ...buildSessionDebugPayload(ctx.sessionManager),
+          });
+        } catch (error) {
+          appendDebugLog(config, "native_compaction_auto_resume_failed", {
+            ...buildSessionDebugPayload(ctx.sessionManager),
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }, 0);
     }
   });
 
