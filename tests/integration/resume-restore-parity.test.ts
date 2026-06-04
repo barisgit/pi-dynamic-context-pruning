@@ -238,4 +238,150 @@ describe("resume restore parity", () => {
     expect(restored.lastCompressTurn).toBe(7);
     expect(restored.lifetimeTokensSavedRealized).toBe(4321);
   });
+
+  test("mid-run restore retains a live unsaved block instead of dropping it", () => {
+    // Regression: pi can emit `session_start` / `session_tree` mid-run without a
+    // matching shutdown. `compress` had just created a block but its disk flush
+    // had not landed yet (no dcp-state entry on the branch). The old restore
+    // called `resetState()` then found no snapshot, silently discarding a live
+    // ~140k-token block. The `state.pendingSave` guard must make restore a no-op
+    // here so the unsaved block survives until the pending flush persists it.
+    const config = makeConfig();
+    const block: CompressionBlock = {
+      id: 1,
+      topic: "live unsaved range",
+      summary: "b1 summary created this turn, not yet flushed",
+      startTimestamp: 1000,
+      endTimestamp: 3000,
+      anchorTimestamp: 4000,
+      startSourceKey: "src:1",
+      endSourceKey: "src:3",
+      anchorSourceKey: "src:4",
+      active: true,
+      summaryTokenEstimate: 25,
+      savedTokenEstimate: 140_000,
+      createdAt: 5000,
+      compressCallId: "call-compress-live",
+      activityLogVersion: 1,
+      activityLog: [{ kind: "user_excerpt", text: "live excerpt" }],
+      metadata: {
+        coveredSourceKeys: ["src:1", "src:2", "src:3"],
+        coveredSpanKeys: ["span:1", "span:2", "span:3"],
+        coveredArtifactRefs: [],
+        coveredToolIds: [],
+        supersededBlockIds: [],
+        fileReadStats: [],
+        fileWriteStats: [],
+        commandStats: [],
+      },
+    };
+    const live = makeState([block]);
+    live.nextBlockId = 2;
+    live.tokensSaved = 140_000;
+    live.currentTurn = 77;
+    live.lastCompressTurn = 77;
+    // The defining condition of the incident: a material mutation is pending
+    // because the inline/`agent_end` flush has not run yet.
+    live.pendingSave = true;
+
+    // The branch carries the raw transcript but NO dcp-state entry yet — exactly
+    // the window where the block exists only in memory.
+    const branch = [
+      messageEntry(
+        { role: "user", content: [{ type: "text", text: "raw" }], timestamp: 1000 },
+        "raw-1"
+      ),
+    ];
+
+    // session_start path: retain-live is enabled by default.
+    const result = restoreStateFromBranch(branch, live, config);
+
+    expect(result.restoreOutcome).toBe("retained-live");
+    expect(result.restoredStateEntries).toBe(0);
+    expect(live.compressionBlocks.length).toBe(1);
+    expect(live.compressionBlocks[0]?.active).toBe(true);
+    expect(live.compressionBlocks[0]?.id).toBe(1);
+    expect(live.nextBlockId).toBe(2);
+    expect(live.currentTurn).toBe(77);
+    // The block is still queued for persistence; the guard must not clear it.
+    expect(live.pendingSave).toBe(true);
+  });
+
+  test("branch switch (session_tree) loads the target branch even with a pending mutation", () => {
+    // The retain-live guard must be scoped to `session_start`. `session_tree`
+    // is a genuine branch switch: the live in-memory blocks belong to the OLD
+    // branch and must be replaced by the target branch's state, even when a
+    // mutation was pending-unsaved. Otherwise switching branches mid-edit would
+    // strand the old branch's blocks and later append them to the wrong branch.
+    const config = makeConfig();
+    const oldBranchBlock: CompressionBlock = {
+      id: 9,
+      topic: "old branch block",
+      summary: "belongs to the branch we are leaving",
+      startTimestamp: 1000,
+      endTimestamp: 3000,
+      anchorTimestamp: 4000,
+      startSourceKey: "src:1",
+      endSourceKey: "src:3",
+      anchorSourceKey: "src:4",
+      active: true,
+      summaryTokenEstimate: 25,
+      savedTokenEstimate: 5_000,
+      createdAt: 5000,
+      compressCallId: "call-old-branch",
+      activityLogVersion: 1,
+      activityLog: [],
+      metadata: {
+        coveredSourceKeys: ["src:1"],
+        coveredSpanKeys: ["span:1"],
+        coveredArtifactRefs: [],
+        coveredToolIds: [],
+        supersededBlockIds: [],
+        fileReadStats: [],
+        fileWriteStats: [],
+        commandStats: [],
+      },
+    };
+    const live = makeState([oldBranchBlock]);
+    live.nextBlockId = 10;
+    live.pendingSave = true;
+
+    // The target branch is a never-compressed branch: its latest dcp-state is a
+    // v3 scalar marker with no blocks. A correct branch switch must drop the
+    // old block and land on the target branch's empty block state.
+    const targetState = makeState();
+    targetState.prunedToolIds = new Set(["target-tool"]);
+    targetState.currentTurn = 3;
+    const targetBranch = [dcpStateEntry(serializePersistedState(targetState), "dcp-state-target")];
+
+    const result = restoreStateFromBranch(targetBranch, live, config, targetBranch, {
+      allowRetainLive: false,
+    });
+
+    expect(result.restoreOutcome).not.toBe("retained-live");
+    expect(live.compressionBlocks.length).toBe(0);
+    expect(Array.from(live.prunedToolIds)).toEqual(["target-tool"]);
+    expect(live.currentTurn).toBe(3);
+  });
+
+  test("fresh resume (no pending mutation) still restores from the persisted snapshot", () => {
+    // The guard must only fire mid-run. A fresh process resume begins from a
+    // clean state with `pendingSave === false`, so the normal snapshot restore
+    // path must run unchanged.
+    const config = makeConfig();
+    const savedState = makeState();
+    savedState.prunedToolIds = new Set(["tool-a"]);
+    savedState.currentTurn = 5;
+    const persisted = serializePersistedState(savedState);
+    const branch = [dcpStateEntry(persisted, "dcp-state-v3")];
+
+    const restored = makeState();
+    expect(restored.pendingSave).toBe(false);
+    const result = restoreStateFromBranch(branch, restored, config);
+
+    expect(result.restoreOutcome).not.toBe("retained-live");
+    expect(result.restoredStateEntries).toBe(1);
+    expect(Array.from(restored.prunedToolIds)).toEqual(["tool-a"]);
+    expect(restored.currentTurn).toBe(5);
+  });
 });

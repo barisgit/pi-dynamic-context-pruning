@@ -67,7 +67,13 @@ export type RestoreOutcome =
   | "reset-legacy-v4"
   | "scalar-v3"
   | "scalar-legacy"
-  | "empty";
+  | "empty"
+  // The restore was a no-op because live in-memory state held unsaved
+  // mutations: it fired mid-run (not a fresh process resume), so resetting and
+  // rebuilding from an older snapshot would have dropped freshly-created
+  // compress blocks and/or prune tombstones. See the `state.pendingSave` guard
+  // in `directRestore`.
+  | "retained-live";
 
 interface RestoreStateFromBranchResult {
   branchEntryCount: number;
@@ -217,7 +223,8 @@ function directRestore(
   branchEntries: readonly any[],
   state: DcpState,
   config: DcpConfig,
-  allEntries: readonly any[]
+  allEntries: readonly any[],
+  allowRetainLive: boolean
 ): {
   restoredStateEntries: number;
   repairedBlockIds: number[];
@@ -225,6 +232,38 @@ function directRestore(
   restoreOutcome: RestoreOutcome;
   restoredSchemaVersion: number | null;
 } {
+  // Non-destructive guard against MID-RUN `session_start` re-fires.
+  //
+  // A fresh process resume always begins from a clean `createState()` with
+  // `pendingSave === false`, and `session_start` runs restore before any
+  // mutation. So a truthy `pendingSave` on the `session_start` path can only
+  // mean it is firing *mid-run* against live state that already holds unsaved
+  // mutations — a just-created compress block and/or fresh prune tombstones —
+  // for the SAME branch we are already working on.
+  //
+  // pi can emit `session_start` mid-run without a matching `session_shutdown`
+  // (observed: one long session logged 5 `session_start` vs 2
+  // `session_shutdown`, 0 `session_tree`). Since restore became snapshot-only
+  // (replay-on-resume was dropped), `resetState()` + snapshot rebuild in that
+  // window has nothing to rebuild an unsaved block from, so it silently
+  // discarded a ~140k-token compress block at each unpaired mid-run
+  // `session_start`. Retain the live state instead; the pending flush (inline
+  // on compress, or the next `agent_end`) persists it.
+  //
+  // This is scoped to `session_start` only (`allowRetainLive`). `session_tree`
+  // is a genuine branch switch to a possibly DIFFERENT leaf: there the live
+  // in-memory blocks belong to the old branch and MUST be replaced by the
+  // target branch's state, even when a mutation was pending-unsaved.
+  if (allowRetainLive && state.pendingSave) {
+    return {
+      restoredStateEntries: 0,
+      repairedBlockIds: [],
+      repairedNudgeWatermarks: false,
+      restoreOutcome: "retained-live",
+      restoredSchemaVersion: null,
+    };
+  }
+
   resetState(state);
   initializeSessionState(state, config);
 
@@ -299,9 +338,14 @@ export function restoreStateFromBranch(
   branchEntries: readonly any[],
   state: DcpState,
   config: DcpConfig,
-  allEntries: readonly any[] = branchEntries
+  allEntries: readonly any[] = branchEntries,
+  options: { allowRetainLive?: boolean } = {}
 ): RestoreStateFromBranchResult {
-  const fallback = directRestore(branchEntries, state, config, allEntries);
+  // `session_start` may re-fire mid-run on the same branch, so it retains live
+  // unsaved blocks (default). `session_tree` is a real branch switch and must
+  // always load the target branch, so it passes `allowRetainLive: false`.
+  const allowRetainLive = options.allowRetainLive ?? true;
+  const fallback = directRestore(branchEntries, state, config, allEntries, allowRetainLive);
   return {
     branchEntryCount: branchEntries.length,
     restoredStateEntries: fallback.restoredStateEntries,
@@ -327,7 +371,7 @@ export function saveState(
   pi: ExtensionAPI,
   state: DcpState,
   config: DcpConfig,
-  reason: "session_shutdown" | "agent_end" | "native_compaction",
+  reason: "session_shutdown" | "agent_end" | "native_compaction" | "compress",
   sessionPayload: Record<string, unknown>
 ): void {
   if (!state.pendingSave) {
@@ -383,11 +427,14 @@ export function registerSessionHandlers(
   });
 
   pi.on("session_tree", async (event, ctx) => {
+    // A branch switch must load the target branch's state even if a mutation
+    // was pending-unsaved on the old branch, so retain-live is disabled here.
     const restore = restoreStateFromBranch(
       ctx.sessionManager.getBranch(),
       state,
       config,
-      ctx.sessionManager.getEntries()
+      ctx.sessionManager.getEntries(),
+      { allowRetainLive: false }
     );
 
     appendDebugLog(config, "session_tree_restored", {

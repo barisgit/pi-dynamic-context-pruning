@@ -25,6 +25,7 @@ import { renderCompressedBlockMessage } from "../../domain/compression/materiali
 import { exceedsMaxContextLimit, resolveEffectiveContextSize } from "../../domain/pruning/index.js";
 import { estimateMessageTokens, estimateTokens } from "../../domain/compression/range.js";
 import { updateDcpStatus } from "../status.js";
+import { saveState } from "../session-handler.js";
 import { queueDcpAutoNativeCompaction } from "../native-compaction.js";
 import {
   buildTranscriptSnapshot,
@@ -653,6 +654,18 @@ export function registerCompressTool(pi: ExtensionAPI, state: DcpState, config: 
           .filter((block) => block.active)
           .reduce((sum, block) => sum + (block.savedTokenEstimate ?? 0), 0);
         updateDcpStatus(ctx, state);
+
+        // Flush the new block(s) to disk immediately, mirroring native
+        // compaction. `compress` runs deep inside an autonomous loop where
+        // `agent_end` (the deferred flush) may not fire for many minutes; if pi
+        // emits a mid-run `session_start` before then, restore would find no
+        // persisted snapshot. Persisting here — after block savings/`tokensSaved`
+        // accounting is finalized above — means the snapshot is complete and the
+        // block survives a mid-run restore. No-op when nothing was created
+        // (`pendingSave` stays false).
+        if (plannedBlocks.length > 0) {
+          saveState(pi, state, config, "compress", buildSessionDebugPayload(ctx.sessionManager));
+        }
 
         const nativeCompactionAutoTrigger = decideNativeCompactionAutoTrigger(
           currentMessages,

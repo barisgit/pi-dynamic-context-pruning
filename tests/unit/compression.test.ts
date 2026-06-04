@@ -1348,6 +1348,7 @@ describe("DCP compression.test", () => {
       registerTool(tool: any) {
         registeredTool = tool;
       },
+      appendEntry: () => undefined,
     };
     const ctx = {
       sessionManager: {
@@ -1484,6 +1485,7 @@ describe("DCP compression.test", () => {
       registerTool(tool: any) {
         registeredTool = tool;
       },
+      appendEntry: () => undefined,
     };
     const ctx = {
       sessionManager: {
@@ -1615,6 +1617,7 @@ describe("DCP compression.test", () => {
       registerTool(tool: any) {
         registeredTool = tool;
       },
+      appendEntry: () => undefined,
     };
     const ctx = {
       sessionManager: {
@@ -1683,7 +1686,7 @@ describe("DCP compression.test", () => {
 
     let registeredTool: any = null;
     registerCompressTool(
-      { registerTool: (tool: any) => (registeredTool = tool) } as any,
+      { registerTool: (tool: any) => (registeredTool = tool), appendEntry: () => undefined } as any,
       state,
       config
     );
@@ -1754,7 +1757,7 @@ describe("DCP compression.test", () => {
 
     let registeredTool: any = null;
     registerCompressTool(
-      { registerTool: (tool: any) => (registeredTool = tool) } as any,
+      { registerTool: (tool: any) => (registeredTool = tool), appendEntry: () => undefined } as any,
       state,
       config
     );
@@ -1819,7 +1822,7 @@ describe("DCP compression.test", () => {
 
     let registeredTool: any = null;
     registerCompressTool(
-      { registerTool: (tool: any) => (registeredTool = tool) } as any,
+      { registerTool: (tool: any) => (registeredTool = tool), appendEntry: () => undefined } as any,
       state,
       config
     );
@@ -1923,7 +1926,7 @@ describe("DCP compression.test", () => {
 
     let registeredTool: any = null;
     registerCompressTool(
-      { registerTool: (tool: any) => (registeredTool = tool) } as any,
+      { registerTool: (tool: any) => (registeredTool = tool), appendEntry: () => undefined } as any,
       state,
       config
     );
@@ -1958,7 +1961,7 @@ describe("DCP compression.test", () => {
 
     let registeredTool: any = null;
     registerCompressTool(
-      { registerTool: (tool: any) => (registeredTool = tool) } as any,
+      { registerTool: (tool: any) => (registeredTool = tool), appendEntry: () => undefined } as any,
       state,
       config
     );
