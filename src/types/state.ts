@@ -168,6 +168,8 @@ export interface PersistedDcpStateV3 {
   lifetimeTokensSavedRealized: number;
   /** Monotonic heuristic-pruning tokens reclaimed (optional for back-compat). */
   tokensPruned?: number;
+  /** Lifetime heuristic-prune commit count (optional for back-compat). */
+  totalPruneCount?: number;
 }
 
 /** Minimal persisted legacy block metadata carried by v4 DCP state entries. */

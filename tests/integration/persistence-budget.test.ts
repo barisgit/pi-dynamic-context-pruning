@@ -141,6 +141,7 @@ describe("dcp-state persistence budget (f4)", () => {
     state.lastCompressTurn = 172;
     state.lifetimeTokensSavedRealized = 850_000;
     state.tokensPruned = 36_500;
+    state.totalPruneCount = 42;
     for (let i = 0; i < 50; i++) state.prunedToolIds.add(`call-${i}`);
 
     const persisted = serializePersistedState(state) as {
@@ -151,6 +152,7 @@ describe("dcp-state persistence budget (f4)", () => {
       prunedToolIds: string[];
       lifetimeTokensSavedRealized: number;
       tokensPruned: number;
+      totalPruneCount: number;
     };
 
     expect(persisted.schemaVersion).toBe(3);
@@ -160,10 +162,12 @@ describe("dcp-state persistence budget (f4)", () => {
     expect(persisted.prunedToolIds.length).toBe(50);
     expect(persisted.lifetimeTokensSavedRealized).toBe(850_000);
     expect(persisted.tokensPruned).toBe(36_500);
+    expect(persisted.totalPruneCount).toBe(42);
 
     const restored = makeState();
     restorePersistedState(persisted, restored);
     expect(restored.tokensPruned).toBe(36_500);
+    expect(restored.totalPruneCount).toBe(42);
 
     expect(serializedByteLength(state)).toBeLessThan(EMPTY_STATE_BUDGET_BYTES);
   });

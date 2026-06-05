@@ -319,6 +319,7 @@ export function serializePersistedState(state: DcpState): PersistedDcpState {
     prunedToolIds: Array.from(state.prunedToolIds),
     lifetimeTokensSavedRealized: state.lifetimeTokensSavedRealized,
     tokensPruned: state.tokensPruned,
+    totalPruneCount: state.totalPruneCount,
   };
 
   if (state.compressionBlocks.length === 0) {
@@ -372,6 +373,9 @@ function restorePersistedScalars(persisted: Record<string, unknown>, state: DcpS
   }
   if (isFiniteNumber(persisted.tokensPruned)) {
     state.tokensPruned = persisted.tokensPruned;
+  }
+  if (isFiniteNumber(persisted.totalPruneCount)) {
+    state.totalPruneCount = persisted.totalPruneCount;
   }
   if (isFiniteNumber(persisted.currentTurn)) {
     state.currentTurn = persisted.currentTurn;
