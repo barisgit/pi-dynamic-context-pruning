@@ -353,27 +353,15 @@ function collectErrorPurgeCandidates(
   return candidates;
 }
 /**
- * Whether the live effective context observed on the PREVIOUS `context` pass is
- * in the cleanup band. Stale-result clearing is intentionally live-only: replay
- * never sets the prior-pass context pressure signal, so it returns false there.
- */
-function isHeuristicPruneCleanupZone(state: DcpState, config: DcpConfig): boolean {
-  const pct = state.lastEffectiveContextPercent;
-  const tokens = state.lastEffectiveContextTokens;
-  if (pct !== null && pct !== undefined && pct >= config.compress.minContextPercent) return true;
-  const minTokens = config.compress.minContextTokens;
-  return (
-    tokens !== null && tokens !== undefined && typeof minTokens === "number" && tokens >= minTokens
-  );
-}
-
-/**
  * Collect stale-result candidates: old large successful tool outputs eligible
  * for a tombstone this pass. Pure — does not mutate state.
  *
- * Unlike dedup/error purge, this strategy only activates in the live cleanup
- * band and skips the protected recent tail so recent successful work remains
- * fully rendered.
+ * Like dedup/error purge, this runs every cadence and is governed only by the
+ * shared cadence + per-item/batch savings gates (it is NOT pressure-gated). It
+ * additionally skips the protected recent tail so recent successful work stays
+ * fully rendered, and only touches successful results from configured clearable
+ * tools. Replay safety comes from `EQUIVALENCE_CONFIG` disabling it (exactly
+ * like dedup/purge), not from a live-pressure gate.
  */
 function collectStaleResultCandidates(
   messages: any[],
@@ -382,7 +370,6 @@ function collectStaleResultCandidates(
 ): PruneCandidate[] {
   const staleConfig = config.strategies.clearStaleResults;
   if (!staleConfig.enabled) return [];
-  if (!isHeuristicPruneCleanupZone(state, config)) return [];
 
   const clearTools = new Set(staleConfig.clearTools ?? []);
   const minResultTokens = Math.max(0, Math.floor(staleConfig.minResultTokens ?? 0));

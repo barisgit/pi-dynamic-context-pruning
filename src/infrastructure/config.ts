@@ -111,8 +111,8 @@ const DEFAULT_CONFIG_FILE_CONTENT = `{
   //   "minPruneBatchSavedTokens": 100,
   //   "deduplication": { "enabled": true, "protectedTools": [] },
   //   "purgeErrors": { "enabled": true, "turns": 4, "protectedTools": [] },
-  //   // Clear old large successful results only for listed tool names, and
-  //   // only once prior-pass context reaches the cleanup band.
+  //   // Clear old large successful results for listed tool names every cadence
+  //   // (governed by the savings gates, not context pressure).
   //   "clearStaleResults": {
   //     "enabled": true,
   //     "minResultTokens": 300,

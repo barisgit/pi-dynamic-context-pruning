@@ -57,10 +57,9 @@ function toolPair(
 }
 
 describe("clearStaleResults heuristic", () => {
-  test("selects old large configured-tool results once prior context reaches the cleanup band", () => {
+  test("selects old large configured-tool results every cadence, regardless of context pressure", () => {
     const messages = [...padStandalone(6), ...toolPair("read_old", { toolName: "Read" })];
     const state = makeState();
-    state.lastEffectiveContextPercent = 0.4;
     recordTool(state, "read_old", { toolName: "Read", turnIndex: 0, tokenEstimate: 500 });
 
     applyPruning(messages, state, staleConfig());
@@ -70,35 +69,34 @@ describe("clearStaleResults heuristic", () => {
     expect(state.lastHeuristicPruneDecision?.committedByStrategy.stale).toBe(1);
   });
 
-  test("returns no candidates without cleanup-zone pressure, including replay-like null context", () => {
+  test("fires with no context-pressure signal (cadence-driven, not pressure-gated)", () => {
     const messages = [...padStandalone(6), ...toolPair("read_old", { toolName: "Read" })];
+    const state = makeState();
+    // lastEffectiveContext* left null, as on a fresh/low-pressure session.
+    recordTool(state, "read_old", { toolName: "Read", turnIndex: 0, tokenEstimate: 50_000 });
 
-    const replayLikeState = makeState();
-    recordTool(replayLikeState, "read_old", {
-      toolName: "Read",
-      turnIndex: 0,
-      tokenEstimate: 50_000,
-    });
-    applyPruning(messages, replayLikeState, staleConfig());
-    expect(replayLikeState.prunedToolIds.has("read_old")).toBe(false);
-    expect(replayLikeState.lastHeuristicPruneDecision).toBeNull();
+    applyPruning(messages, state, staleConfig());
 
-    const belowBandState = makeState();
-    belowBandState.lastEffectiveContextPercent = 0.39;
-    recordTool(belowBandState, "read_old", {
-      toolName: "Read",
-      turnIndex: 0,
-      tokenEstimate: 50_000,
-    });
-    applyPruning(messages, belowBandState, staleConfig());
-    expect(belowBandState.prunedToolIds.has("read_old")).toBe(false);
-    expect(belowBandState.lastHeuristicPruneDecision).toBeNull();
+    expect(state.prunedToolIds.has("read_old")).toBe(true);
+    expect(state.lastHeuristicPruneDecision?.committedByStrategy.stale).toBe(1);
+  });
+
+  test("produces nothing when disabled (replay / EQUIVALENCE_CONFIG determinism safety)", () => {
+    const messages = [...padStandalone(6), ...toolPair("read_old", { toolName: "Read" })];
+    const state = makeState();
+    recordTool(state, "read_old", { toolName: "Read", turnIndex: 0, tokenEstimate: 50_000 });
+
+    const cfg = staleConfig();
+    cfg.strategies.clearStaleResults.enabled = false;
+    applyPruning(messages, state, cfg);
+
+    expect(state.prunedToolIds.has("read_old")).toBe(false);
+    expect(state.lastHeuristicPruneDecision).toBeNull();
   });
 
   test("skips results below minResultTokens", () => {
     const messages = [...padStandalone(6), ...toolPair("small", { toolName: "Read" })];
     const state = makeState();
-    state.lastEffectiveContextPercent = 0.4;
     recordTool(state, "small", { toolName: "Read", turnIndex: 0, tokenEstimate: 299 });
 
     applyPruning(messages, state, staleConfig());
@@ -113,7 +111,6 @@ describe("clearStaleResults heuristic", () => {
       ...toolPair("mcp", { toolName: "mcp__auggie__codebase" }),
     ];
     const state = makeState();
-    state.lastEffectiveContextPercent = 0.4;
     recordTool(state, "mcp", {
       toolName: "mcp__auggie__codebase",
       turnIndex: 0,
@@ -129,7 +126,6 @@ describe("clearStaleResults heuristic", () => {
   test("skips errored results", () => {
     const messages = [...padStandalone(6), ...toolPair("err", { toolName: "Read", isError: true })];
     const state = makeState();
-    state.lastEffectiveContextPercent = 0.4;
     recordTool(state, "err", {
       toolName: "Read",
       turnIndex: 0,
@@ -146,7 +142,6 @@ describe("clearStaleResults heuristic", () => {
   test("skips results in the protected recent tail", () => {
     const messages = [...padStandalone(6), ...toolPair("recent", { toolName: "Read" })];
     const state = makeState();
-    state.lastEffectiveContextPercent = 0.4;
     // applyPruning counts this transcript as 7 logical turns, so default
     // protectRecentTurns=4 protects turn indexes >= 3.
     recordTool(state, "recent", { toolName: "Read", turnIndex: 3, tokenEstimate: 50_000 });
@@ -163,7 +158,6 @@ describe("clearStaleResults heuristic", () => {
       ...toolPair("bash_old", { role: "bashExecution", toolName: "Bash" }),
     ];
     const state = makeState();
-    state.lastEffectiveContextPercent = 0.4;
     recordTool(state, "bash_old", { toolName: "Bash", turnIndex: 0, tokenEstimate: 500 });
 
     const pruned = applyPruning(messages, state, staleConfig());

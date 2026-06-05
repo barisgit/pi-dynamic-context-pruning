@@ -130,8 +130,9 @@ DCP uses a layered configuration system (later layers override earlier ones):
     },
     "clearStaleResults": {
       "enabled": true,
-      // Only clear old successful results when prior-pass context is in the
-      // cleanup band. Tool names omitted from clearTools stay protected.
+      // Clear old large successful results every cadence (governed by the
+      // shared savings gates, not context pressure). Tool names omitted from
+      // clearTools stay protected.
       "minResultTokens": 300,
       "clearTools": ["Read", "Bash", "Grep", "read", "bash", "grep"],
     },
@@ -210,7 +211,7 @@ Tool results that were errors are replaced with a tombstone after `purgeErrors.t
 
 ### Clear stale results
 
-When prior-pass context reaches the cleanup band (`minContextPercent` or `minContextTokens`), DCP can replace old large successful results from configured clearable tools with the generic tombstone. By default this applies only to Read/Bash/Grep-style tools, skips results under `clearStaleResults.minResultTokens`, and keeps the protected recent tail fully rendered. Tools not listed in `clearTools` (including MCP/unknown tools) are protected by omission.
+DCP can replace old large successful results from configured clearable tools with the generic tombstone. This runs every cadence (governed by the shared `minPruneItemSavedTokens` / `minPruneBatchSavedTokens` savings gates rather than context pressure), so it keeps context lean before compress is ever needed. By default it applies only to Read/Bash/Grep-style tools, skips results under `clearStaleResults.minResultTokens`, and keeps the protected recent tail fully rendered. Tools not listed in `clearTools` (including MCP/unknown tools) are protected by omission.
 
 ### Prefix-cache considerations
 
@@ -219,7 +220,7 @@ DCP optimizes context size first, but some strategies intentionally mutate previ
 - **Compression blocks:** replacing old raw messages with a `[Compressed section: …]` block is the largest intentional prefix change, usually justified by much larger token savings.
 - **Error purging:** when an errored tool result crosses the `purgeErrors.turns` age threshold, its old output changes to the error tombstone once. The `toolCallId` then stays in `state.prunedToolIds`, so later renders are stable.
 - **Deduplication:** when an older duplicate result becomes pruned, its old output changes to the generic tombstone once.
-- **Clear stale results:** when the previous pass is in the cleanup band, old large successful outputs from clearable tools can change to the generic tombstone once.
+- **Clear stale results:** old large successful outputs from clearable tools can change to the generic tombstone once, every cadence, governed by the savings gates (not context pressure).
 - **Pruning cadence (`strategies.pruneCadenceTurns`) — _when_ may we mutate old context:** dedup/purge/stale-result additions to `state.prunedToolIds` are gated by a bucketed turn `floor(currentTurn / N) * N`. With the default `1` the gate is a no-op (legacy behavior). With higher values, eligibility flips only at bucket boundaries, so all heuristic tombstone additions from a bucket land in a single context pass — turning many small prefix-cache breaks into at most one per N turns, regardless of how often candidates arrive. The gate is stateless on purpose: it is a pure function of `currentTurn`, so reloading the session cannot produce a flush that the previous session did not. Note "turns" is the DCP logical-turn model (standalone message _or_ assistant tool-call batch + its results), so cadence still advances during tool-only autonomous loops with no user message.
 - **Minimum net savings (`strategies.minPruneItemSavedTokens` / `minPruneBatchSavedTokens`) — _whether_ the mutation is worth a cache break:** before any tombstone is committed, DCP checks net tokens saved (`toolResultTokens - tombstoneTokens`, the tombstone string itself costs ~13–15 tokens). The per-item gate skips candidates that don't individually clear `minPruneItemSavedTokens` (e.g. tiny 20-token outputs); the batch gate refuses to rewrite old context unless the whole eligible flush nets at least `minPruneBatchSavedTokens`. They ship as `25` / `100` (set either to `0` for legacy unconditional commits). This is the Anthropic `clear_at_least` idea: don't bust prefix cache for trivial savings.
 - **Red-zone override — _ignore cache efficiency, we need space:_** when the live effective context from the previous pass exceeds `compress.maxContextPercent` / `compress.maxContextTokens`, both net-savings gates are bypassed and every cadence-eligible candidate is pruned immediately. Cadence still applies. This pressure signal is live-only (never reconstructed during offline replay).
