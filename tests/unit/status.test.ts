@@ -48,6 +48,14 @@ describe("DCP status.test", () => {
     expect(buildDcpStatusText(state)).toBe("DCP 269k saved 1.8k prunes b3");
   });
 
+  test("status text shows heuristic pruned-token magnitude next to the prune count", () => {
+    const state = makeState();
+    state.totalPruneCount = 42;
+    state.tokensPruned = 18_400;
+
+    expect(buildDcpStatusText(state)).toBe("DCP 42 prunes 18.4k tok");
+  });
+
   test("status text uses uppercase M with sub-100k precision for million-scale savings", () => {
     const state = makeState([
       {

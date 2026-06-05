@@ -318,6 +318,7 @@ export function serializePersistedState(state: DcpState): PersistedDcpState {
     lastCompressTurn: state.lastCompressTurn,
     prunedToolIds: Array.from(state.prunedToolIds),
     lifetimeTokensSavedRealized: state.lifetimeTokensSavedRealized,
+    tokensPruned: state.tokensPruned,
   };
 
   if (state.compressionBlocks.length === 0) {
@@ -353,6 +354,7 @@ export function serializeLegacyV1PersistedState(state: DcpState): PersistedDcpSt
     tokensSaved: state.tokensSaved,
     lifetimeTokensSavedRealized: state.lifetimeTokensSavedRealized,
     totalPruneCount: state.totalPruneCount,
+    tokensPruned: state.tokensPruned,
     currentTurn: state.currentTurn,
     lastNudgeTurn: state.lastNudgeTurn,
     lastCompressTurn: state.lastCompressTurn,
@@ -367,6 +369,9 @@ function restorePersistedScalars(persisted: Record<string, unknown>, state: DcpS
   }
   if (isFiniteNumber(persisted.lifetimeTokensSavedRealized)) {
     state.lifetimeTokensSavedRealized = persisted.lifetimeTokensSavedRealized;
+  }
+  if (isFiniteNumber(persisted.tokensPruned)) {
+    state.tokensPruned = persisted.tokensPruned;
   }
   if (isFiniteNumber(persisted.currentTurn)) {
     state.currentTurn = persisted.currentTurn;
@@ -472,6 +477,7 @@ export function restorePersistedState(data: unknown, state: DcpState): void {
     ? persisted.lifetimeTokensSavedRealized
     : 0;
   state.totalPruneCount = isFiniteNumber(persisted.totalPruneCount) ? persisted.totalPruneCount : 0;
+  state.tokensPruned = isFiniteNumber(persisted.tokensPruned) ? persisted.tokensPruned : 0;
 
   if (Array.isArray(persisted.prunedToolIds)) {
     state.prunedToolIds = new Set(

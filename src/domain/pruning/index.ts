@@ -504,6 +504,7 @@ function commitHeuristicPruning(
     if (state.prunedToolIds.has(candidate.toolCallId)) continue;
     state.prunedToolIds.add(candidate.toolCallId);
     state.totalPruneCount++;
+    state.tokensPruned += Math.max(0, candidate.netSaved);
     state.pendingSave = true;
     decision.committed++;
     decision.committedByStrategy[candidate.strategy]++;

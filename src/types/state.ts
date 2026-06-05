@@ -142,6 +142,8 @@ export interface PersistedDcpStateV1 {
   /** Optional: monotonic tokens already realized by native compaction. */
   lifetimeTokensSavedRealized?: number;
   totalPruneCount: number;
+  /** Optional: monotonic heuristic-pruning tokens reclaimed. */
+  tokensPruned?: number;
   currentTurn?: number;
   lastNudgeTurn?: number;
   lastCompressTurn?: number;
@@ -164,6 +166,8 @@ export interface PersistedDcpStateV3 {
   lastCompressTurn: number;
   prunedToolIds: string[];
   lifetimeTokensSavedRealized: number;
+  /** Monotonic heuristic-pruning tokens reclaimed (optional for back-compat). */
+  tokensPruned?: number;
 }
 
 /** Minimal persisted legacy block metadata carried by v4 DCP state entries. */
@@ -314,6 +318,14 @@ export interface DcpState {
   lifetimeTokensSavedRealized: number;
   /** Number of discrete pruning operations performed */
   totalPruneCount: number;
+  /**
+   * Monotonic estimated tokens reclaimed by heuristic pruning (dedup, error
+   * purge, stale-result clear) — the net saving of every committed tombstone
+   * (result body minus tombstone cost). Distinct from `tokensSaved`, which is
+   * the compress-block savings. Persisted in the shared scalars so it survives
+   * reload; outside the replay-equivalence contract (like `totalPruneCount`).
+   */
+  tokensPruned: number;
 
   // ── Persistence ────────────────────────────────────────────────────────────
   /**

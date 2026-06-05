@@ -7,7 +7,10 @@
 // inactive blocks.
 
 import { describe, expect, test } from "bun:test";
-import { serializePersistedState } from "../../src/infrastructure/persistence.js";
+import {
+  restorePersistedState,
+  serializePersistedState,
+} from "../../src/infrastructure/persistence.js";
 import type { CompressionBlock, DcpState } from "../../src/types/state.js";
 import { createEmptyCompressionBlockMetadata } from "../../src/domain/compression/metadata.js";
 import { makeState } from "../helpers/dcp-test-utils.js";
@@ -137,6 +140,7 @@ describe("dcp-state persistence budget (f4)", () => {
     state.lastNudgeTurn = 170;
     state.lastCompressTurn = 172;
     state.lifetimeTokensSavedRealized = 850_000;
+    state.tokensPruned = 36_500;
     for (let i = 0; i < 50; i++) state.prunedToolIds.add(`call-${i}`);
 
     const persisted = serializePersistedState(state) as {
@@ -146,6 +150,7 @@ describe("dcp-state persistence budget (f4)", () => {
       lastCompressTurn: number;
       prunedToolIds: string[];
       lifetimeTokensSavedRealized: number;
+      tokensPruned: number;
     };
 
     expect(persisted.schemaVersion).toBe(3);
@@ -154,6 +159,12 @@ describe("dcp-state persistence budget (f4)", () => {
     expect(persisted.lastCompressTurn).toBe(172);
     expect(persisted.prunedToolIds.length).toBe(50);
     expect(persisted.lifetimeTokensSavedRealized).toBe(850_000);
+    expect(persisted.tokensPruned).toBe(36_500);
+
+    const restored = makeState();
+    restorePersistedState(persisted, restored);
+    expect(restored.tokensPruned).toBe(36_500);
+
     expect(serializedByteLength(state)).toBeLessThan(EMPTY_STATE_BUDGET_BYTES);
   });
 

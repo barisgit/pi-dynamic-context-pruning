@@ -42,13 +42,18 @@ export function computeDisplayedTokensSaved(state: DcpState): number {
 export function buildDcpStatusText(state: DcpState): string {
   const activeBlocks = state.compressionBlocks.filter((block) => block.active);
   const displayedSaved = computeDisplayedTokensSaved(state);
+  const tokensPruned = Math.max(0, state.tokensPruned ?? 0);
   if (displayedSaved <= 0 && state.totalPruneCount <= 0 && activeBlocks.length === 0) {
     return "DCP";
   }
 
   const parts = ["DCP"];
   if (displayedSaved > 0) parts.push(`${formatCompactCount(displayedSaved)} saved`);
-  if (state.totalPruneCount > 0) parts.push(`${formatCompactCount(state.totalPruneCount)} prunes`);
+  if (state.totalPruneCount > 0) {
+    const pruneParts = [`${formatCompactCount(state.totalPruneCount)} prunes`];
+    if (tokensPruned > 0) pruneParts.push(`${formatCompactCount(tokensPruned)} tok`);
+    parts.push(pruneParts.join(" "));
+  }
   if (activeBlocks.length > 0) {
     const latestBlockId = activeBlocks.reduce((max, block) => Math.max(max, block.id), 0);
     parts.push(`b${latestBlockId}`);
