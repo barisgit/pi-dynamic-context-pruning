@@ -81,9 +81,19 @@ export interface DcpConfig {
     };
     clearStaleResults: {
       enabled: boolean;
+      /**
+       * Minimum age in logical turns before a successful result may be tombstoned;
+       * measured as bucketedTurn(currentTurn) - record.turnIndex, same age
+       * semantics as purgeErrors.turns.
+       */
+      staleAfterTurns: number;
       /** Skip successful results smaller than this to avoid net-negative tombstones. */
       minResultTokens: number;
-      /** Tool names whose old successful results may be cleared; omitted names stay protected. */
+      /**
+       * Tool-name patterns whose old successful results may be cleared; omitted
+       * names stay protected. Matching is case-insensitive and supports `*`
+       * globs (for example, `scan_*`); exact names are anchored patterns.
+       */
       clearTools: string[];
     };
   };

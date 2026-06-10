@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { applyPruning, makeConfig, makeState } from "../helpers/dcp-test-utils.js";
+import { toolNameMatches } from "../../src/domain/pruning/index.js";
 import type { DcpConfig } from "../../src/types/config.js";
 import type { DcpState, ToolRecord } from "../../src/types/state.js";
 
@@ -7,8 +8,9 @@ function staleConfig(): DcpConfig {
   const cfg = makeConfig();
   cfg.strategies.clearStaleResults = {
     enabled: true,
+    staleAfterTurns: 0,
     minResultTokens: 300,
-    clearTools: ["Read", "Bash", "Grep", "read", "bash", "grep"],
+    clearTools: ["read", "bash", "grep"],
   };
   return cfg;
 }
@@ -55,6 +57,29 @@ function toolPair(
     },
   ];
 }
+
+describe("clearTools tool-name matcher", () => {
+  test("matches exact names case-insensitively", () => {
+    expect(toolNameMatches("Read", ["read"])).toBe(true);
+  });
+
+  test("matches star globs", () => {
+    expect(toolNameMatches("scan_files", ["scan_*"])).toBe(true);
+  });
+
+  test("keeps non-matching tools protected", () => {
+    expect(toolNameMatches("mcp__auggie__codebase", ["read", "bash", "grep"])).toBe(false);
+  });
+
+  test("anchors exact patterns", () => {
+    expect(toolNameMatches("thread", ["read"])).toBe(false);
+  });
+
+  test("treats regex metacharacters literally", () => {
+    expect(toolNameMatches("scan.files", ["scan.files"])).toBe(true);
+    expect(toolNameMatches("scanXfiles", ["scan.files"])).toBe(false);
+  });
+});
 
 describe("clearStaleResults heuristic", () => {
   test("selects old large configured-tool results every cadence, regardless of context pressure", () => {
@@ -150,6 +175,51 @@ describe("clearStaleResults heuristic", () => {
 
     expect(state.prunedToolIds.has("recent")).toBe(false);
     expect(state.lastHeuristicPruneDecision).toBeNull();
+  });
+
+  test("skips results younger than staleAfterTurns even outside the protected tail", () => {
+    const messages = [...padStandalone(6), ...toolPair("young", { toolName: "Read" })];
+    const state = makeState();
+    recordTool(state, "young", { toolName: "Read", turnIndex: 4, tokenEstimate: 50_000 });
+
+    const cfg = staleConfig();
+    cfg.compress.protectRecentTurns = 1;
+    cfg.strategies.clearStaleResults.staleAfterTurns = 5;
+    applyPruning(messages, state, cfg);
+
+    expect(state.prunedToolIds.has("young")).toBe(false);
+    expect(state.lastHeuristicPruneDecision).toBeNull();
+  });
+
+  test("selects results older than staleAfterTurns and outside the protected tail", () => {
+    const messages = [...padStandalone(6), ...toolPair("old_enough", { toolName: "Read" })];
+    const state = makeState();
+    recordTool(state, "old_enough", { toolName: "Read", turnIndex: 1, tokenEstimate: 50_000 });
+
+    const cfg = staleConfig();
+    cfg.compress.protectRecentTurns = 1;
+    cfg.strategies.clearStaleResults.staleAfterTurns = 5;
+    applyPruning(messages, state, cfg);
+
+    expect(state.prunedToolIds.has("old_enough")).toBe(true);
+    expect(state.lastHeuristicPruneDecision?.staleCandidates).toBe(1);
+    expect(state.lastHeuristicPruneDecision?.staleAfterTurns).toBe(5);
+  });
+
+  test("staleAfterTurns 0 preserves legacy tail-only behavior", () => {
+    const messages = [...padStandalone(6), ...toolPair("tail_only", { toolName: "Read" })];
+    const state = makeState();
+    // Outside the protected tail, and only one bucketed turn old.
+    recordTool(state, "tail_only", { toolName: "Read", turnIndex: 5, tokenEstimate: 50_000 });
+
+    const cfg = staleConfig();
+    cfg.compress.protectRecentTurns = 1;
+    cfg.strategies.clearStaleResults.staleAfterTurns = 0;
+    applyPruning(messages, state, cfg);
+
+    expect(state.prunedToolIds.has("tail_only")).toBe(true);
+    expect(state.lastHeuristicPruneDecision?.staleCandidates).toBe(1);
+    expect(state.lastHeuristicPruneDecision?.staleAfterTurns).toBe(0);
   });
 
   test("handles bashExecution results in lockstep with toolResult pruning", () => {

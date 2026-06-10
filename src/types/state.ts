@@ -231,6 +231,7 @@ export interface HeuristicPruneDecision {
   cadenceBucket: number;
   minItem: number;
   minBatch: number;
+  staleAfterTurns: number;
   heldByBatchGate: boolean;
   redZone: boolean;
 }

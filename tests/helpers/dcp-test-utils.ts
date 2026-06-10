@@ -95,7 +95,12 @@ export function makeConfig(): DcpConfig {
       minPruneBatchSavedTokens: 0,
       deduplication: { enabled: false, protectedTools: [] },
       purgeErrors: { enabled: false, turns: 4, protectedTools: [] },
-      clearStaleResults: { enabled: false, minResultTokens: 300, clearTools: [] },
+      clearStaleResults: {
+        enabled: false,
+        staleAfterTurns: 0,
+        minResultTokens: 300,
+        clearTools: [],
+      },
     },
     protectedFilePatterns: [],
     pruneNotification: "off",

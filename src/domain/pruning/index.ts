@@ -247,6 +247,35 @@ function tombstoneTokenCost(isError: boolean): number {
   return isError ? ERROR_TOMBSTONE_TOKENS : OUTPUT_TOMBSTONE_TOKENS;
 }
 
+function compileToolNamePattern(pattern: string): RegExp {
+  const escaped = pattern.toLowerCase().replace(/[.+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`^${escaped.replace(/\*/g, ".*")}$`);
+}
+
+/**
+ * Build a case-insensitive matcher for clearable tool-name patterns.
+ *
+ * Patterns are lowercased before matching and support a single glob operator:
+ * `*` matches any sequence of characters, including empty. Other regex
+ * metacharacters are treated literally, and every pattern is anchored.
+ */
+export function createToolNameMatcher(patterns: string[]): (toolName: string) => boolean {
+  const regexes = patterns.map(compileToolNamePattern);
+  return (toolName: string): boolean => {
+    const normalized = toolName.toLowerCase();
+    return regexes.some((regex) => regex.test(normalized));
+  };
+}
+
+/**
+ * Return whether a tool name is allowed by case-insensitive clearTools patterns.
+ *
+ * Supports exact names and `*` globs; omitted names stay protected.
+ */
+export function toolNameMatches(toolName: string, patterns: string[]): boolean {
+  return createToolNameMatcher(patterns)(toolName);
+}
+
 /**
  * Collect deduplication candidates: redundant tool outputs eligible for a
  * tombstone this pass. Pure — does not mutate state.
@@ -356,12 +385,12 @@ function collectErrorPurgeCandidates(
  * Collect stale-result candidates: old large successful tool outputs eligible
  * for a tombstone this pass. Pure — does not mutate state.
  *
- * Like dedup/error purge, this runs every cadence and is governed only by the
- * shared cadence + per-item/batch savings gates (it is NOT pressure-gated). It
- * additionally skips the protected recent tail so recent successful work stays
- * fully rendered, and only touches successful results from configured clearable
- * tools. Replay safety comes from `EQUIVALENCE_CONFIG` disabling it (exactly
- * like dedup/purge), not from a live-pressure gate.
+ * Like dedup/error purge, this runs every cadence and is governed by explicit
+ * stale-result age, the protected recent tail, and the shared cadence +
+ * per-item/batch savings gates (it is NOT pressure-gated). It only touches
+ * successful results from configured clearable tools. Replay safety comes from
+ * `EQUIVALENCE_CONFIG` disabling it (exactly like dedup/purge), not from a
+ * live-pressure gate.
  */
 function collectStaleResultCandidates(
   messages: any[],
@@ -371,8 +400,9 @@ function collectStaleResultCandidates(
   const staleConfig = config.strategies.clearStaleResults;
   if (!staleConfig.enabled) return [];
 
-  const clearTools = new Set(staleConfig.clearTools ?? []);
+  const matchesClearTool = createToolNameMatcher(staleConfig.clearTools ?? []);
   const minResultTokens = Math.max(0, Math.floor(staleConfig.minResultTokens ?? 0));
+  const staleAfterTurns = Math.max(0, Math.floor(staleConfig.staleAfterTurns ?? 0));
   const bucket = bucketedTurn(state.currentTurn, config);
   const protectedTailStart = Math.max(0, state.currentTurn - config.compress.protectRecentTurns);
 
@@ -383,9 +413,10 @@ function collectStaleResultCandidates(
     const record = state.toolCalls.get(msg.toolCallId);
     if (!record) continue;
     if (record.isError) continue;
-    if (!clearTools.has(record.toolName)) continue;
+    if (!matchesClearTool(record.toolName)) continue;
     if (record.tokenEstimate < minResultTokens) continue;
     if (record.turnIndex >= bucket) continue;
+    if (bucket - record.turnIndex < staleAfterTurns) continue;
     if (record.turnIndex >= protectedTailStart) continue;
     if (state.prunedToolIds.has(msg.toolCallId)) continue;
 
@@ -463,6 +494,10 @@ function commitHeuristicPruning(
   const redZone = isHeuristicPruneRedZone(state, config);
   const minItem = Math.max(0, Math.floor(config.strategies.minPruneItemSavedTokens ?? 0));
   const minBatch = Math.max(0, Math.floor(config.strategies.minPruneBatchSavedTokens ?? 0));
+  const staleAfterTurns = Math.max(
+    0,
+    Math.floor(config.strategies.clearStaleResults.staleAfterTurns ?? 0)
+  );
   const cadenceBucket = bucketedTurn(state.currentTurn, config);
 
   // Per-item gate (opt-in, bypassed in the red zone).
@@ -485,6 +520,7 @@ function commitHeuristicPruning(
     cadenceBucket,
     minItem,
     minBatch,
+    staleAfterTurns,
     heldByBatchGate: false,
     redZone,
   };

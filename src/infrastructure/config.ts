@@ -50,8 +50,9 @@ const DEFAULT_CONFIG: DcpConfig = {
     },
     clearStaleResults: {
       enabled: true,
+      staleAfterTurns: 10,
       minResultTokens: 300,
-      clearTools: ["Read", "Bash", "Grep", "read", "bash", "grep"],
+      clearTools: ["read", "bash", "grep"],
     },
   },
   protectedFilePatterns: [],
@@ -111,12 +112,17 @@ const DEFAULT_CONFIG_FILE_CONTENT = `{
   //   "minPruneBatchSavedTokens": 100,
   //   "deduplication": { "enabled": true, "protectedTools": [] },
   //   "purgeErrors": { "enabled": true, "turns": 4, "protectedTools": [] },
-  //   // Clear old large successful results for listed tool names every cadence
-  //   // (governed by the savings gates, not context pressure).
+  //   // Clear old large successful results for listed tool-name patterns. Runs every
+  //   // cadence (not pressure-gated), governed by staleAfterTurns age, the
+  //   // protected recent tail, cadence, and per-item/batch savings gates.
+  //   // clearTools is a safety allowlist that REPLACES across config layers;
+  //   // entries match case-insensitively and may use * globs, e.g. "scan_*"
+  //   // or "mcp_*".
   //   "clearStaleResults": {
   //     "enabled": true,
+  //     "staleAfterTurns": 10,
   //     "minResultTokens": 300,
-  //     "clearTools": ["Read", "Bash", "Grep", "read", "bash", "grep"]
+  //     "clearTools": ["read", "bash", "grep"]
   //   }
   // },
   // "protectedFilePatterns": [],

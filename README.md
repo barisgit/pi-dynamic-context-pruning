@@ -131,10 +131,13 @@ DCP uses a layered configuration system (later layers override earlier ones):
     "clearStaleResults": {
       "enabled": true,
       // Clear old large successful results every cadence (governed by the
-      // shared savings gates, not context pressure). Tool names omitted from
-      // clearTools stay protected.
+      // staleAfterTurns retention age, protected recent tail, cadence, and
+      // shared savings gates; not context pressure). clearTools is a safety
+      // allowlist; omitted names stay protected. Matching is case-insensitive
+      // and supports * globs, e.g. "scan_*" or "mcp_*".
+      "staleAfterTurns": 10,
       "minResultTokens": 300,
-      "clearTools": ["Read", "Bash", "Grep", "read", "bash", "grep"],
+      "clearTools": ["read", "bash", "grep"],
     },
   },
   // Glob patterns — matching file paths are never pruned
@@ -211,7 +214,7 @@ Tool results that were errors are replaced with a tombstone after `purgeErrors.t
 
 ### Clear stale results
 
-DCP can replace old large successful results from configured clearable tools with the generic tombstone. This runs every cadence (governed by the shared `minPruneItemSavedTokens` / `minPruneBatchSavedTokens` savings gates rather than context pressure), so it keeps context lean before compress is ever needed. By default it applies only to Read/Bash/Grep-style tools, skips results under `clearStaleResults.minResultTokens`, and keeps the protected recent tail fully rendered. Tools not listed in `clearTools` (including MCP/unknown tools) are protected by omission.
+DCP can replace old large successful results from configured clearable tools with the generic tombstone. This runs every cadence (governed by `clearStaleResults.staleAfterTurns`, the protected recent tail, and the shared `minPruneItemSavedTokens` / `minPruneBatchSavedTokens` savings gates rather than context pressure), so it keeps context lean before compress is ever needed. By default it applies only to Read/Bash/Grep-style tools, waits until results are at least `staleAfterTurns: 10` logical turns old, skips results under `clearStaleResults.minResultTokens`, and keeps the protected recent tail fully rendered. `staleAfterTurns` is the stale-result retention knob; `compress.protectRecentTurns` remains an additional hot-tail floor. `clearTools` entries match case-insensitively and support `*` globs (for example, `scan_*` or `mcp_*`); tools not matched by `clearTools` (including MCP/unknown tools by default) are protected by omission.
 
 ### Prefix-cache considerations
 
