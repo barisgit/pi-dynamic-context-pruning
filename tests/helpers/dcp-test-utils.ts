@@ -95,11 +95,10 @@ export function makeConfig(): DcpConfig {
       minPruneBatchSavedTokens: 0,
       deduplication: { enabled: false, protectedTools: [] },
       purgeErrors: { enabled: false, turns: 4, protectedTools: [] },
-      clearStaleResults: {
+      customStrategies: {
         enabled: false,
-        staleAfterTurns: 0,
-        minResultTokens: 300,
-        clearTools: [],
+        defaults: { minResultTokens: 300, minAgeTurns: 0 },
+        rules: [],
       },
     },
     protectedFilePatterns: [],
@@ -111,6 +110,7 @@ export function makeState(compressionBlocks: DcpState["compressionBlocks"] = [])
   return {
     toolCalls: new Map(),
     prunedToolIds: new Set(),
+    prunedToolActions: new Map(),
     schemaVersion: 1,
     compressionBlocks,
     nextBlockId: 1,

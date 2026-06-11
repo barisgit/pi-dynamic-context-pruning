@@ -34,6 +34,18 @@ export interface ToolRecord {
   tokenEstimate: number;
 }
 
+export interface PrunedToolReduceAction {
+  action: "reduce";
+  headLines: number;
+  tailLines: number;
+}
+
+export interface PrunedToolClearAction {
+  action: "clear";
+}
+
+export type PrunedToolAction = PrunedToolClearAction | PrunedToolReduceAction;
+
 /**
  * Legacy v1 compression block created by the `compress` tool.
  * Tracks a timestamp-bounded range of messages and where to inject the summary
@@ -138,6 +150,7 @@ export interface PersistedDcpStateV1 {
     nextRef: number;
   };
   prunedToolIds: string[];
+  prunedToolActions?: Record<string, PrunedToolAction>;
   tokensSaved: number;
   /** Optional: monotonic tokens already realized by native compaction. */
   lifetimeTokensSavedRealized?: number;
@@ -165,6 +178,7 @@ export interface PersistedDcpStateV3 {
   lastNudgeTurn: number;
   lastCompressTurn: number;
   prunedToolIds: string[];
+  prunedToolActions?: Record<string, PrunedToolAction>;
   lifetimeTokensSavedRealized: number;
   /** Monotonic heuristic-pruning tokens reclaimed (optional for back-compat). */
   tokensPruned?: number;
@@ -220,18 +234,21 @@ export type PersistedDcpState =
 export interface HeuristicPruneDecision {
   dedupCandidates: number;
   errorCandidates: number;
-  staleCandidates: number;
+  customCandidates: number;
+  customClearedCandidates: number;
+  customReducedCandidates: number;
   uniqueCandidates: number;
   keptAfterItemGate: number;
   droppedByItemGate: number;
   batchSavedTokens: number;
   committed: number;
-  committedByStrategy: { dedup: number; error: number; stale: number };
+  committedByStrategy: { dedup: number; error: number; custom: number };
+  committedByAction: { cleared: number; reduced: number };
   oldestMutatedDepth: number;
   cadenceBucket: number;
   minItem: number;
   minBatch: number;
-  staleAfterTurns: number;
+  customRuleCount: number;
   heldByBatchGate: boolean;
   redZone: boolean;
 }
@@ -245,6 +262,8 @@ export interface DcpState {
   toolCalls: Map<string, ToolRecord>;
   /** Set of toolCallIds whose result messages should be suppressed in context */
   prunedToolIds: Set<string>;
+  /** Optional render action for pruned tool IDs; missing means legacy clear tombstone. */
+  prunedToolActions: Map<string, PrunedToolAction>;
 
   // ── Compression ────────────────────────────────────────────────────────────
   /** Highest persisted schema version currently loaded into runtime state */

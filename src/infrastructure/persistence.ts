@@ -18,6 +18,7 @@ import {
   type PersistedDcpStateV3,
   type PersistedDcpStateV4,
   type PersistedDcpStateV5,
+  type PrunedToolAction,
 } from "../state.js";
 import { normalizeMessageAliasState, serializeMessageAliasState } from "../domain/refs/index.js";
 
@@ -72,6 +73,41 @@ function normalizeStringArray(value: unknown): string[] {
   return Array.isArray(value)
     ? value.filter((entry): entry is string => typeof entry === "string")
     : [];
+}
+
+function serializePrunedToolActions(state: DcpState): Record<string, PrunedToolAction> {
+  const actions: Record<string, PrunedToolAction> = {};
+  for (const [toolCallId, action] of state.prunedToolActions) {
+    if (state.prunedToolIds.has(toolCallId)) actions[toolCallId] = action;
+  }
+  return actions;
+}
+
+function normalizePrunedToolAction(value: unknown): PrunedToolAction | null {
+  const actionObject = asObject(value);
+  if (!actionObject) return null;
+  if (actionObject.action === "clear") return { action: "clear" };
+  if (actionObject.action !== "reduce") return null;
+  return {
+    action: "reduce",
+    headLines: isFiniteNumber(actionObject.headLines)
+      ? Math.max(0, Math.floor(actionObject.headLines))
+      : 0,
+    tailLines: isFiniteNumber(actionObject.tailLines)
+      ? Math.max(0, Math.floor(actionObject.tailLines))
+      : 0,
+  };
+}
+
+function restorePrunedToolActions(persisted: Record<string, unknown>, state: DcpState): void {
+  const raw = asObject(persisted.prunedToolActions);
+  if (!raw) return;
+  state.prunedToolActions = new Map();
+  for (const [toolCallId, value] of Object.entries(raw)) {
+    if (!state.prunedToolIds.has(toolCallId)) continue;
+    const action = normalizePrunedToolAction(value);
+    if (action) state.prunedToolActions.set(toolCallId, action);
+  }
 }
 
 function normalizeCompressionLogEntry(value: unknown): CompressionLogEntry | null {
@@ -317,6 +353,7 @@ export function serializePersistedState(state: DcpState): PersistedDcpState {
     lastNudgeTurn: state.lastNudgeTurn,
     lastCompressTurn: state.lastCompressTurn,
     prunedToolIds: Array.from(state.prunedToolIds),
+    prunedToolActions: serializePrunedToolActions(state),
     lifetimeTokensSavedRealized: state.lifetimeTokensSavedRealized,
     tokensPruned: state.tokensPruned,
     totalPruneCount: state.totalPruneCount,
@@ -352,6 +389,7 @@ export function serializeLegacyV1PersistedState(state: DcpState): PersistedDcpSt
     nextBlockId: state.nextBlockId,
     messageAliases: serializeMessageAliasState(state.messageAliases),
     prunedToolIds: Array.from(state.prunedToolIds),
+    prunedToolActions: serializePrunedToolActions(state),
     tokensSaved: state.tokensSaved,
     lifetimeTokensSavedRealized: state.lifetimeTokensSavedRealized,
     totalPruneCount: state.totalPruneCount,
@@ -368,6 +406,7 @@ function restorePersistedScalars(persisted: Record<string, unknown>, state: DcpS
       persisted.prunedToolIds.filter((value): value is string => typeof value === "string")
     );
   }
+  restorePrunedToolActions(persisted, state);
   if (isFiniteNumber(persisted.lifetimeTokensSavedRealized)) {
     state.lifetimeTokensSavedRealized = persisted.lifetimeTokensSavedRealized;
   }
@@ -488,6 +527,7 @@ export function restorePersistedState(data: unknown, state: DcpState): void {
       persisted.prunedToolIds.filter((value): value is string => typeof value === "string")
     );
   }
+  restorePrunedToolActions(persisted, state);
 
   // manualMode field was removed in dcp-replay-v3; ignore if present in
   // legacy persisted entries.

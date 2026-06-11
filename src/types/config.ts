@@ -79,24 +79,40 @@ export interface DcpConfig {
       turns: number; // prune error inputs after N logical turns (default: 4)
       protectedTools: string[];
     };
-    clearStaleResults: {
+    customStrategies: {
       enabled: boolean;
-      /**
-       * Minimum age in logical turns before a successful result may be tombstoned;
-       * measured as bucketedTurn(currentTurn) - record.turnIndex, same age
-       * semantics as purgeErrors.turns.
-       */
-      staleAfterTurns: number;
-      /** Skip successful results smaller than this to avoid net-negative tombstones. */
-      minResultTokens: number;
-      /**
-       * Tool-name patterns whose old successful results may be cleared; omitted
-       * names stay protected. Matching is case-insensitive and supports `*`
-       * globs (for example, `scan_*`); exact names are anchored patterns.
-       */
-      clearTools: string[];
+      defaults: CustomStrategyDefaults;
+      /** Ordered safety allowlist. First matching rule wins; unmatched tools are untouched. */
+      rules: CustomStrategyRule[];
     };
   };
   protectedFilePatterns: string[];
   pruneNotification: "off" | "minimal" | "detailed";
+}
+
+export interface CustomStrategyDefaults {
+  /** Skip successful results smaller than this to avoid net-negative rewrites. */
+  minResultTokens: number;
+  /**
+   * Minimum age in logical turns before a successful result may be rewritten;
+   * measured as bucketedTurn(currentTurn) - record.turnIndex.
+   */
+  minAgeTurns: number;
+}
+
+export interface CustomStrategyKeep {
+  headLines?: number;
+  tailLines?: number;
+}
+
+export interface CustomStrategyRule {
+  /** Tool-name patterns; case-insensitive `*` globs, anchored after expansion. */
+  tools: string[];
+  /** Optional flat string-argument glob constraints. All listed fields must match. */
+  args?: Record<string, string | string[]>;
+  action: "clear" | "reduce";
+  /** Required for reduce; at least one count must be greater than zero. */
+  keep?: CustomStrategyKeep;
+  minResultTokens?: number;
+  minAgeTurns?: number;
 }

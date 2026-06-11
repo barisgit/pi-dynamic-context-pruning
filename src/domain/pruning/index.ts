@@ -1,5 +1,10 @@
-import type { DcpState, HeuristicPruneDecision } from "../../types/state.js";
-import type { DcpConfig } from "../../types/config.js";
+import type {
+  DcpState,
+  HeuristicPruneDecision,
+  PrunedToolAction,
+  ToolRecord,
+} from "../../types/state.js";
+import type { CustomStrategyRule, DcpConfig } from "../../types/config.js";
 import type { DcpMessage } from "../../types/message.js";
 import { stripDcpHallucinationsFromString } from "../refs/metadata.js";
 import { renderCompressedBlockMessage } from "../compression/materialize.js";
@@ -239,12 +244,17 @@ const OUTPUT_TOMBSTONE_TOKENS = estimateTokens(OUTPUT_TOMBSTONE_TEXT);
 interface PruneCandidate {
   toolCallId: string;
   netSaved: number;
-  strategy: "dedup" | "error" | "stale";
+  strategy: "dedup" | "error" | "custom";
+  renderAction: PrunedToolAction;
   turnIndex: number;
 }
 
 function tombstoneTokenCost(isError: boolean): number {
   return isError ? ERROR_TOMBSTONE_TOKENS : OUTPUT_TOMBSTONE_TOKENS;
+}
+
+function clearRenderAction(): PrunedToolAction {
+  return { action: "clear" };
 }
 
 function compileToolNamePattern(pattern: string): RegExp {
@@ -268,7 +278,7 @@ export function createToolNameMatcher(patterns: string[]): (toolName: string) =>
 }
 
 /**
- * Return whether a tool name is allowed by case-insensitive clearTools patterns.
+ * Return whether a tool or string argument matches case-insensitive custom-strategy patterns.
  *
  * Supports exact names and `*` globs; omitted names stay protected.
  */
@@ -332,6 +342,7 @@ function collectDeduplicationCandidates(
         toolCallId: ids[i],
         netSaved: record.tokenEstimate - tombstoneTokenCost(record.isError),
         strategy: "dedup",
+        renderAction: clearRenderAction(),
         turnIndex: record.turnIndex,
       });
     }
@@ -375,34 +386,95 @@ function collectErrorPurgeCandidates(
         toolCallId: msg.toolCallId,
         netSaved: record.tokenEstimate - tombstoneTokenCost(true),
         strategy: "error",
+        renderAction: clearRenderAction(),
         turnIndex: record.turnIndex,
       });
     }
   }
   return candidates;
 }
+function toolArgsMatchRule(record: ToolRecord, rule: CustomStrategyRule): boolean {
+  if (!rule.args) return true;
+
+  for (const [field, patterns] of Object.entries(rule.args)) {
+    const value = record.inputArgs[field];
+    if (typeof value !== "string") return false;
+    const patternList = Array.isArray(patterns) ? patterns : [patterns];
+    if (!toolNameMatches(value, patternList)) return false;
+  }
+  return true;
+}
+
+function findMatchingCustomRule(record: ToolRecord, config: DcpConfig): CustomStrategyRule | null {
+  const custom = config.strategies.customStrategies;
+  if (!custom.enabled) return null;
+
+  for (const rule of custom.rules) {
+    if (!toolNameMatches(record.toolName, rule.tools)) continue;
+    if (!toolArgsMatchRule(record, rule)) continue;
+    return rule;
+  }
+  return null;
+}
+
+function extractToolResultText(message: any): string {
+  const content = message?.content;
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content.map((part: any) => (typeof part?.text === "string" ? part.text : "")).join("\n");
+}
+
+function normalizeLineCount(value: number | undefined): number {
+  return Math.max(0, Math.floor(value ?? 0));
+}
+
+function buildReducedText(
+  rawText: string,
+  action: Extract<PrunedToolAction, { action: "reduce" }>
+): string {
+  const lines = rawText.split("\n");
+  const headLines = normalizeLineCount(action.headLines);
+  const tailLines = normalizeLineCount(action.tailLines);
+  const removedCount = Math.max(0, lines.length - headLines - tailLines);
+  if (removedCount <= 0) return rawText;
+
+  const keptHead = headLines > 0 ? lines.slice(0, headLines) : [];
+  const keptTail = tailLines > 0 ? lines.slice(lines.length - tailLines) : [];
+  return [
+    ...keptHead,
+    `[... ${removedCount} lines removed by DCP to save context — re-run the tool if needed ...]`,
+    ...keptTail,
+  ].join("\n");
+}
+
+function buildReduceAction(
+  rule: CustomStrategyRule
+): Extract<PrunedToolAction, { action: "reduce" }> {
+  return {
+    action: "reduce",
+    headLines: normalizeLineCount(rule.keep?.headLines),
+    tailLines: normalizeLineCount(rule.keep?.tailLines),
+  };
+}
+
 /**
- * Collect stale-result candidates: old large successful tool outputs eligible
- * for a tombstone this pass. Pure — does not mutate state.
+ * Collect custom-strategy candidates: old large successful tool outputs eligible
+ * for a deterministic clear or reduction this pass. Pure — does not mutate state.
  *
  * Like dedup/error purge, this runs every cadence and is governed by explicit
- * stale-result age, the protected recent tail, and the shared cadence +
+ * custom-strategy age, the protected recent tail, and the shared cadence +
  * per-item/batch savings gates (it is NOT pressure-gated). It only touches
- * successful results from configured clearable tools. Replay safety comes from
- * `EQUIVALENCE_CONFIG` disabling it (exactly like dedup/purge), not from a
- * live-pressure gate.
+ * successful results matching the ordered safety-allowlist rules. Replay safety
+ * comes from `EQUIVALENCE_CONFIG` disabling it.
  */
-function collectStaleResultCandidates(
+function collectCustomStrategyCandidates(
   messages: any[],
   state: DcpState,
   config: DcpConfig
 ): PruneCandidate[] {
-  const staleConfig = config.strategies.clearStaleResults;
-  if (!staleConfig.enabled) return [];
+  const customConfig = config.strategies.customStrategies;
+  if (!customConfig.enabled) return [];
 
-  const matchesClearTool = createToolNameMatcher(staleConfig.clearTools ?? []);
-  const minResultTokens = Math.max(0, Math.floor(staleConfig.minResultTokens ?? 0));
-  const staleAfterTurns = Math.max(0, Math.floor(staleConfig.staleAfterTurns ?? 0));
   const bucket = bucketedTurn(state.currentTurn, config);
   const protectedTailStart = Math.max(0, state.currentTurn - config.compress.protectRecentTurns);
 
@@ -413,17 +485,37 @@ function collectStaleResultCandidates(
     const record = state.toolCalls.get(msg.toolCallId);
     if (!record) continue;
     if (record.isError) continue;
-    if (!matchesClearTool(record.toolName)) continue;
+    const rule = findMatchingCustomRule(record, config);
+    if (!rule) continue;
+    const minResultTokens = Math.max(
+      0,
+      Math.floor(rule.minResultTokens ?? customConfig.defaults.minResultTokens ?? 0)
+    );
+    const minAgeTurns = Math.max(
+      0,
+      Math.floor(rule.minAgeTurns ?? customConfig.defaults.minAgeTurns ?? 0)
+    );
     if (record.tokenEstimate < minResultTokens) continue;
     if (record.turnIndex >= bucket) continue;
-    if (bucket - record.turnIndex < staleAfterTurns) continue;
+    if (bucket - record.turnIndex < minAgeTurns) continue;
     if (record.turnIndex >= protectedTailStart) continue;
     if (state.prunedToolIds.has(msg.toolCallId)) continue;
 
+    const renderAction = rule.action === "reduce" ? buildReduceAction(rule) : clearRenderAction();
+    const keptTokens =
+      renderAction.action === "reduce"
+        ? estimateTokens(buildReducedText(extractToolResultText(msg), renderAction))
+        : tombstoneTokenCost(false);
+    if (renderAction.action === "reduce") {
+      const lineCount = extractToolResultText(msg).split("\n").length;
+      if (renderAction.headLines + renderAction.tailLines >= lineCount) continue;
+    }
+
     candidates.push({
       toolCallId: msg.toolCallId,
-      netSaved: record.tokenEstimate - tombstoneTokenCost(false),
-      strategy: "stale",
+      netSaved: record.tokenEstimate - keptTokens,
+      strategy: "custom",
+      renderAction,
       turnIndex: record.turnIndex,
     });
   }
@@ -455,7 +547,7 @@ function isHeuristicPruneRedZone(state: DcpState, config: DcpConfig): boolean {
 }
 
 /**
- * Gate and commit heuristic tombstones (dedup + error purge + stale results) for this pass.
+ * Gate and commit heuristic output rewrites (dedup + error purge + custom strategies) for this pass.
  * Mutates state.prunedToolIds / totalPruneCount / pendingSave.
  *
  * Two opt-in net-savings gates decide whether the prefix-cache break is worth
@@ -477,8 +569,8 @@ function commitHeuristicPruning(
 ): HeuristicPruneDecision | null {
   const dedup = collectDeduplicationCandidates(messages, state, config);
   const errors = collectErrorPurgeCandidates(messages, state, config);
-  const stale = collectStaleResultCandidates(messages, state, config);
-  const collected = [...dedup, ...errors, ...stale];
+  const custom = collectCustomStrategyCandidates(messages, state, config);
+  const collected = [...dedup, ...errors, ...custom];
   if (collected.length === 0) return null;
 
   // Dedupe by toolCallId (a duplicated error result can appear in both lists);
@@ -494,11 +586,13 @@ function commitHeuristicPruning(
   const redZone = isHeuristicPruneRedZone(state, config);
   const minItem = Math.max(0, Math.floor(config.strategies.minPruneItemSavedTokens ?? 0));
   const minBatch = Math.max(0, Math.floor(config.strategies.minPruneBatchSavedTokens ?? 0));
-  const staleAfterTurns = Math.max(
-    0,
-    Math.floor(config.strategies.clearStaleResults.staleAfterTurns ?? 0)
-  );
   const cadenceBucket = bucketedTurn(state.currentTurn, config);
+  const customClearedCandidates = custom.filter(
+    (candidate) => candidate.renderAction.action === "clear"
+  ).length;
+  const customReducedCandidates = custom.filter(
+    (candidate) => candidate.renderAction.action === "reduce"
+  ).length;
 
   // Per-item gate (opt-in, bypassed in the red zone).
   const kept =
@@ -509,18 +603,21 @@ function commitHeuristicPruning(
   const decision: HeuristicPruneDecision = {
     dedupCandidates: dedup.length,
     errorCandidates: errors.length,
-    staleCandidates: stale.length,
+    customCandidates: custom.length,
+    customClearedCandidates,
+    customReducedCandidates,
     uniqueCandidates: candidates.length,
     keptAfterItemGate: kept.length,
     droppedByItemGate: candidates.length - kept.length,
     batchSavedTokens,
     committed: 0,
-    committedByStrategy: { dedup: 0, error: 0, stale: 0 },
+    committedByStrategy: { dedup: 0, error: 0, custom: 0 },
+    committedByAction: { cleared: 0, reduced: 0 },
     oldestMutatedDepth: 0,
     cadenceBucket,
     minItem,
     minBatch,
-    staleAfterTurns,
+    customRuleCount: config.strategies.customStrategies.rules.length,
     heldByBatchGate: false,
     redZone,
   };
@@ -539,11 +636,17 @@ function commitHeuristicPruning(
   for (const candidate of kept) {
     if (state.prunedToolIds.has(candidate.toolCallId)) continue;
     state.prunedToolIds.add(candidate.toolCallId);
+    state.prunedToolActions.set(candidate.toolCallId, candidate.renderAction);
     state.totalPruneCount++;
     state.tokensPruned += Math.max(0, candidate.netSaved);
     state.pendingSave = true;
     decision.committed++;
     decision.committedByStrategy[candidate.strategy]++;
+    if (candidate.renderAction.action === "reduce") {
+      decision.committedByAction.reduced++;
+    } else {
+      decision.committedByAction.cleared++;
+    }
     oldestCommittedTurn =
       oldestCommittedTurn === null
         ? candidate.turnIndex
@@ -566,10 +669,18 @@ function applyToolOutputPruning(messages: any[], state: DcpState): void {
     if (msg.role !== "toolResult" && msg.role !== "bashExecution") continue;
     if (!state.prunedToolIds.has(msg.toolCallId)) continue;
 
+    const action = state.prunedToolActions.get(msg.toolCallId) ?? clearRenderAction();
+    const text =
+      action.action === "reduce" && !msg.isError
+        ? buildReducedText(extractToolResultText(msg), action)
+        : msg.isError
+          ? ERROR_TOMBSTONE_TEXT
+          : OUTPUT_TOMBSTONE_TEXT;
+
     msg.content = [
       {
         type: "text",
-        text: msg.isError ? ERROR_TOMBSTONE_TEXT : OUTPUT_TOMBSTONE_TEXT,
+        text,
       },
     ];
   }
@@ -594,6 +705,7 @@ function gcPrunedToolIds(messages: any[], state: DcpState): void {
   for (const toolCallId of state.prunedToolIds) {
     if (liveToolCallIds.has(toolCallId)) continue;
     state.prunedToolIds.delete(toolCallId);
+    state.prunedToolActions.delete(toolCallId);
     state.pendingSave = true;
   }
 }

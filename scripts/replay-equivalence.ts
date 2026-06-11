@@ -70,11 +70,10 @@ export const EQUIVALENCE_CONFIG: DcpConfig = {
     minPruneBatchSavedTokens: 0,
     deduplication: { enabled: false, protectedTools: [] },
     purgeErrors: { enabled: false, turns: 4, protectedTools: [] },
-    clearStaleResults: {
+    customStrategies: {
       enabled: false,
-      staleAfterTurns: 10,
-      minResultTokens: 300,
-      clearTools: [],
+      defaults: { minResultTokens: 300, minAgeTurns: 10 },
+      rules: [],
     },
   },
   protectedFilePatterns: [],

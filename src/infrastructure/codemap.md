@@ -26,7 +26,7 @@ They must not be imported by domain modules (`src/domain/`). Application modules
   2. Global user config — `~/.pi/agent/dcp.jsonc`, falling back to `~/.config/pi/dcp.jsonc` (XDG legacy). The preferred path is created automatically if neither exists.
   3. `$PI_CONFIG_DIR/dcp.jsonc` (read if the env var is set).
   4. Project-local `$(projectDir)/.pi/dcp.jsonc`, discovered by walking up the directory tree from `projectDir`.
-- Provides `deepMerge<T>()` — a recursive object merger; arrays are union-merged (deduped by value) except keys in `REPLACE_MERGE_ARRAY_KEYS` (`clearTools`), which replace wholesale so a later layer can narrow a safety allowlist.
+- Provides `deepMerge<T>()` — a recursive object merger; arrays are union-merged (deduped by value) except keys in `REPLACE_MERGE_ARRAY_KEYS` (`rules`), which replace wholesale so a later layer can narrow custom-strategy safety allowlists.
 - Provides `readJsoncFile()` — reads a JSONC file using `jsonc-parser`; returns `{}` on any error.
 - Re-exports `DcpConfig` as a named export.
 

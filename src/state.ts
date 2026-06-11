@@ -17,6 +17,7 @@ export type {
   PersistedDcpStateV3,
   PersistedDcpStateV4,
   PersistedDcpStateV5,
+  PrunedToolAction,
   ToolRecord,
 } from "./types/state.js";
 
@@ -31,6 +32,7 @@ export function createState(): DcpState {
   return {
     toolCalls: new Map(),
     prunedToolIds: new Set(),
+    prunedToolActions: new Map(),
     schemaVersion: 1,
     compressionBlocks: [],
     nextBlockId: 1,
@@ -63,6 +65,7 @@ export function createState(): DcpState {
 export function resetState(state: DcpState): void {
   state.toolCalls.clear();
   state.prunedToolIds.clear();
+  state.prunedToolActions.clear();
   state.schemaVersion = 1;
   state.compressionBlocks = [];
   state.nextBlockId = 1;

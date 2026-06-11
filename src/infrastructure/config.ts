@@ -48,11 +48,10 @@ const DEFAULT_CONFIG: DcpConfig = {
       turns: 4,
       protectedTools: [],
     },
-    clearStaleResults: {
+    customStrategies: {
       enabled: true,
-      staleAfterTurns: 10,
-      minResultTokens: 300,
-      clearTools: ["read", "bash", "grep"],
+      defaults: { minResultTokens: 300, minAgeTurns: 10 },
+      rules: [{ tools: ["read", "bash", "grep"], action: "clear" }],
     },
   },
   protectedFilePatterns: [],
@@ -112,17 +111,16 @@ const DEFAULT_CONFIG_FILE_CONTENT = `{
   //   "minPruneBatchSavedTokens": 100,
   //   "deduplication": { "enabled": true, "protectedTools": [] },
   //   "purgeErrors": { "enabled": true, "turns": 4, "protectedTools": [] },
-  //   // Clear old large successful results for listed tool-name patterns. Runs every
-  //   // cadence (not pressure-gated), governed by staleAfterTurns age, the
-  //   // protected recent tail, cadence, and per-item/batch savings gates.
-  //   // clearTools is a safety allowlist that REPLACES across config layers;
-  //   // entries match case-insensitively and may use * globs, e.g. "scan_*"
-  //   // or "mcp_*".
-  //   "clearStaleResults": {
+  //   // Ordered safety allowlist for old large successful results. Runs every
+  //   // cadence (not pressure-gated), governed by minAgeTurns, protected recent
+  //   // tail, cadence, and per-item/batch savings gates. rules REPLACES across
+  //   // config layers; tools and string args match case-insensitive * globs.
+  //   "customStrategies": {
   //     "enabled": true,
-  //     "staleAfterTurns": 10,
-  //     "minResultTokens": 300,
-  //     "clearTools": ["read", "bash", "grep"]
+  //     "defaults": { "minResultTokens": 300, "minAgeTurns": 10 },
+  //     "rules": [
+  //       { "tools": ["read", "bash", "grep"], "action": "clear" }
+  //     ]
   //   }
   // },
   // "protectedFilePatterns": [],
@@ -141,13 +139,13 @@ const LEGACY_GLOBAL_CONFIG_PATH = path.join(os.homedir(), ".config", "pi", "dcp.
  * Array config keys that REPLACE rather than union-merge on override.
  *
  * Most arrays (e.g. `protectedTools`, `protectedFilePatterns`) are protect-lists
- * where union is safe: a later layer can only ADD protection. `clearTools` is
- * the opposite — a safety allowlist of tools whose output may be cleared — so a
- * user/project layer must be able to NARROW it (the conservative direction).
- * Union-merging it would make narrowing impossible (defaults would always leak
- * back in), so it replaces instead.
+ * where union is safe: a later layer can only ADD protection. custom strategy
+ * `rules` are the opposite — a safety allowlist of outputs that may be cleared
+ * or reduced — so a user/project layer must be able to NARROW it (the
+ * conservative direction). Union-merging it would make narrowing impossible
+ * (defaults would always leak back in), so it replaces instead.
  */
-const REPLACE_MERGE_ARRAY_KEYS = new Set(["clearTools"]);
+const REPLACE_MERGE_ARRAY_KEYS = new Set(["rules"]);
 
 /**
  * Recursively merge `override` into `base`. Arrays are union-merged (deduped)
@@ -264,6 +262,88 @@ function findProjectConfig(startDir: string): string | null {
   }
 }
 
+function assertNonNegativeNumber(value: unknown, pathLabel: string): void {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    throw new Error(`Invalid DCP config: ${pathLabel} must be a non-negative number`);
+  }
+}
+
+function validateCustomStrategies(config: DcpConfig): void {
+  const custom = config.strategies.customStrategies;
+  if (!custom || typeof custom !== "object") {
+    throw new Error("Invalid DCP config: strategies.customStrategies is required");
+  }
+  assertNonNegativeNumber(
+    custom.defaults.minResultTokens,
+    "strategies.customStrategies.defaults.minResultTokens"
+  );
+  assertNonNegativeNumber(
+    custom.defaults.minAgeTurns,
+    "strategies.customStrategies.defaults.minAgeTurns"
+  );
+  if (!Array.isArray(custom.rules)) {
+    throw new Error("Invalid DCP config: strategies.customStrategies.rules must be an array");
+  }
+
+  custom.rules.forEach((rule, index) => {
+    const label = `strategies.customStrategies.rules[${index}]`;
+    if (!Array.isArray(rule.tools) || rule.tools.length === 0) {
+      throw new Error(`Invalid DCP config: ${label}.tools must be a non-empty array`);
+    }
+    for (const [toolIndex, pattern] of rule.tools.entries()) {
+      if (typeof pattern !== "string" || pattern.length === 0) {
+        throw new Error(
+          `Invalid DCP config: ${label}.tools[${toolIndex}] must be a non-empty string`
+        );
+      }
+    }
+    if (rule.action !== "clear" && rule.action !== "reduce") {
+      throw new Error(`Invalid DCP config: ${label}.action must be "clear" or "reduce"`);
+    }
+    if (rule.args !== undefined) {
+      if (rule.args === null || typeof rule.args !== "object" || Array.isArray(rule.args)) {
+        throw new Error(`Invalid DCP config: ${label}.args must be an object`);
+      }
+      for (const [field, patterns] of Object.entries(rule.args)) {
+        if (field.length === 0) {
+          throw new Error(`Invalid DCP config: ${label}.args field names must be non-empty`);
+        }
+        const list = Array.isArray(patterns) ? patterns : [patterns];
+        if (
+          list.length === 0 ||
+          list.some((pattern) => typeof pattern !== "string" || pattern.length === 0)
+        ) {
+          throw new Error(
+            `Invalid DCP config: ${label}.args.${field} must be a non-empty string or string array`
+          );
+        }
+      }
+    }
+    if (rule.minResultTokens !== undefined) {
+      assertNonNegativeNumber(rule.minResultTokens, `${label}.minResultTokens`);
+    }
+    if (rule.minAgeTurns !== undefined) {
+      assertNonNegativeNumber(rule.minAgeTurns, `${label}.minAgeTurns`);
+    }
+    if (rule.action === "reduce") {
+      if (!rule.keep || typeof rule.keep !== "object") {
+        throw new Error(`Invalid DCP config: ${label}.keep is required for reduce`);
+      }
+      const head = rule.keep.headLines ?? 0;
+      const tail = rule.keep.tailLines ?? 0;
+      assertNonNegativeNumber(head, `${label}.keep.headLines`);
+      assertNonNegativeNumber(tail, `${label}.keep.tailLines`);
+      if (Math.floor(head) <= 0 && Math.floor(tail) <= 0) {
+        throw new Error(`Invalid DCP config: ${label}.keep must keep at least one line`);
+      }
+    }
+  });
+}
+
+function validateConfig(config: DcpConfig): void {
+  validateCustomStrategies(config);
+}
+
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
@@ -304,5 +384,6 @@ export function loadConfig(projectDir: string): DcpConfig {
     }
   }
 
+  validateConfig(config);
   return config;
 }
