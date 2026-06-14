@@ -24,10 +24,7 @@ export {
   resolveSupersededBlockIdsForRange,
   validateCompressionRangeBoundaryIds,
 } from "../../src/application/compress-tool/index.js";
-export {
-  appendDebugLogLine,
-  buildSessionDebugPayload,
-} from "../../src/infrastructure/debug-log.js";
+export { buildSessionDebugPayload } from "../../src/infrastructure/debug-log.js";
 export {
   getNudgeDecisionReason,
   registerContextHandler,

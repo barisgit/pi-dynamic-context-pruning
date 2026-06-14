@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { REMINDER_UPSERT_EVENT } from "pi-reminders/src/types.js";
-import type { ReminderIntent } from "pi-reminders/src/types.js";
+import { REMINDER_UPSERT_EVENT } from "pi-extension-utils";
+import type { ReminderIntent } from "pi-extension-utils";
 import {
   assert,
   estimateMessageTokens,
@@ -23,6 +23,9 @@ function createMockPi() {
     events: {
       emit(name: string, payload: unknown) {
         emitted.push({ name, payload });
+      },
+      on(_name: string, _handler: (payload: unknown) => void) {
+        return () => undefined;
       },
     },
     on(name: string, handler: PiHandler) {
@@ -50,7 +53,7 @@ function createMockContext(tokens: number, contextWindow: number) {
 }
 
 describe("DCP nudge.test", () => {
-  test("context nudges publish a pi-reminders intent without mutating rendered messages", async () => {
+  test("context nudges publish a reminder intent without mutating rendered messages", async () => {
     const config = makeConfig();
     config.compress.minContextPercent = 0.1;
     config.compress.maxContextPercent = 0.5;

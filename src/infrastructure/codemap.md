@@ -41,8 +41,8 @@ They must not be imported by domain modules (`src/domain/`). Application modules
 **What it does:**
 
 - Defines `DEBUG_LOG_PATH = ~/.pi/log/dcp.jsonl`.
-- Exposes `appendDebugLog(config, event, payload)` — appends a single JSON line `{ timestamp, event, payload }` to `DEBUG_LOG_PATH`; guarded by `config.debug` (a no-op when debug is off).
-- Exposes `appendDebugLogLine(filePath, event, payload)` — lower-level append to any path; used directly by `session-handler` for session-scoped logs.
+- Owns the DCP logger instance created through `pi-extension-utils`' JSONL logger, writing to `DEBUG_LOG_PATH`.
+- Exposes `appendDebugLog(config, event, payload)` — guards on `config.debug` and sends structured event fields through the shared logger.
 - Exposes `buildSessionDebugPayload(sessionManager)` — builds a stable payload fragment `{ sessionId, cwd, sessionDir, sessionFile, leafId }` from a pi session manager.
 - Provides `normalizeDebugValue()` — walks arbitrary values and converts `Error`, `Set`, `Map`, `Array`, plain objects, and non-finite numbers to JSON-safe equivalents before logging.
 

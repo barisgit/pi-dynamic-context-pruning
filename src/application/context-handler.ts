@@ -1,6 +1,6 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { REMINDER_UPSERT_EVENT } from "pi-reminders/src/types.js";
-import type { ReminderIntent } from "pi-reminders/src/types.js";
+import { connect } from "pi-extension-utils";
+import type { ReminderIntent } from "pi-extension-utils";
 import type { DcpConfig } from "../types/config.js";
 import type { DcpMessage } from "../types/message.js";
 import type { DcpState } from "../types/state.js";
@@ -238,7 +238,12 @@ export function registerContextHandler(pi: ExtensionAPI, state: DcpState, config
           },
         };
 
-        (pi.events as any).emit(REMINDER_UPSERT_EVENT, reminder);
+        const utils = connect(pi as any, { ctx: ctx as any, clientId: "dcp" });
+        try {
+          utils.reminders.upsert(reminder);
+        } finally {
+          utils.dispose();
+        }
         state.lastNudgeTurn = state.currentTurn;
         nudgeDecisionReason = "emitted";
 

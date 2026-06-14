@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
   allocateMessageRef,
-  appendDebugLogLine,
   applyPruning,
   assert,
   buildBlockOwnerKey,

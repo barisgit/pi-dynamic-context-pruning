@@ -1,30 +1,42 @@
-import * as fs from "node:fs"
-import * as os from "node:os"
-import * as path from "node:path"
-import type { DcpConfig } from "../types/config.js"
+import * as os from "node:os";
+import * as path from "node:path";
+import { createLogger } from "pi-extension-utils";
+import type { Logger } from "pi-extension-utils";
+import type { DcpConfig } from "../types/config.js";
 
 // ---------------------------------------------------------------------------
 // Debug log
 // ---------------------------------------------------------------------------
 
-export const DEBUG_LOG_PATH = path.join(os.homedir(), ".pi", "log", "dcp.jsonl")
+export const DEBUG_LOG_PATH = path.join(os.homedir(), ".pi", "log", "dcp.jsonl");
 
 export interface DebugLogPayload {
-  [key: string]: unknown
+  [key: string]: unknown;
 }
 
 export interface DebugSessionSource {
-  getCwd(): string
-  getSessionDir(): string
-  getSessionFile(): string | undefined
-  getSessionId(): string
-  getLeafId(): string | null
+  getCwd(): string;
+  getSessionDir(): string;
+  getSessionFile(): string | undefined;
+  getSessionId(): string;
+  getLeafId(): string | null;
 }
 
-interface DebugLogEntry {
-  timestamp: string
-  event: string
-  payload: DebugLogPayload
+let debugLogger: Logger | null | undefined;
+
+function getDebugLogger(): Logger | null {
+  if (debugLogger !== undefined) return debugLogger;
+
+  try {
+    debugLogger = createLogger("dcp", {
+      dir: path.dirname(DEBUG_LOG_PATH),
+      level: "debug",
+    });
+  } catch {
+    debugLogger = null;
+  }
+
+  return debugLogger;
 }
 
 function normalizeDebugValue(value: unknown): unknown {
@@ -33,19 +45,19 @@ function normalizeDebugValue(value: unknown): unknown {
       name: value.name,
       message: value.message,
       stack: value.stack,
-    }
+    };
   }
 
   if (value instanceof Set) {
-    return Array.from(value, (item) => normalizeDebugValue(item))
+    return Array.from(value, (item) => normalizeDebugValue(item));
   }
 
   if (value instanceof Map) {
-    return Array.from(value.entries(), ([key, mapValue]) => [key, normalizeDebugValue(mapValue)])
+    return Array.from(value.entries(), ([key, mapValue]) => [key, normalizeDebugValue(mapValue)]);
   }
 
   if (Array.isArray(value)) {
-    return value.map((item) => normalizeDebugValue(item))
+    return value.map((item) => normalizeDebugValue(item));
   }
 
   if (value !== null && typeof value === "object") {
@@ -53,15 +65,15 @@ function normalizeDebugValue(value: unknown): unknown {
       Object.entries(value as Record<string, unknown>).map(([key, nestedValue]) => [
         key,
         normalizeDebugValue(nestedValue),
-      ]),
-    )
+      ])
+    );
   }
 
   if (typeof value === "number" && !Number.isFinite(value)) {
-    return String(value)
+    return String(value);
   }
 
-  return value
+  return value;
 }
 
 /**
@@ -74,39 +86,26 @@ export function buildSessionDebugPayload(sessionManager: DebugSessionSource): De
     sessionDir: sessionManager.getSessionDir(),
     sessionFile: sessionManager.getSessionFile() ?? null,
     leafId: sessionManager.getLeafId(),
-  }
+  };
 }
 
 /**
- * Append a best-effort JSONL debug event to an explicit file path.
- */
-export function appendDebugLogLine(
-  filePath: string,
-  event: string,
-  payload: DebugLogPayload = {},
-): void {
-  const entry: DebugLogEntry = {
-    timestamp: new Date().toISOString(),
-    event,
-    payload: normalizeDebugValue(payload) as DebugLogPayload,
-  }
-
-  try {
-    fs.mkdirSync(path.dirname(filePath), { recursive: true })
-    fs.appendFileSync(filePath, `${JSON.stringify(entry)}\n`, "utf8")
-  } catch {
-    // Best-effort only. Debug logging must never affect runtime behavior.
-  }
-}
-
-/**
- * Append a best-effort JSONL debug event to the DCP debug log.
+ * Write a DCP debug event through pi-extension-utils' JSONL logger.
  */
 export function appendDebugLog(
   config: DcpConfig,
   event: string,
-  payload: DebugLogPayload = {},
+  payload: DebugLogPayload = {}
 ): void {
-  if (!config.debug) return
-  appendDebugLogLine(DEBUG_LOG_PATH, event, payload)
+  if (!config.debug) return;
+
+  try {
+    getDebugLogger()?.debug(event, {
+      timestamp: new Date().toISOString(),
+      event,
+      payload: normalizeDebugValue(payload) as DebugLogPayload,
+    });
+  } catch {
+    // Best-effort only. Debug logging must never affect runtime behavior.
+  }
 }
