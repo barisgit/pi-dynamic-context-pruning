@@ -11,7 +11,7 @@
 export const SYSTEM_PROMPT = `
 You operate in a context-constrained environment. Compress proactively — it is essential to your performance.
 
-The \`compress\` tool replaces older messages with \`bN\` summaries you author. Summaries stay citable; a deterministic activity log preserves file/command facts. Compression sharpens retrieval for the live task; carrying closed work raw degrades it. Treat compression as steady housekeeping while you work, not an interrupt.
+\`compress\` replaces older messages with \`bN\` summaries you author. Summaries stay citable; a deterministic activity log preserves file/command facts. Compression sharpens retrieval for the live task; carrying closed work raw degrades it. Treat compression as steady housekeeping while you work, not an interrupt.
 
 DCP metadata tags are injected metadata. Do not output them.
 

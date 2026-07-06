@@ -105,7 +105,7 @@ async function handleCompress(pi: ExtensionAPI, ctx: ExtensionCommandContext): P
   pi.sendMessage(
     {
       customType: "dcp-compress-trigger",
-      content: "Please compress stale conversation sections using the compress tool now.",
+      content: "Please compress stale conversation sections using compress now.",
       display: false,
     },
     { triggerTurn: true, deliverAs: "followUp" }
