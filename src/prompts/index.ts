@@ -39,22 +39,11 @@ Before compressing, ask: _"Could another agent continue safely from my summary p
  *     }>
  *   }
  */
-export const COMPRESS_RANGE_DESCRIPTION = `Collapse one or more conversation ranges into dense \`bN\` summaries.
+export const COMPRESS_RANGE_DESCRIPTION = `Collapse conversation ranges into dense \`bN\` summaries.
 
-INPUT
-- \`ranges\`: [{ startId, endId, summary, topic? }, ...]; optional top-level \`topic\` is the default label.
-- \`startId\`/\`endId\` are visible IDs from the transcript: \`mNNNN\` for user/toolResult/bashExecution messages, \`bN\` for prior compressed blocks. Assistant turns are not directly addressable; choose surrounding visible IDs and DCP will pull complete assistant/tool groups in through atomic-pair expansion. A message's ID lives in the XML metadata tag at the END of eligible non-assistant messages.
-- \`startId\` must appear before \`endId\`. Do not invent IDs.
-- Avoid ending inside the protected hot tail unless context is at hard emergency; the active DCP reminder names the tail start.
-- Multiple independent non-overlapping ranges go in one call as separate entries.
+Use visible transcript IDs as boundaries: \`mNNNN\` for user/tool-result messages and \`bN\` for compressed blocks. DCP includes complete assistant/tool groups automatically. Use existing, ordered IDs; keep ranges independent and non-overlapping; avoid the protected hot tail named by the current reminder.
 
-SUMMARY CONTENT
-A deterministic <activity-log> with file paths, line spans, edit counts, command status, and short excerpts is rendered next to your summary. Do not restate it.
+The adjacent <activity-log> preserves file and command facts, so do not repeat it. Preserve intent, decisions, current state and next step, risks, assumptions, constraints, relationships, and open questions. Keep unresolved work detailed enough for another agent to continue.
 
-Write what the log can't recover: user intent and success criteria, decisions made and rejected alternatives, current objective and next action, blockers/risks/assumptions, key constraints and invariants, non-obvious file/symbol/API relationships, open questions. Quote short user messages directly.
-
-Do not compress active working memory — in-progress plans, partial changes, unresolved debugging, exact details still needed — unless your summary captures that state explicitly enough for another agent to continue.
-
-NESTED \`bN\` PLACEHOLDERS
-If the range includes prior \`bN\` blocks (marked with a \`[Compressed conversation section]\` header), reference each as \`(bN)\` exactly once in your summary. The tool expands \`(bN)\` to the full stored block content, so write the surrounding prose so it still reads correctly after expansion (no "as noted in \`(b2)\`"). To mention a block in plain prose, write \`compressed bN\` instead. Do not invent placeholders for blocks outside the range. Preflight: \`(bN)\` placeholders in the summary must equal the set of nested blocks, no duplicates.
+If a range contains prior \`bN\` blocks, include each as \`(bN)\` exactly once and include no others. These placeholders expand to the full block, so their surrounding prose must remain grammatical. For a plain reference, write \`compressed bN\` instead.
 `;

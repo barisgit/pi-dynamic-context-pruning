@@ -10,10 +10,10 @@ Pure string store for all human-readable prompt text used by DCP. No logic, no s
 
 Canonical source of all prompt constants.
 
-| Export                       | Purpose                                                                                                                                                                                                                                                  |
-| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `SYSTEM_PROMPT`              | ~12-sentence instruction block appended to the host system prompt. Tells the agent to compress proactively, describes the `compress` tool semantics, and defines the "closedness over size" policy.                                                      |
-| `COMPRESS_RANGE_DESCRIPTION` | ~30-line tool-description string registered as the `description` field on the `compress` tool schema. `startId`/`endId` accept `mNNNN` refs (user/toolResult/bashExecution) or `bN` block refs; assistant turns are pulled in via atomic-pair expansion. |
+| Export                       | Purpose                                                                                                                                                                                                                  |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `SYSTEM_PROMPT`              | ~12-sentence instruction block appended to the host system prompt. Tells the agent to compress proactively, describes the `compress` tool semantics, and defines the "closedness over size" policy.                      |
+| `COMPRESS_RANGE_DESCRIPTION` | Concise tool description for `compress`. It preserves the non-schema contracts for visible `mNNNN`/`bN` boundaries, protected-tail avoidance, activity-log-aware summaries, and exact nested-`bN` placeholder expansion. |
 
 ### `src/prompts/system.ts`
 
