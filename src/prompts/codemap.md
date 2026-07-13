@@ -12,7 +12,7 @@ Canonical source of all prompt constants.
 
 | Export                       | Purpose                                                                                                                                                                                                                  |
 | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `SYSTEM_PROMPT`              | ~12-sentence instruction block appended to the host system prompt. Tells the agent to compress proactively, describes the `compress` tool semantics, and defines the "closedness over size" policy.                      |
+| `SYSTEM_PROMPT`              | Compact instruction block appended to the host system prompt. It defines proactive compression, the `compress` mental model, and the closed-work safety boundary.                                                        |
 | `COMPRESS_RANGE_DESCRIPTION` | Concise tool description for `compress`. It preserves the non-schema contracts for visible `mNNNN`/`bN` boundaries, protected-tail avoidance, activity-log-aware summaries, and exact nested-`bN` placeholder expansion. |
 
 ### `src/prompts/system.ts`

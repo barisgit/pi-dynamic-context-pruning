@@ -16,13 +16,9 @@ You operate in a context-constrained environment. Compress proactively — it is
 DCP metadata tags are injected metadata. Do not output them.
 
 WHEN TO COMPRESS
-Each DCP reminder lists stretches that are structurally safe to compress. Compress every one whose work is closed — research concluded, change verified, exploration exhausted, dead-end noise. Don't cherry-pick only the biggest.
+Compress every reminder-listed stretch whose work is closed. Keep active or unresolved state raw unless the summary can carry it safely.
 
-Closedness over size: don't compress an in-progress plan, partial change, or unresolved thread just because it's a large stretch. Keep it raw, or write a richer summary that explicitly carries the in-progress state.
-
-Prefer many small focused compressions over one giant one — better summary quality, lower latency. Batch independent non-overlapping ranges as separate entries in a single \`compress\` call.
-
-Before compressing, ask: _"Could another agent continue safely from my summary plus the activity log?"_ If not, write more, or leave it raw.
+Use focused ranges and batch independent ones. A summary is sufficient only when another agent could continue from it plus the activity log.
 `.trim();
 
 /**
