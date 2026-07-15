@@ -1442,10 +1442,10 @@ describe("DCP compression.test", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Test 23e — COMPRESS TOOL RETURNS POST-COMPRESS PLANNING HINTS
+  // Test 23e — COMPRESS TOOL KEEPS POST-COMPRESS HINTS OUT OF MODEL TEXT
   // ---------------------------------------------------------------------------
-  test("Test 23e — COMPRESS TOOL RETURNS POST-COMPRESS PLANNING HINTS", async () => {
-    console.log("TEST 23e: compress tool result should surface remaining safe ranges");
+  test("Test 23e — COMPRESS TOOL KEEPS POST-COMPRESS HINTS OUT OF MODEL TEXT", async () => {
+    console.log("TEST 23e: compress tool result should not invite immediate recompression");
 
     // Build a transcript with enough uncompressed slack that compressing one
     // narrow range still leaves an obvious safe candidate behind.
@@ -1522,16 +1522,16 @@ describe("DCP compression.test", () => {
       "FAIL — tool result should still lead with the compressed-count header"
     );
     assert.ok(
-      text.includes("Stale and compressible now"),
-      "FAIL — tool result should append updated planning hints after a successful compress"
+      !text.includes("If still over the cleanup target"),
+      "FAIL — a successful result should not prompt another compression pass"
     );
     assert.ok(
-      text.includes("tokens total"),
-      "FAIL — tool result hints should include the post-compress compressible-token total"
+      !text.includes("Stale and compressible now"),
+      "FAIL — remaining candidate ranges should not be exposed in model-visible result text"
     );
     assert.ok(
-      /m\d{4}\.\.m\d{4}/.test(text),
-      `FAIL — tool result hints should reference the remaining safe range, got: ${text}`
+      !/m\d{4}\.\.m\d{4}/.test(text),
+      `FAIL — successful result text should not advertise another candidate range, got: ${text}`
     );
     assert.ok(
       result.details.postCompressHints,
@@ -1542,7 +1542,7 @@ describe("DCP compression.test", () => {
       "FAIL — structured postCompressHints should expose the remaining candidate ranges"
     );
 
-    console.log("  PASS: compress tool result includes refreshed planning hints");
+    console.log("  PASS: structured hints stay available without prompting recompression");
     console.log("TEST 23e PASSED\n");
   });
 

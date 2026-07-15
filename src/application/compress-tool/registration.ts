@@ -685,18 +685,17 @@ export function registerCompressTool(pi: ExtensionAPI, state: DcpState, config: 
           }
         }
 
-        // Recompute planning hints against the post-compress state so the
-        // returned tool message tells the agent what's still safe to compress
-        // without waiting for the next context-pass nudge. O(N) over the
-        // current transcript; cheap relative to compress itself.
+        // Recompute planning hints against the post-compress state for debug
+        // diagnostics and structured result details. Keep them out of the
+        // model-visible success text: structural eligibility does not mean a
+        // range is semantically closed, and advertising another range here can
+        // trigger an unnecessary same-turn compression loop. A later context
+        // pass will emit a fresh nudge if context pressure still warrants one.
         const postCompressHints = buildCompressionPlanningHints(
           currentMessages,
           state,
           config.compress.protectRecentTurns
         );
-        const postCompressHintsText = renderCompressionPlanningHints(postCompressHints, {
-          includeTailStart: false,
-        });
 
         appendDebugLog(config, "compress_succeeded", {
           ...buildSessionDebugPayload(ctx.sessionManager),
@@ -733,11 +732,7 @@ export function registerCompressTool(pi: ExtensionAPI, state: DcpState, config: 
             ? `Native compaction queued (${nativeCompactionAutoTrigger.reason}; ${nativeCompactionAutoTrigger.estimatedCompactableMessageCount} estimated compactable messages; ${nativeCompactionAutoTrigger.estimatedDcpCoverageRatio === null ? "unknown" : nativeCompactionAutoTrigger.estimatedDcpCoverageRatio.toFixed(2)} estimated DCP coverage; ${nativeCompactionAutoTrigger.requiredEstimatedCoverageRatio.toFixed(2)} required).`
             : `Native compaction deferred (${nativeCompactionAutoTrigger.reason}; ${nativeCompactionAutoTrigger.estimatedCompactableMessageCount} estimated compactable messages; ${nativeCompactionAutoTrigger.estimatedDcpCoverageRatio === null ? "unknown" : nativeCompactionAutoTrigger.estimatedDcpCoverageRatio.toFixed(2)} estimated DCP coverage; ${nativeCompactionAutoTrigger.requiredEstimatedCoverageRatio.toFixed(2)} required).`
           : null;
-        const followUpLine =
-          postCompressHints.candidateRanges.length > 0
-            ? "If still over the cleanup target, you can compress one of these now:"
-            : "No additional safe ranges remain right now.";
-        const responseText = [headerLine, nativeCompactionLine, followUpLine, postCompressHintsText]
+        const responseText = [headerLine, nativeCompactionLine]
           .filter((segment) => segment && segment.trim().length > 0)
           .join("\n\n");
 
