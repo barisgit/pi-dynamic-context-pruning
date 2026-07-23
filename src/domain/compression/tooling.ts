@@ -622,34 +622,6 @@ function asObject(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === "object" ? (value as Record<string, unknown>) : null;
 }
 
-function asFiniteNumber(value: unknown): number | null {
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
-}
-
-function formatReadLineSpan(args: Record<string, unknown>): string | null {
-  const offset = asFiniteNumber(args.offset);
-  const limit = asFiniteNumber(args.limit);
-  if (offset === null) return null;
-  if (limit === null || limit <= 1) return `L${offset}`;
-  return `L${offset}-L${offset + Math.max(0, limit - 1)}`;
-}
-
-function upsertFileReadStat(
-  metadata: CompressionBlockMetadata,
-  path: string,
-  lineSpan: string | null
-): void {
-  let stat = metadata.fileReadStats.find((candidate) => candidate.path === path);
-  if (!stat) {
-    stat = { path, count: 0, lineSpans: [] };
-    metadata.fileReadStats.push(stat);
-  }
-  stat.count++;
-  if (lineSpan && !stat.lineSpans.includes(lineSpan)) {
-    stat.lineSpans.push(lineSpan);
-  }
-}
-
 function upsertFileWriteStat(
   metadata: CompressionBlockMetadata,
   path: string,
@@ -665,26 +637,6 @@ function upsertFileWriteStat(
   stat.editCount += editCount;
   stat.addedLines += addedLines;
   stat.removedLines += removedLines;
-}
-
-function pushCommandStat(
-  metadata: CompressionBlockMetadata,
-  command: string,
-  status: "ok" | "error" | "other"
-): void {
-  metadata.commandStats.push({ command, status });
-}
-
-function classifyCommandKind(command: string): "command" | "test" | "commit" {
-  if (/^git\s+commit\b/.test(command)) return "commit";
-  if (
-    /(^|\s)(bun\s+run|npm\s+test|pnpm\s+test|yarn\s+test|vitest|jest|pytest|cargo\s+test|go\s+test)\b/.test(
-      command
-    )
-  ) {
-    return "test";
-  }
-  return "command";
 }
 
 function buildEditStats(edits: unknown): {
@@ -718,18 +670,6 @@ function buildEditStats(edits: unknown): {
   }
 
   return { editCount, addedLines, removedLines };
-}
-
-function summarizeGenericToolArgs(args: Record<string, unknown>): string {
-  const path = typeof args.path === "string" ? args.path : null;
-  const pattern = typeof args.pattern === "string" ? args.pattern : null;
-  const command = typeof args.command === "string" ? args.command : null;
-
-  if (path && pattern) return `${path} ${pattern}`;
-  if (path) return path;
-  if (command) return truncateText(normalizeInlineWhitespace(command), MAX_EXCERPT_CHARS);
-  if (pattern) return pattern;
-  return "";
 }
 
 function parseToolCallArguments(value: unknown): Record<string, unknown> {
@@ -777,12 +717,109 @@ function buildToolCallLookup(messages: any[]): Map<string, ToolCallDescriptor> {
   return lookup;
 }
 
-function buildToolLogEntry(
+function getEffectStats(
+  metadata: CompressionBlockMetadata
+): NonNullable<CompressionBlockMetadata["effectStats"]> {
+  metadata.effectStats ??= {
+    reads: metadata.fileReadStats.reduce((sum, stat) => sum + stat.count, 0),
+    searches: 0,
+    mutations: metadata.fileWriteStats.reduce((sum, stat) => sum + stat.editCount, 0),
+    commands: metadata.commandStats.length,
+    delegations: 0,
+  };
+  return metadata.effectStats;
+}
+
+function extractPatchPaths(args: Record<string, unknown>): string[] {
+  const paths = new Set<string>();
+  if (typeof args.path === "string" && args.path.trim()) paths.add(args.path.trim());
+  if (typeof args.patch !== "string") return [...paths];
+
+  for (const line of args.patch.split(/\r?\n/)) {
+    const structured = line.match(/^\*\*\* (?:Add|Update|Delete) File: (.+)$/);
+    if (structured?.[1]) {
+      paths.add(structured[1].trim());
+      continue;
+    }
+    const unified = line.match(/^(?:---|\+\+\+) (?:[ab]\/)?(.+)$/);
+    if (unified?.[1] && unified[1] !== "/dev/null") paths.add(unified[1].trim());
+  }
+  return [...paths];
+}
+
+function recordToolEffect(
+  toolName: string,
+  args: Record<string, unknown>,
+  metadata: CompressionBlockMetadata
+): void {
+  const normalizedName = toolName.toLowerCase();
+  const effects = getEffectStats(metadata);
+
+  if (normalizedName === "read") {
+    effects.reads++;
+    return;
+  }
+
+  if (["grep", "ast_grep", "find", "scan_files"].includes(normalizedName)) {
+    effects.searches++;
+    return;
+  }
+
+  if (normalizedName === "edit") {
+    const path = typeof args.path === "string" ? args.path : "(unknown path)";
+    const stats = buildEditStats(args.edits);
+    upsertFileWriteStat(metadata, path, stats.editCount, stats.addedLines, stats.removedLines);
+    effects.mutations++;
+    return;
+  }
+
+  if (normalizedName === "write") {
+    const path = typeof args.path === "string" ? args.path : "(unknown path)";
+    const content = typeof args.content === "string" ? args.content : "";
+    upsertFileWriteStat(metadata, path, 1, countLines(content), 0);
+    effects.mutations++;
+    return;
+  }
+
+  if (normalizedName === "apply_patch") {
+    for (const path of extractPatchPaths(args)) {
+      upsertFileWriteStat(metadata, path, 1, 0, 0);
+    }
+    effects.mutations++;
+    return;
+  }
+
+  if (normalizedName === "bash") {
+    effects.commands++;
+    return;
+  }
+
+  if (normalizedName === "subagent" && Array.isArray(args.run)) {
+    effects.delegations += args.run.length;
+    return;
+  }
+
+  if (normalizedName === "workflow") {
+    effects.delegations++;
+  }
+}
+
+function readSandboxTimeline(details: unknown): Array<Record<string, unknown>> | null {
+  const envelope = asObject(details);
+  if (envelope?.kind !== "sandbox.result" || envelope.version !== 1) return null;
+  return Array.isArray(envelope.timeline)
+    ? envelope.timeline.filter(
+        (entry): entry is Record<string, unknown> => entry !== null && typeof entry === "object"
+      )
+    : [];
+}
+
+function recordToolResultEffects(
   message: any,
   state: DcpState,
   toolCallLookup: Map<string, ToolCallDescriptor>,
   metadata: CompressionBlockMetadata
-): CompressionLogEntry | null {
+): void {
   const toolCallId = typeof message?.toolCallId === "string" ? message.toolCallId : null;
   if (toolCallId) {
     metadata.coveredToolIds.push(toolCallId);
@@ -797,55 +834,18 @@ function buildToolLogEntry(
       : (descriptor?.toolName ?? record?.toolName);
   const args = descriptor?.inputArgs ?? record?.inputArgs ?? {};
 
-  if (!toolName) return null;
+  if (!toolName) return;
 
-  if (toolName === "read") {
-    const path = typeof args.path === "string" ? args.path : "(unknown path)";
-    const lineSpan = formatReadLineSpan(args);
-    upsertFileReadStat(metadata, path, lineSpan);
-    return {
-      kind: "read",
-      text: lineSpan ? `${path}#${lineSpan}` : path,
-    };
+  const timeline = toolName === "run" ? readSandboxTimeline(message?.details) : null;
+  if (timeline) {
+    for (const event of timeline) {
+      if (event.kind !== "tool" || typeof event.toolName !== "string") continue;
+      recordToolEffect(event.toolName, parseToolCallArguments(event.args), metadata);
+    }
+    return;
   }
 
-  if (toolName === "edit") {
-    const path = typeof args.path === "string" ? args.path : "(unknown path)";
-    const stats = buildEditStats(args.edits);
-    upsertFileWriteStat(metadata, path, stats.editCount, stats.addedLines, stats.removedLines);
-    return {
-      kind: "edit",
-      text: `${path} (${stats.editCount} edit${stats.editCount === 1 ? "" : "s"}, +${stats.addedLines}/-${stats.removedLines})`,
-    };
-  }
-
-  if (toolName === "write") {
-    const path = typeof args.path === "string" ? args.path : "(unknown path)";
-    const content = typeof args.content === "string" ? args.content : "";
-    const addedLines = countLines(content);
-    upsertFileWriteStat(metadata, path, 1, addedLines, 0);
-    return {
-      kind: "write",
-      text: `${path} (${addedLines} lines)`,
-    };
-  }
-
-  if (toolName === "bash") {
-    const rawCommand = typeof args.command === "string" ? args.command : "(unknown command)";
-    const command = truncateText(normalizeInlineWhitespace(rawCommand), MAX_EXCERPT_CHARS);
-    const status = message?.isError ? "error" : "ok";
-    pushCommandStat(metadata, rawCommand, status);
-    return {
-      kind: classifyCommandKind(rawCommand),
-      text: `${command} -> ${status}`,
-    };
-  }
-
-  const suffix = summarizeGenericToolArgs(args);
-  return {
-    kind: "tool",
-    text: suffix ? `${toolName} ${suffix}` : toolName,
-  };
+  recordToolEffect(toolName, args, metadata);
 }
 
 export function resolveProtectedTailStartTimestamp(
@@ -1036,8 +1036,7 @@ function buildCompressionArtifactsFromMessages(
     }
 
     if (message?.role === "toolResult" || message?.role === "bashExecution") {
-      const entry = buildToolLogEntry(message, state, toolCallLookup, metadata);
-      if (entry) activityLog.push(entry);
+      recordToolResultEffects(message, state, toolCallLookup, metadata);
     }
   }
 

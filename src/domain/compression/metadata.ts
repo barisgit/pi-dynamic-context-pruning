@@ -1,4 +1,4 @@
-import type { CompressionBlockMetadata } from "../../types/state.js"
+import type { CompressionBlockMetadata } from "../../types/state.js";
 
 /** Create empty hidden metadata for a compressed block. */
 export function createEmptyCompressionBlockMetadata(): CompressionBlockMetadata {
@@ -11,5 +11,12 @@ export function createEmptyCompressionBlockMetadata(): CompressionBlockMetadata 
     fileReadStats: [],
     fileWriteStats: [],
     commandStats: [],
-  }
+    effectStats: {
+      reads: 0,
+      searches: 0,
+      mutations: 0,
+      commands: 0,
+      delegations: 0,
+    },
+  };
 }

@@ -154,7 +154,7 @@ agent_end / session_shutdown
 | Hook-based pipeline            | pi extension hooks chain together; shared state via closures                                                                                             |
 | Canonical transcript           | `buildTranscriptSnapshot` builds immutable snapshot for liveness derivation                                                                              |
 | Exact metadata over timestamps | `coveredSourceKeys`/`coveredSpanKeys` preferred; timestamps for legacy fallback only                                                                     |
-| Deterministic activity log     | `CompressionLogEntry[]` in block summaries — reproducible across renders                                                                                 |
+| Deterministic block digest     | Agent summary + bounded conversation excerpts + aggregate effects + bounded modified-file paths; fo `run` timelines are structurally aggregated          |
 | Fingerprint dedup              | `createInputFingerprint()` — `toolName::JSON(sortedArgs)` for stable dedup                                                                               |
 | Bucket-gated tombstones        | `prunedToolIds` additions gated by cadence `floor(currentTurn / pruneCadenceTurns) * N` + net-savings (`minPruneItem/BatchSavedTokens`), red-zone bypass |
 | Two-phase provider filtering   | newest represented compress → receipt; older represented pairs suppressed                                                                                |

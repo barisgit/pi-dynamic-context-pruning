@@ -6,13 +6,13 @@ Pure compression logic: render active legacy blocks into synthetic transcript me
 
 ## Design
 
-| File             | Responsibility                                                                                                                                                                                                      |
-| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `materialize.ts` | Shared compressed-block renderer: renders block text/messages at `full` / `compact` / `minimal` detail and stamps `INTERNAL_BLOCK_ID` so `buildSourceItemKey` emits stable `synth:block:b<id>` keys.                |
-| `range.ts`       | Expand timestamp-bounded ranges to include atomic assistant/tool-result groups. Resolve indices from timestamps; token estimates. Imported directly by pruning and compress-tool (not re-exported from `index.ts`). |
-| `metadata.ts`    | Factory for empty `CompressionBlockMetadata` (`coveredSourceKeys`, `coveredSpanKeys`, tool IDs, file/command stats).                                                                                                |
-| `tooling.ts`     | Boundary validation, planning hints, activity-log/metadata assembly, supersession resolution, ID/timestamp/source-key resolution, `(bN)` placeholder expansion.                                                     |
-| `index.ts`       | Re-exports `materialize`, `metadata`, `tooling` only.                                                                                                                                                               |
+| File             | Responsibility                                                                                                                                                                                                                                       |
+| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `materialize.ts` | Shared compressed-block renderer: renders agent summary, bounded conversation excerpts, aggregate effects, and bounded modified-file paths at `full` / `compact` / `minimal` detail; stamps `INTERNAL_BLOCK_ID` for stable `synth:block:b<id>` keys. |
+| `range.ts`       | Expand timestamp-bounded ranges to include atomic assistant/tool-result groups. Resolve indices from timestamps; token estimates. Imported directly by pruning and compress-tool (not re-exported from `index.ts`).                                  |
+| `metadata.ts`    | Factory for empty `CompressionBlockMetadata` (exact coverage, tool IDs, modified-file stats, legacy file/command compatibility fields, and read/search/mutation/command/delegation counters).                                                        |
+| `tooling.ts`     | Boundary validation, planning hints, conversation/effect metadata assembly (including fo `sandbox.result` timelines and `apply_patch` paths), supersession, ID resolution, and `(bN)` expansion.                                                     |
+| `index.ts`       | Re-exports `materialize`, `metadata`, `tooling` only.                                                                                                                                                                                                |
 
 ### `tooling.ts` — planning hints
 
@@ -49,7 +49,7 @@ Pure compression logic: render active legacy blocks into synthetic transcript me
 
 1. `buildCompressionPlanningHints` → `renderCompressionPlanningHints` (context nudge or pre/post-compress tool hints).
 2. `validateCompressionRangeBoundaryIds` → reject refs inside compressed spans or invalid boundaries.
-3. `resolveIdToTimestamp` / `resolveIdToSourceKey` → `buildCompressionArtifactsForRange` (activity log + exact `coveredSourceKeys` / `coveredSpanKeys`).
+3. `resolveIdToTimestamp` / `resolveIdToSourceKey` → `buildCompressionArtifactsForRange` (conversation excerpts, aggregate effects/modified paths, and exact `coveredSourceKeys` / `coveredSpanKeys`).
 4. `resolveSupersededBlockIdsForRange` → mark fully covered blocks inactive; partial overlap aborts with boundary guidance.
 5. `expandBlockPlaceholders` expands `(bN)` in summaries before block creation.
 

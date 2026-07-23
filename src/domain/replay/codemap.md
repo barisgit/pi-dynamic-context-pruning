@@ -52,7 +52,7 @@ interface ReplayDcpStateOptions {
    - `validateCompressionRangeBoundaryIds` — rejects malformed ranges
    - `resolveIdToTimestamp` / `resolveIdToSourceKey` — resolve `mNNNN` boundary refs
    - `expandBlockPlaceholders` — expand `(bN)` in summary text
-   - `buildCompressionArtifactsForRange` — build activity log + exact canonical metadata
+   - `buildCompressionArtifactsForRange` — build conversation/effect digest metadata + exact canonical coverage
    - `resolveSupersededBlockIdsForRange` — exact-coverage supersession check; throws on
      partial-ambiguous overlap
    - block created, active blocks deactivated if superseded, `tokensSaved` recomputed

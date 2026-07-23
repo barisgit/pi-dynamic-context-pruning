@@ -14,18 +14,18 @@ This isolation ensures the core pruning/compression semantics are testable, dete
 
 1. `buildTranscriptSnapshot()` → span walk in `buildCompressionPlanningHints()` (passthrough spans extend candidates; hot-tail/covered spans flush them).
 2. `validateCompressionRangeBoundaryIds()` → reject raw refs inside active `bN` spans with boundary guidance.
-3. `buildCompressionArtifactsForRange()` → activity log + `coveredSourceKeys`/`coveredSpanKeys` metadata.
+3. `buildCompressionArtifactsForRange()` → conversation excerpts, aggregate effects/modified paths, and exact coverage metadata.
 4. `resolveSupersededBlockIdsForRange()` → exact full-coverage supersession only; partial overlap throws.
 
 Consumed by: `application/compress-tool/registration.ts`, `application/context-handler.ts` (nudge hints).
 
-| File             | Responsibility                                                                                                                                                                                                       |
-| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `range.ts`       | Expand timestamp-bounded ranges to include atomic assistant/tool-result groups. Resolve indices from timestamps.                                                                                                     |
-| `materialize.ts` | Shared compressed-block renderer for `CompressionBlock` summaries; stamps synthetic block messages for stable source keys.                                                                                           |
-| `metadata.ts`    | Factory for empty `CompressionBlockMetadata` (covered source keys, span keys, tool IDs, file/command stats).                                                                                                         |
-| `tooling.ts`     | Core compression helpers: boundary validation (including refs inside active blocks), passthrough-span absorption in planning hints, activity-log/metadata assembly, supersession resolution, protected-tail helpers. |
-| `index.ts`       | Re-exports for all submodules.                                                                                                                                                                                       |
+| File             | Responsibility                                                                                                                                                                                                              |
+| ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `range.ts`       | Expand timestamp-bounded ranges to include atomic assistant/tool-result groups. Resolve indices from timestamps.                                                                                                            |
+| `materialize.ts` | Shared compressed-block renderer for `CompressionBlock` summaries; stamps synthetic block messages for stable source keys.                                                                                                  |
+| `metadata.ts`    | Factory for empty `CompressionBlockMetadata` (covered source keys, span keys, tool IDs, file/command stats).                                                                                                                |
+| `tooling.ts`     | Core compression helpers: boundary validation (including refs inside active blocks), passthrough-span absorption in planning hints, conversation/effect metadata assembly, supersession resolution, protected-tail helpers. |
+| `index.ts`       | Re-exports for all submodules.                                                                                                                                                                                              |
 
 **Key types:** `CompressionCandidateRange`, `CompressionPlanningHints` (`candidateRanges`, `totalCandidateCount`, `totalCompressibleTokens`, protected-tail IDs), `CompressionBlockRenderDetail`.
 

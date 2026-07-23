@@ -79,7 +79,7 @@ DCP uses a layered configuration system (later layers override earlier ones):
     "iterationNudgeThreshold": 15,
     // Protect the hot tail beginning at the Nth-most-recent logical turn/tool batch
     "protectRecentTurns": 4,
-    // Newest compressed blocks rendered with full summaries + activity logs
+    // Newest compressed blocks rendered with full summaries + deterministic digests
     "renderFullBlockCount": 4,
     // Next older compressed blocks keep compact summaries before becoming minimal
     "renderCompactBlockCount": 8,
@@ -174,7 +174,7 @@ When the LLM calls the `compress` tool it provides one or more `{startId, endId,
 1. Resolves visible non-assistant message refs (`m0001`, `m0042`, etc.) and block refs (`b1`, `b3`) through stable internal source/span keys
 2. Records the range as a `CompressionBlock` with legacy timestamps plus canonical source-key coverage/anchor metadata when available
 3. On every `context` event, splices out the raw messages in that range and prefers source-key placement for anchored blocks, with timestamp fallback for legacy blocks
-4. Injects a synthetic `[Compressed section: …]` user message containing the summary and, for newer blocks, a deterministic activity log
+4. Injects a synthetic `[Compressed section: …]` user message containing the agent summary plus a bounded conversation excerpt, aggregate effect counts, and modified-file paths for newer blocks
 5. Keeps the block state in the session so it survives restarts
 
 When a new compression exactly covers an older exact-coverage block, DCP now supersedes the older block instead of accumulating both summaries. Ambiguous partial overlap still rejects conservatively.
@@ -182,6 +182,8 @@ When a new compression exactly covers an older exact-coverage block, DCP now sup
 By default, DCP also protects the hot tail of the conversation: ranges that end inside the last `protectRecentTurns` logical turns/tool batches are rejected unless the session is already above the hard emergency threshold (`maxContextPercent` or `maxContextTokens`, if configured). When a range is rejected, DCP now includes planning hints that surface the hot-tail start, protected `m0001` / `bN` IDs, and the largest visible safe candidate ranges; the same guidance is appended to live compression nudges.
 
 Message IDs (`m0001`, `m0042`, etc.) are injected only on user/toolResult/bashExecution messages, and block IDs (`b1`, `b3`) are injected on compressed blocks, so the LLM can reference exact compression boundaries without mutating freshly generated assistant output. Assistant turns are selected through surrounding visible boundaries and atomic tool-pair expansion. Internal owner keys are not rendered as model-visible metadata; provider-payload filtering uses canonical source/span/block ownership tracked in state.
+
+The deterministic digest deliberately does not render individual tool calls or commands. `conversation` contains bounded chronological `u:` / `a:` excerpts; `effects` reports only aggregate read, search, mutation, command, and delegation counts; `modified-files` lists bounded unique changed paths. The agent-authored summary remains responsible for semantic facts such as important commands, verification outcomes, delegated findings, decisions, and unresolved work. DCP recognizes fo-coding-agent's versioned `sandbox.result` timeline as a container and aggregates its nested operations rather than rendering hundreds of outer `run` calls.
 
 ### Native pi compaction
 

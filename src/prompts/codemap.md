@@ -10,10 +10,10 @@ Pure string store for all human-readable prompt text used by DCP. No logic, no s
 
 Canonical source of all prompt constants.
 
-| Export                       | Purpose                                                                                                                                                                                                                  |
-| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `SYSTEM_PROMPT`              | Compact instruction block appended to the host system prompt. It defines proactive compression, the `compress` mental model, and the closed-work safety boundary.                                                        |
-| `COMPRESS_RANGE_DESCRIPTION` | Concise tool description for `compress`. It preserves the non-schema contracts for visible `mNNNN`/`bN` boundaries, protected-tail avoidance, activity-log-aware summaries, and exact nested-`bN` placeholder expansion. |
+| Export                       | Purpose                                                                                                                                                                                                                                                                                    |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `SYSTEM_PROMPT`              | Compact instruction block appended to the host system prompt. It defines proactive compression, the `compress` mental model, and the closed-work safety boundary.                                                                                                                          |
+| `COMPRESS_RANGE_DESCRIPTION` | Concise tool description for `compress`. It preserves the non-schema contracts for visible `mNNNN`/`bN` boundaries, protected-tail avoidance, deterministic-footer-aware summaries that retain consequential command and delegation outcomes, and exact nested-`bN` placeholder expansion. |
 
 ### `src/prompts/system.ts`
 

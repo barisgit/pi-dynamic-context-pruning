@@ -453,17 +453,6 @@ function collectFileLists(
   };
 }
 
-function formatFileTags(readFiles: string[], modifiedFiles: string[]): string {
-  const parts: string[] = [];
-  if (readFiles.length > 0) {
-    parts.push(`<read-files>\n${readFiles.join("\n")}\n</read-files>`);
-  }
-  if (modifiedFiles.length > 0) {
-    parts.push(`<modified-files>\n${modifiedFiles.join("\n")}\n</modified-files>`);
-  }
-  return parts.length > 0 ? `\n\n${parts.join("\n\n")}` : "";
-}
-
 function renderBlockForCompaction(block: CompressionBlock): string {
   return renderCompressedBlockText({
     id: block.id,
@@ -471,6 +460,7 @@ function renderBlockForCompaction(block: CompressionBlock): string {
     summary: block.summary,
     activityLogVersion: block.activityLogVersion,
     activityLog: block.activityLog,
+    metadata: block.metadata,
     detailLevel: "full",
   }).trim();
 }
@@ -485,7 +475,7 @@ function renderSectionFull(block: CompressionBlock): string {
 
 function renderSectionCompact(block: CompressionBlock): string {
   const body = (block.summary ?? "").trim() || "(no summary)";
-  return `<section topic="${escapeAttr(block.topic)}" tier="compact">\n${body}\n</section>`;
+  return `<section topic="${escapeAttr(block.topic)}" tier="compact">\n<agent-summary>\n${body}\n</agent-summary>\n</section>`;
 }
 
 function firstSentence(text: string): string {
@@ -663,7 +653,7 @@ export function buildDcpNativeCompactionResult({
     }
   }
 
-  const summary = `${summaryParts.join("\n\n")}${formatFileTags(readFiles, modifiedFiles)}`;
+  const summary = summaryParts.join("\n\n");
 
   return {
     summary,

@@ -123,6 +123,7 @@ function cloneCompressionBlock(block: CompressionBlock): CompressionBlock {
           })),
           fileWriteStats: block.metadata.fileWriteStats.map((stat) => ({ ...stat })),
           commandStats: block.metadata.commandStats.map((stat) => ({ ...stat })),
+          effectStats: block.metadata.effectStats ? { ...block.metadata.effectStats } : undefined,
         }
       : undefined,
   };

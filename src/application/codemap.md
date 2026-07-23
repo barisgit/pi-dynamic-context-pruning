@@ -46,7 +46,7 @@ Integrates DCP state with pi's native session-compaction lifecycle via `session_
 **`session_before_compact` hook** — checks DCP hidden coverage ratio against `config.nativeCompaction.minHiddenCoverageRatio`. If sufficient, calls `buildDcpNativeCompactionResult` which:
 
 - Resolves which hidden messages are covered by active DCP blocks.
-- Builds a tiered summary: recent `renderFullBlockCount` blocks rendered in full `<section>` XML; older `renderCompactBlockCount` as compact snippets; oldest as an `<archived-sections>` bullet list.
+- Builds a tiered summary: recent `renderFullBlockCount` blocks render agent summary, bounded conversation excerpts, aggregate effects, and modified-file paths in `<section>` XML; older blocks become compact snippets or `<archived-sections>` bullets.
 - Includes uncovered hidden messages as raw excerpt text.
 - Strips and token-caps any prior DCP envelope from `previousSummary` to avoid nesting.
 - Returns a `CompactionResult` that pi uses as `customInstructions` for the compaction prompt.

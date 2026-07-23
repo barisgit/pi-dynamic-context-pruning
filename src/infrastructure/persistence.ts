@@ -61,6 +61,7 @@ function persistCompressionBlockV5(block: CompressionBlock): PersistedCompressio
       })),
       fileWriteStats: (block.metadata?.fileWriteStats ?? []).map((stat) => ({ ...stat })),
       commandStats: (block.metadata?.commandStats ?? []).map((stat) => ({ ...stat })),
+      effectStats: block.metadata?.effectStats ? { ...block.metadata.effectStats } : undefined,
     },
   };
 }
@@ -178,6 +179,25 @@ function normalizeCompressionBlockMetadata(
     };
   }
 
+  const fileReadStats = Array.isArray(metadata.fileReadStats)
+    ? metadata.fileReadStats
+        .map(normalizeFileReadStat)
+        .filter((stat): stat is CompressionFileReadStat => stat !== null)
+    : [];
+  const fileWriteStats = Array.isArray(metadata.fileWriteStats)
+    ? metadata.fileWriteStats
+        .map(normalizeFileWriteStat)
+        .filter((stat): stat is CompressionFileWriteStat => stat !== null)
+    : [];
+  const commandStats = Array.isArray(metadata.commandStats)
+    ? metadata.commandStats
+        .map(normalizeCommandStat)
+        .filter((stat): stat is CompressionCommandStat => stat !== null)
+    : [];
+  const rawEffects = asObject(metadata.effectStats);
+  const effectCount = (key: string, fallback: number): number =>
+    rawEffects && isFiniteNumber(rawEffects[key]) ? Math.max(0, rawEffects[key]) : fallback;
+
   return {
     coveredSourceKeys: normalizeStringArray(metadata.coveredSourceKeys),
     coveredSpanKeys: normalizeStringArray(metadata.coveredSpanKeys),
@@ -186,21 +206,22 @@ function normalizeCompressionBlockMetadata(
     supersededBlockIds: Array.isArray(metadata.supersededBlockIds)
       ? metadata.supersededBlockIds.filter(isFiniteNumber)
       : legacySupersededBlockIds,
-    fileReadStats: Array.isArray(metadata.fileReadStats)
-      ? metadata.fileReadStats
-          .map(normalizeFileReadStat)
-          .filter((stat): stat is CompressionFileReadStat => stat !== null)
-      : [],
-    fileWriteStats: Array.isArray(metadata.fileWriteStats)
-      ? metadata.fileWriteStats
-          .map(normalizeFileWriteStat)
-          .filter((stat): stat is CompressionFileWriteStat => stat !== null)
-      : [],
-    commandStats: Array.isArray(metadata.commandStats)
-      ? metadata.commandStats
-          .map(normalizeCommandStat)
-          .filter((stat): stat is CompressionCommandStat => stat !== null)
-      : [],
+    fileReadStats,
+    fileWriteStats,
+    commandStats,
+    effectStats: {
+      reads: effectCount(
+        "reads",
+        fileReadStats.reduce((sum, stat) => sum + stat.count, 0)
+      ),
+      searches: effectCount("searches", 0),
+      mutations: effectCount(
+        "mutations",
+        fileWriteStats.reduce((sum, stat) => sum + stat.editCount, 0)
+      ),
+      commands: effectCount("commands", commandStats.length),
+      delegations: effectCount("delegations", 0),
+    },
   };
 }
 
@@ -308,7 +329,7 @@ function normalizePersistedCompressionBlockV4(value: unknown): CompressionBlock 
  * `domain/compression/tooling.ts`, `domain/provider/payload-filter.ts`,
  * `domain/transcript/index.ts`), and `repairOffBranchNativeCompactionState`
  * pulls a fully-populated copy from an earlier active-state snapshot when it
- * needs to reactivate — it never reads coverage metadata, activity logs, or
+ * needs to reactivate — it never reads coverage metadata, conversation/effect digest data, or
  * summaries from the inactive entry itself. So we can safely drop those fat
  * fields on serialize. Older snapshots on disk remain full-fidelity for tree
  * navigation; only newly-written entries are slim.
@@ -336,6 +357,13 @@ function slimInactiveLegacyBlock(block: CompressionBlock): CompressionBlock {
       fileReadStats: [],
       fileWriteStats: [],
       commandStats: [],
+      effectStats: {
+        reads: 0,
+        searches: 0,
+        mutations: 0,
+        commands: 0,
+        delegations: 0,
+      },
     },
   };
 }

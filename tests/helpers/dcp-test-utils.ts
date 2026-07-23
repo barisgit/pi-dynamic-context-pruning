@@ -31,6 +31,7 @@ export {
 } from "../../src/application/context-handler.js";
 export { restorePersistedState } from "../../src/infrastructure/persistence.js";
 export { renderCompressedBlockMessage } from "../../src/domain/compression/materialize.js";
+export { createEmptyCompressionBlockMetadata } from "../../src/domain/compression/metadata.js";
 export {
   allocateMessageRef,
   createMessageAliasState,

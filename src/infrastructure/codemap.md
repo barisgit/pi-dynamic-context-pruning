@@ -58,7 +58,7 @@ They must not be imported by domain modules (`src/domain/`). Application modules
 
 - **Active persisted schemas (v3/v5):**
   - **v3** — scalar bootstrap only: `{ schemaVersion: 3, savedAt, currentTurn, lastNudgeTurn, lastCompressTurn, prunedToolIds, lifetimeTokensSavedRealized }`. Written when `compressionBlocks.length === 0`.
-  - **v5** — v3 scalars plus `blocks` and `nextBlockId`. Written once blocks exist. Blocks carry full coverage anchors (`coveredSourceKeys`, `coveredSpanKeys`) plus real finite timestamp fallbacks through `persistCompressionBlockV5`.
+  - **v5** — v3 scalars plus `blocks` and `nextBlockId`. Written once blocks exist. Blocks carry full coverage anchors (`coveredSourceKeys`, `coveredSpanKeys`), deterministic conversation/effect metadata, and real finite timestamp fallbacks through `persistCompressionBlockV5`.
 - Exposes `serializePersistedState(state)` — picks v3 vs v5 from block count; does not consult `state.schemaVersion`.
 - Exposes `restorePersistedStateScalars(data, state)` — scalar-continuity entry point for branches without coverage-bearing state. Applies only scalar fields via internal `restorePersistedScalars()` (`prunedToolIds`, `lifetimeTokensSavedRealized`, turn counters). No-op on `{ unchanged: true }`. Does not load blocks.
 - Exposes `restorePersistedState(data, state)` — full restore for coverage-bearing and legacy back-compat paths. Branches:

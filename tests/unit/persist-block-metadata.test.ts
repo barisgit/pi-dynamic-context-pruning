@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { restorePersistedState, serializePersistedState } from "../../src/infrastructure/persistence.js";
+import {
+  restorePersistedState,
+  serializePersistedState,
+} from "../../src/infrastructure/persistence.js";
 import { createEmptyCompressionBlockMetadata } from "../../src/domain/compression/metadata.js";
 import type { CompressionBlock, PersistedDcpStateV5 } from "../../src/types/state.js";
 import { makeState } from "../helpers/dcp-test-utils.js";
@@ -28,6 +31,7 @@ function block(overrides: Partial<CompressionBlock>): CompressionBlock {
       fileReadStats: [{ path: `file-${id}.ts`, count: 1, lineSpans: ["L1-L2"] }],
       fileWriteStats: [{ path: `file-${id}.ts`, editCount: 1, addedLines: 2, removedLines: 0 }],
       commandStats: [{ command: `echo ${id}`, status: "ok" }],
+      effectStats: { reads: 3, searches: 2, mutations: 1, commands: 1, delegations: 4 },
     },
     ...overrides,
   };
@@ -36,7 +40,12 @@ function block(overrides: Partial<CompressionBlock>): CompressionBlock {
 describe("persisted block metadata v5", () => {
   test("round-trips mixed active and inactive block metadata", () => {
     const active = block({ id: 1, active: true, savedTokenEstimate: 250 });
-    const inactive = block({ id: 2, active: false, savedTokenEstimate: 0, compressCallId: undefined });
+    const inactive = block({
+      id: 2,
+      active: false,
+      savedTokenEstimate: 0,
+      compressCallId: undefined,
+    });
     inactive.metadata = {
       ...createEmptyCompressionBlockMetadata(),
       supersededBlockIds: [1],
@@ -50,7 +59,9 @@ describe("persisted block metadata v5", () => {
     state.lifetimeTokensSavedRealized = 900;
     state.prunedToolIds.add("tool-a");
 
-    const persisted = JSON.parse(JSON.stringify(serializePersistedState(state))) as PersistedDcpStateV5;
+    const persisted = JSON.parse(
+      JSON.stringify(serializePersistedState(state))
+    ) as PersistedDcpStateV5;
 
     expect(persisted.schemaVersion).toBe(5);
     expect(persisted.nextBlockId).toBe(3);
@@ -98,12 +109,20 @@ describe("persisted block metadata v5", () => {
       expect(actual?.metadata?.commandStats).toEqual(
         original.active ? [{ command: "echo 1", status: "ok" }] : []
       );
+      expect(actual?.metadata?.effectStats).toEqual(
+        original.active
+          ? { reads: 3, searches: 2, mutations: 1, commands: 1, delegations: 4 }
+          : { reads: 0, searches: 0, mutations: 0, commands: 0, delegations: 0 }
+      );
     }
   });
 
   test("empty state still serializes as the tiny v3 marker", () => {
     const state = makeState();
-    const persisted = serializePersistedState(state) as { schemaVersion: number; blocks?: unknown[] };
+    const persisted = serializePersistedState(state) as {
+      schemaVersion: number;
+      blocks?: unknown[];
+    };
 
     expect(persisted.schemaVersion).toBe(3);
     expect(persisted.blocks).toBeUndefined();

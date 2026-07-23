@@ -140,12 +140,14 @@ No hidden heuristics should change that materialization between compresses.
 The agent should think only in visible ranges.
 
 Workflow:
+
 - inspect visible context
 - identify a closed slice
 - summarize it faithfully
 - call `compress`
 
 The agent should not think about:
+
 - reasoning blobs
 - reminder cleanup
 - tool-result pairing
@@ -157,6 +159,7 @@ The agent should not think about:
 ### For the runtime
 
 The runtime owns all complexity:
+
 - map visible IDs to canonical spans
 - expand to deterministic closure
 - include hidden/provider artifacts attached to those spans
@@ -179,6 +182,7 @@ The runtime normalizes it into source items.
 ### Source item types
 
 At minimum:
+
 - visible `user` messages
 - visible `assistant` messages
 - visible `toolResult` messages
@@ -198,6 +202,7 @@ The key simplification is this:
 A span is the smallest deterministic unit that may be removed or replaced.
 
 Suggested span types:
+
 - `message`
   - a standalone visible message with its attached hidden artifacts
 - `tool-exchange`
@@ -210,6 +215,7 @@ By making `tool-exchange` a first-class span, v2 removes the need for the curren
 ### Why spans matter
 
 If hidden/provider artifacts are attached to spans, then compressing a visible range automatically consumes:
+
 - reasoning attached to covered turns
 - reminder fragments attached to covered turns
 - tool ballast attached to covered tool exchanges
@@ -229,14 +235,17 @@ v2 should separate three identity layers.
 Durable internal keys for canonical spans and items.
 
 Requirements:
+
 - deterministic across restarts
 - independent from visible `mNNN` numbering
 - stable enough to survive repeated materialization
 
 Preferred source key:
+
 - a true host/session entry ID if pi exposes one
 
 Transitional source key if pi does not:
+
 - a canonical key derived from source order and entry metadata, for example:
   - `msg:<timestamp>:<role>:<ordinal>`
   - `artifact:<parent-key>:<kind>:<ordinal>`
@@ -259,6 +268,7 @@ Visible IDs are only for the agent.
 ### 3. Block IDs
 
 Block IDs remain the persisted identity for compression blocks:
+
 - `b1`, `b2`, ...
 
 These are stable handles for listing, decompressing, and migration.
@@ -282,39 +292,44 @@ interface CompressionLogEntry {
     | "command"
     | "test"
     | "commit"
-    | "tool"
-  text: string
+    | "tool";
+  text: string;
 }
 
 interface CompressionBlockMetadata {
-  coveredSpanKeys: string[]
-  coveredArtifactRefs: string[]
-  coveredToolIds: string[]
-  supersededBlockIds: number[]
-  fileReadStats: Array<{ path: string; count: number; lineSpans: string[] }>
-  fileWriteStats: Array<{ path: string; editCount: number; addedLines: number; removedLines: number }>
-  commandStats: Array<{ command: string; status: "ok" | "error" | "other" }>
+  coveredSpanKeys: string[];
+  coveredArtifactRefs: string[];
+  coveredToolIds: string[];
+  supersededBlockIds: number[];
+  fileReadStats: Array<{ path: string; count: number; lineSpans: string[] }>;
+  fileWriteStats: Array<{
+    path: string;
+    editCount: number;
+    addedLines: number;
+    removedLines: number;
+  }>;
+  commandStats: Array<{ command: string; status: "ok" | "error" | "other" }>;
 }
 
 interface CompressionBlockV2 {
-  id: number
-  topic: string
-  summary: string
-  startSpanKey: string
-  endSpanKey: string
-  status: "active" | "superseded" | "decompressed"
-  summaryTokenEstimate: number
-  createdAt: number
-  activityLogVersion: 1
-  activityLog: CompressionLogEntry[]
-  metadata: CompressionBlockMetadata
+  id: number;
+  topic: string;
+  summary: string;
+  startSpanKey: string;
+  endSpanKey: string;
+  status: "active" | "superseded" | "decompressed";
+  summaryTokenEstimate: number;
+  createdAt: number;
+  activityLogVersion: 1;
+  activityLog: CompressionLogEntry[];
+  metadata: CompressionBlockMetadata;
 }
 
 interface PersistedDcpStateV2 {
-  schemaVersion: 2
-  nextBlockId: number
-  blocks: CompressionBlockV2[]
-  manualMode: boolean
+  schemaVersion: 2;
+  nextBlockId: number;
+  blocks: CompressionBlockV2[];
+  manualMode: boolean;
 }
 ```
 
@@ -392,7 +407,7 @@ For each range:
    - store one `CompressionBlockV2`
    - persist exact `startSpanKey`, `endSpanKey`, hidden coverage metadata, and any `supersededBlockIds`
    - preserve the agent summary exactly as written
-   - generate the deterministic chronological activity log from raw covered events, not from semantic inference
+   - generate bounded deterministic conversation excerpts and aggregate effect/file metadata from raw covered events, not from semantic inference
    - do not perform placeholder expansion in v2
 
 7. **Supersede old blocks atomically**
@@ -402,6 +417,7 @@ For each range:
 ### Important consequence
 
 A single `compress` transaction removes both:
+
 - visible source history in the selected closure
 - all deterministically attached hidden baggage for that closure
 
@@ -423,11 +439,13 @@ Materialization must be byte-stable for a given source snapshot and block set.
 
 ### Synthetic block format
 
-Keep one canonical rendering format with three parts:
+Keep one canonical rendering format with five parts:
 
 1. a short agent-authored summary
-2. a deterministic chronological raw-event log
-3. a stable block marker
+2. bounded chronological user/assistant excerpts
+3. aggregate read/search/mutation/command/delegation counts
+4. bounded unique modified-file paths
+5. a stable block marker
 
 For example:
 
@@ -438,33 +456,45 @@ For example:
 <summary>
 </agent-summary>
 
-<dcp-log v="1">
-u: "<raw user excerpt>"
-a: "<raw assistant excerpt>"
-read: /path/file.ts#L10-L80
-edit: /path/file.ts (+18/-4)
-test: bun run pruner.test.ts -> ok
-commit: 8063f7d "Debounce DCP nudges by user turns"
-</dcp-log>
+<conversation>
+u: "<bounded user excerpt>"
+a: "<bounded assistant excerpt>"
+</conversation>
 
-<dcp-block-id>bN</dcp-block-id>
+<effects>
+reads: 12
+searches: 4
+mutations: 2
+commands: 3
+delegations: 1
+</effects>
+
+<modified-files>
+src/example.ts
+tests/example.test.ts
+</modified-files>
 ```
 
 Rendering rules:
-- the log is chronological, not grouped by bucket
+
+- conversation excerpts are chronological and use bounded head/tail selection with an explicit omitted count
 - `u:` / `a:` lines are raw quoted/truncated excerpts only; no inferred intent or paraphrased semantics
 - visible `mNNN` / span IDs are omitted from normal block text to avoid confusing the model
-- each log line is capped to a fixed length
-- total rendered block size is capped; if more detail is needed it stays in hidden metadata, not prompt text
-- grouped aggregates such as file read counts are optional footer material, not a replacement for ordered history
+- each conversation line is capped to a fixed length
+- deterministic footer categories are bounded; additional detail stays in hidden metadata rather than expanding one line per operation
+- tool operations and commands are never rendered one-by-one
+- effects are aggregate structural counts only; command purpose and verification meaning remain the agent summary's responsibility
+- modified files are deterministic unique paths with an explicit omitted count when bounded
+- structured container tools such as fo-coding-agent `sandbox.result` timelines contribute nested effects without rendering their outer call or raw timeline
 
 ### Hidden metadata
 
 Each block also stores internal metadata that is **not** rendered by default:
+
 - exact covered span/source keys
 - exact artifact refs (including reasoning/tool baggage consumed by closure)
 - exact tool IDs
-- exact file read/write stats
+- exact modified-file stats and aggregate effect counts; individual read paths and commands are not retained
 - superseded block IDs
 - hashes/fingerprints needed for dedup or future debugging
 
@@ -489,11 +519,13 @@ Some v1 features conflict directly with the new invariants.
 ### 1. Per-request pruning state mutations
 
 The following should no longer mutate transcript state on ordinary `context` passes:
+
 - deduplication via `applyDeduplication(...)`
 - error purging via `applyErrorPurging(...)`
 - opportunistic tool tombstoning via `prunedToolIds`
 
 If these behaviors remain useful, they should be reintroduced in one of two ways:
+
 - folded into explicit compress transactions
 - exposed as separate explicit user tools that create deterministic block-log mutations
 
@@ -514,6 +546,7 @@ The real problems are:
 So v2 should **keep nudges**, but simplify them into threshold-driven pressure signals with straightforward debounce.
 
 Desired policy:
+
 - nudge only when context usage is above configured threshold(s)
 - debounce by user turns, not by raw `context` passes
 - after a successful `compress`, suppress further nudges until at least one newer user turn has happened
@@ -524,11 +557,13 @@ Desired policy:
 - keep nudge semantics out of the agent contract
 
 Suggested runtime state:
+
 - `lastNudgeTurn`
 - `lastCompressTurn`
 - optionally `lastNudgeLevel` when strong/soft escalation needs debouncing too
 
 Good render options:
+
 - a deterministic synthetic advisory block at the tail of the rendered transcript
 - a deterministic system-suffix reminder layer
 - UI/status surfaces in addition to the rendered advisory
@@ -542,6 +577,7 @@ The key rule is:
 `(bN)` placeholder expansion is too complex for the agent and unnecessary if the backend owns block supersession.
 
 v2 should stop requiring:
+
 - manual placeholder management
 - exact block placeholder accounting
 - summary rewriting just to inline prior blocks
@@ -559,7 +595,7 @@ This is the desired end state for prompt text in `prompts.ts`.
 - visible `mNNN` boundaries in the live transcript
 - optionally visible `bN` markers for compatibility
 - one simple instruction: compress closed visible ranges with exhaustive summaries
-- compressed block bodies that contain a short summary plus a chronological factual log, without embedded visible message IDs by default
+- compressed block bodies that contain a short summary, bounded conversation excerpts, aggregate effects, and modified-file paths, without embedded visible message IDs by default
 
 ### What the agent no longer sees
 
@@ -593,6 +629,7 @@ It remains the explicit way to ask the model to run `compress` now.
 
 Still valid.
 But it should operate on block status:
+
 - `active`
 - `superseded`
 - `decompressed`
@@ -604,6 +641,7 @@ For now, only `active -> decompressed` is necessary.
 This command conflicts with “compress is the only mutating transaction.”
 
 Recommended direction:
+
 - deprecate `/dcp sweep`
 - or redefine it later as a convenience wrapper that produces a deterministic compression-like mutation instead of directly editing `prunedToolIds`
 
@@ -612,6 +650,7 @@ Recommended direction:
 Stats should become derived rather than accumulative.
 
 Recommended derived stats:
+
 - active blocks
 - superseded blocks
 - decompressed blocks
@@ -630,6 +669,7 @@ This should be incremental.
 ### Phase 0 — design freeze
 
 Decide the invariants first:
+
 - compress-only removal mutation
 - deterministic materialization
 - nudges may exist, but only as deterministic render-only overlays
@@ -638,6 +678,7 @@ Decide the invariants first:
 ### Phase 1 — add v2 types and snapshot builder
 
 Add new modules:
+
 - `transcript.ts`
 - `materialize.ts`
 - `migration.ts`
@@ -647,10 +688,12 @@ Keep v1 running while v2 snapshot/materialization is built in tests.
 ### Phase 2 — dual-read state
 
 Support both:
+
 - legacy timestamp blocks
 - v2 span-key blocks
 
 On session restore:
+
 - load existing v1 blocks
 - map them into v2 coverage once
 - materialize using the v2 renderer where possible
@@ -660,13 +703,15 @@ On session restore:
 Change `compress-tool.ts` so new compressions create `CompressionBlockV2` only.
 
 At this point:
+
 - placeholder expansion should stop for new blocks
-- new blocks should persist hidden coverage metadata and a deterministic chronological activity log
-- the visible renderer should switch to the bounded summary + factual log format
+- new blocks should persist hidden coverage metadata, bounded conversation excerpts, and aggregate effect counts
+- the visible renderer should switch to the summary + conversation + effects + modified-files format
 
 ### Phase 4 — make closure-based compression real
 
 Extend compression coverage so a committed block consumes deterministic closure, not just visible messages:
+
 - reasoning/provider artifacts attached to covered spans
 - full tool exchanges attached to covered spans
 - stale reminder fragments attached to covered spans
@@ -677,6 +722,7 @@ This is the primary path to major token reduction.
 ### Phase 5 — remove v1 mutation paths
 
 Delete or retire:
+
 - timestamp-based anchor insertion
 - repeated `tokensSaved` accumulation
 - `prunedToolIds` as primary pruning state
@@ -692,6 +738,7 @@ This is still useful, but it is secondary to making one compress block compact a
 ### Phase 7 — simplify prompts and commands
 
 Update:
+
 - `prompts.ts`
 - `README.md`
 - `/dcp` command help
@@ -709,12 +756,14 @@ Replace the current timestamp-centric `CompressionBlock` with a v2 block shape a
 ### `compress-tool.ts`
 
 Replace:
+
 - `resolveIdToTimestamp(...)`
 - `resolveAnchorTimestamp(...)`
 - `expandBlockPlaceholders(...)`
 - overlap rejection logic
 
 With:
+
 - visible-ID resolution against the materialized transcript
 - canonical closure expansion
 - block supersession
@@ -725,6 +774,7 @@ With:
 Shrink this file substantially.
 
 The current role of `pruner.ts` mixes:
+
 - compression application
 - repair logic
 - dedup/error heuristics
@@ -732,6 +782,7 @@ The current role of `pruner.ts` mixes:
 - ID injection
 
 In v2, this should split into cleaner responsibilities:
+
 - source snapshot normalization
 - canonical span building
 - materialization
@@ -740,6 +791,7 @@ In v2, this should split into cleaner responsibilities:
 ### `index.ts`
 
 Change the extension pipeline so ordinary `context` handling becomes mostly:
+
 - build source snapshot
 - materialize active blocks
 - inject visible IDs
@@ -758,6 +810,7 @@ Rewrite the tool description so agents no longer manage `(bN)` placeholder oblig
 ### `README.md`
 
 Rewrite “How it works” around:
+
 - canonical transcript
 - deterministic materialization
 - block supersession
@@ -816,12 +869,14 @@ If not, the fallback key scheme must be documented and tested carefully.
 ### 2. Do we keep `bN` visible in the prompt long-term?
 
 Recommendation:
+
 - keep it for compatibility during migration
 - move toward visible-range compression without requiring agents to reason about block IDs
 
 ### 3. How should nudges render?
 
 Recommendation:
+
 - keep nudges
 - make them render-only advisories
 - never persist them into canonical/session history
@@ -834,6 +889,7 @@ Recommendation:
 ### 4. What happens to `/dcp sweep`?
 
 Recommendation:
+
 - deprecate it unless it can be redefined as a deterministic compression-class mutation
 
 ---
@@ -842,7 +898,7 @@ Recommendation:
 
 1. Add v2 state types and canonical snapshot/span builder.
 2. Define deterministic closure so one compress consumes visible spans plus attached hidden baggage.
-3. Change `compress` to create bounded v2 blocks with a short summary, deterministic chronological raw-event log, and hidden metadata.
+3. Change `compress` to create bounded v2 blocks with a short summary, bounded conversation excerpts, aggregate effects, modified-file paths, and hidden metadata.
 4. Add deterministic materialization with no timestamp-anchor insertion.
 5. Remove placeholder expansion requirements.
 6. Keep nudges render-only and threshold/debounce based.

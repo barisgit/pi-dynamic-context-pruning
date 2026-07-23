@@ -34,6 +34,15 @@ export interface ToolRecord {
   tokenEstimate: number;
 }
 
+/** Aggregate counts for deterministic effect categories within a compressed range. */
+export interface CompressionEffectStats {
+  reads: number;
+  searches: number;
+  mutations: number;
+  commands: number;
+  delegations: number;
+}
+
 export interface PrunedToolReduceAction {
   action: "reduce";
   headLines: number;
@@ -83,9 +92,9 @@ export interface CompressionBlock {
   createdAt: number;
   /** Originating compress tool call id when this block came from a successful compress call */
   compressCallId?: string;
-  /** Version of the deterministic visible activity log format */
+  /** Legacy format version for persisted deterministic conversation excerpts */
   activityLogVersion?: 1;
-  /** Deterministic chronological activity log shown in the rendered block */
+  /** Persisted excerpts; non-conversation legacy entries are no longer rendered */
   activityLog?: CompressionLogEntry[];
   /** Hidden exact coverage and artifact metadata */
   metadata?: CompressionBlockMetadata;
@@ -137,6 +146,7 @@ export interface CompressionBlockMetadata {
   fileReadStats: CompressionFileReadStat[];
   fileWriteStats: CompressionFileWriteStat[];
   commandStats: CompressionCommandStat[];
+  effectStats?: CompressionEffectStats;
 }
 
 /** Persisted v1 DCP state stored in session history. */

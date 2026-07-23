@@ -110,6 +110,8 @@ This repo is post **direct-restore**: persistence restores coverage-bearing bloc
 - Partial ambiguous overlap still rejects conservatively.
 - Timestamp-only legacy overlap remains conservative and still rejects.
 - Protected-tail rejections and injected nudges now surface planning hints: hot-tail start, protected visible IDs, protected active block IDs, and the largest safe visible candidate ranges.
+- Full rendered blocks contain four distinct layers: the agent-authored summary, bounded chronological `u:` / `a:` conversation excerpts, aggregate read/search/mutation/command/delegation counts, and bounded unique modified-file paths. Individual tool calls and commands are not rendered deterministically; the summary must preserve consequential commands, verification outcomes, and delegated findings.
+- fo-coding-agent `sandbox.result` version 1 envelopes are treated as containers: nested timeline operations feed effect counts and modified-file metadata, while the outer `run` call and raw nested operations stay out of visible block text.
 
 ### 2. Ownership / hidden-provider pruning
 

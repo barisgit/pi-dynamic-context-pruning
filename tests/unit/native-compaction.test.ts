@@ -937,6 +937,10 @@ describe("DCP native pi compaction bridge", () => {
       { role: "user", content: [{ type: "text", text: "tail" }], timestamp: 2000 },
     ];
     const artifacts = buildCompressionArtifactsForRange(messages, makeState(), 1000, 1000);
+    artifacts.metadata.fileReadStats = [{ path: "src/read-only.ts", count: 3, lineSpans: [] }];
+    artifacts.metadata.fileWriteStats = [
+      { path: "src/modified.ts", editCount: 1, addedLines: 1, removedLines: 0 },
+    ];
     const makeBlock = (id: number, active: boolean, createdAt: number): CompressionBlock => ({
       id,
       topic: `Topic ${id}`,
@@ -992,7 +996,13 @@ describe("DCP native pi compaction bridge", () => {
     expect(r1.summary).toContain('<section topic="Topic 6">');
     expect(r1.summary).toContain('<section topic="Topic 5" tier="compact">');
     expect(r1.summary).toContain('<section topic="Topic 4" tier="compact">');
+    expect(r1.summary).toContain(
+      '<section topic="Topic 5" tier="compact">\n<agent-summary>\nSummary text for block 5. Detailed enough.\n</agent-summary>'
+    );
     expect(r1.summary).toContain("<archived-sections>");
+    expect(r1.summary).not.toContain("<read-files>");
+    expect(r1.summary).toContain("<modified-files>");
+    expect(r1.details?.readFiles).toContain("src/read-only.ts");
     expect(r1.summary).toContain("- Topic 1 ");
     expect(r1.summary).toContain("- Topic 3 ");
     // No raw block ids leaked into rendered summary.

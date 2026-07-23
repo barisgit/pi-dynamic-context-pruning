@@ -167,13 +167,13 @@ function buildBlockDebugMetrics(
     creationRemovedTokenEstimate: creationSavings?.removedTokenEstimate,
     creationAddedTokenEstimate: creationSavings?.addedTokenEstimate,
     creationNetSavedTokenEstimate: creationSavings?.netSavedTokenEstimate,
-    activityLogEntryCount: block.activityLog?.length ?? 0,
+    conversationEntryCount: block.activityLog?.length ?? 0,
     coveredSourceKeyCount: metadata?.coveredSourceKeys.length ?? 0,
     coveredSpanKeyCount: metadata?.coveredSpanKeys.length ?? 0,
     coveredToolIdCount: metadata?.coveredToolIds.length ?? 0,
     fileReadStatCount: metadata?.fileReadStats.length ?? 0,
     fileWriteStatCount: metadata?.fileWriteStats.length ?? 0,
-    commandStatCount: metadata?.commandStats.length ?? 0,
+    commandEffectCount: metadata?.effectStats?.commands ?? metadata?.commandStats.length ?? 0,
   };
 }
 

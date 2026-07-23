@@ -10,6 +10,7 @@ import {
   buildSessionDebugPayload,
   buildSourceOwnerKey,
   buildTranscriptSnapshot,
+  createEmptyCompressionBlockMetadata,
   extractCanonicalOwnerKeyFromMessageLike,
   filterProviderPayloadInput,
   findOrphanedToolUse,
@@ -36,10 +37,10 @@ import {
 
 describe("DCP compression.test", () => {
   // ---------------------------------------------------------------------------
-  // Test 15 — BLOCK RENDERER EMITS A FACTUAL CHRONOLOGICAL LOG
+  // Test 15 — BLOCK RENDERER EMITS A BOUNDED CONVERSATION AND EFFECT DIGEST
   // ---------------------------------------------------------------------------
-  test("Test 15 — BLOCK RENDERER EMITS A FACTUAL CHRONOLOGICAL LOG", () => {
-    console.log("TEST 15: block renderer emits summary + chronological log");
+  test("Test 15 — BLOCK RENDERER EMITS A BOUNDED CONVERSATION AND EFFECT DIGEST", () => {
+    console.log("TEST 15: block renderer emits summary + conversation + effect digest");
 
     const message = renderCompressedBlockMessage({
       id: 7,
@@ -55,9 +56,30 @@ describe("DCP compression.test", () => {
           kind: "assistant_excerpt",
           text: '"Default answer: keep `compress` simple <dcp-block-id>b3</dcp-block-id> and preserve the useful follow-up."',
         },
-        { kind: "command", text: "bun run pruner.test.ts -> ok" },
-        { kind: "commit", text: 'ff104f4 "Refine DCP v2 block design"' },
       ],
+      metadata: {
+        coveredSourceKeys: [],
+        coveredSpanKeys: [],
+        coveredArtifactRefs: [],
+        coveredToolIds: [],
+        supersededBlockIds: [],
+        fileReadStats: [{ path: "src/app.ts", count: 3, lineSpans: [] }],
+        fileWriteStats: [
+          { path: "src/app.ts", editCount: 2, addedLines: 4, removedLines: 1 },
+          { path: "tests/app.test.ts", editCount: 1, addedLines: 8, removedLines: 0 },
+        ],
+        commandStats: [
+          { command: "bun run test", status: "ok" },
+          { command: "bun run lint", status: "error" },
+        ],
+        effectStats: {
+          reads: 3,
+          searches: 4,
+          mutations: 3,
+          commands: 2,
+          delegations: 1,
+        },
+      },
     });
 
     const text = message.content?.[0]?.text ?? "";
@@ -69,27 +91,30 @@ describe("DCP compression.test", () => {
       text.includes("<agent-summary>"),
       "FAIL — expected structured summary wrapper when activity log exists"
     );
-    assert.ok(text.includes("<activity-log>"), "FAIL — expected deterministic log wrapper");
+    assert.ok(text.includes("<conversation>"), "FAIL — expected conversation wrapper");
     assert.ok(
       text.includes(
         'u: "You need to remember one thing: SIMPLE... and keep the useful trailing context."'
       ),
-      "FAIL — expected sanitized user excerpt log line"
+      "FAIL — expected sanitized user excerpt"
     );
     assert.ok(
       text.includes(
         'a: "Default answer: keep `compress` simple and preserve the useful follow-up."'
       ),
-      "FAIL — expected sanitized assistant excerpt log line"
+      "FAIL — expected sanitized assistant excerpt"
     );
-    assert.ok(
-      text.includes("cmd: bun run pruner.test.ts -> ok"),
-      "FAIL — expected command log line"
-    );
-    assert.ok(
-      text.includes('commit: ff104f4 "Refine DCP v2 block design"'),
-      "FAIL — expected commit log line"
-    );
+    assert.ok(text.includes("<effects>"), "FAIL — expected aggregate effects wrapper");
+    assert.ok(text.includes("reads: 3"), "FAIL — expected aggregate read count");
+    assert.ok(text.includes("searches: 4"), "FAIL — expected aggregate search count");
+    assert.ok(text.includes("mutations: 3"), "FAIL — expected aggregate mutation count");
+    assert.ok(text.includes("commands: 2"), "FAIL — expected aggregate command count");
+    assert.ok(text.includes("delegations: 1"), "FAIL — expected aggregate delegation count");
+    assert.ok(text.includes("<modified-files>"), "FAIL — expected modified-file wrapper");
+    assert.ok(text.includes("src/app.ts"), "FAIL — expected first modified path");
+    assert.ok(text.includes("tests/app.test.ts"), "FAIL — expected second modified path");
+    assert.ok(!text.includes("bun run test"), "FAIL — individual commands must not render");
+    assert.ok(!text.includes("<activity-log>"), "FAIL — legacy activity log must not render");
     assert.ok(
       !text.includes("m029"),
       "FAIL — visible message ids should not appear in normal rendered block text by default"
@@ -122,12 +147,48 @@ describe("DCP compression.test", () => {
       "FAIL — compact blocks should still keep the stable block marker"
     );
     assert.ok(
-      !compact.includes("<activity-log>"),
-      "FAIL — compact blocks should drop the detailed activity log"
+      !compact.includes("<conversation>"),
+      "FAIL — compact blocks should drop the detailed conversation"
     );
 
     console.log("  PASS: block renderer emits full, compact, and minimal deterministic forms");
     console.log("TEST 15 PASSED\n");
+  });
+
+  test("Test 15b — conversation and modified-file lists disclose bounded omissions", () => {
+    const metadata = createEmptyCompressionBlockMetadata();
+    metadata.fileWriteStats = Array.from({ length: 100 }, (_, index) => ({
+      path: `src/generated-${String(index).padStart(3, "0")}.ts`,
+      editCount: 1,
+      addedLines: 1,
+      removedLines: 0,
+    }));
+    metadata.effectStats = {
+      reads: 0,
+      searches: 0,
+      mutations: 100,
+      commands: 0,
+      delegations: 0,
+    };
+    const activityLog = Array.from({ length: 60 }, (_, index) => ({
+      kind: index % 2 === 0 ? ("user_excerpt" as const) : ("assistant_excerpt" as const),
+      text: `"message ${index}"`,
+    }));
+
+    const text = renderCompressedBlockMessage({
+      id: 10,
+      topic: "bounded digest",
+      summary: "Bounded deterministic details.",
+      activityLog,
+      metadata,
+    }).content?.[0]?.text;
+
+    expect(text).toContain("[... 12 conversation entries omitted ...]");
+    expect(text).toContain("[... 20 modified files omitted ...]");
+    expect(text).toContain('u: "message 0"');
+    expect(text).toContain('a: "message 59"');
+    expect(text).toContain("src/generated-000.ts");
+    expect(text).toContain("src/generated-099.ts");
   });
 
   // ---------------------------------------------------------------------------
@@ -178,8 +239,8 @@ describe("DCP compression.test", () => {
 
     assert.deepStrictEqual(
       artifacts.activityLog.map((entry) => `${entry.kind}:${entry.text}`),
-      ['assistant_excerpt:"I\'ll inspect it."', "read:src/app.ts#L10-L14"],
-      "FAIL — activity log should include the backward-expanded assistant excerpt and deterministic read record"
+      ['assistant_excerpt:"I\'ll inspect it."'],
+      "FAIL — conversation should include the backward-expanded assistant excerpt without tool records"
     );
     assert.deepStrictEqual(
       artifacts.metadata.coveredSourceKeys,
@@ -198,9 +259,10 @@ describe("DCP compression.test", () => {
     );
     assert.deepStrictEqual(
       artifacts.metadata.fileReadStats,
-      [{ path: "src/app.ts", count: 1, lineSpans: ["L10-L14"] }],
-      "FAIL — file read stats should be populated from tool input args"
+      [],
+      "FAIL — individual read paths should not be retained in deterministic metadata"
     );
+    assert.equal(artifacts.metadata.effectStats?.reads, 1, "FAIL — read effect should aggregate");
 
     console.log(
       "  PASS: legacy compress artifacts reuse expanded range coverage and tool metadata"
@@ -243,17 +305,101 @@ describe("DCP compression.test", () => {
 
     assert.deepStrictEqual(
       artifacts.activityLog.map((entry) => `${entry.kind}:${entry.text}`),
-      ['assistant_excerpt:"running"', "test:bun run test -> ok"],
-      "FAIL — tool metadata should be recovered from assistant toolCall blocks even without state.toolCalls"
+      ['assistant_excerpt:"running"'],
+      "FAIL — conversation should exclude individual command records"
     );
     assert.deepStrictEqual(
       artifacts.metadata.commandStats,
-      [{ command: "bun run test", status: "ok" }],
-      "FAIL — command stats should be populated from assistant toolCall arguments"
+      [],
+      "FAIL — individual commands should not be retained in deterministic metadata"
+    );
+    assert.equal(
+      artifacts.metadata.effectStats?.commands,
+      1,
+      "FAIL — command effect should aggregate"
     );
 
     console.log("  PASS: covered assistant toolCall blocks recover missing tool metadata");
     console.log("TEST 17b PASSED\n");
+  });
+
+  // ---------------------------------------------------------------------------
+  // Test 17d — FO RUN ENVELOPES CONTRIBUTE AGGREGATE EFFECTS
+  // ---------------------------------------------------------------------------
+  test("Test 17d — FO RUN ENVELOPES CONTRIBUTE AGGREGATE EFFECTS", () => {
+    const messages: any[] = [
+      {
+        role: "assistant",
+        content: [
+          { type: "text", text: "I inspected the implementation and applied the focused fix." },
+          { type: "toolCall", id: "toolu_run", name: "run", arguments: { code: "private" } },
+        ],
+        timestamp: 1000,
+      },
+      {
+        role: "toolResult",
+        toolCallId: "toolu_run",
+        toolName: "run",
+        content: [{ type: "text", text: "done" }],
+        isError: false,
+        details: {
+          kind: "sandbox.result",
+          version: 1,
+          timeline: [
+            { kind: "tool", toolName: "read", args: { path: "src/app.ts" } },
+            { kind: "tool", toolName: "read", args: { path: "src/app.ts", offset: 20 } },
+            { kind: "tool", toolName: "ast_grep", args: { pattern: "call($A)" } },
+            {
+              kind: "tool",
+              toolName: "apply_patch",
+              args: {
+                patch:
+                  "*** Begin Patch\n*** Update File: src/app.ts\n@@\n-old\n+new\n*** Add File: tests/app.test.ts\n+test\n*** End Patch",
+              },
+            },
+            { kind: "tool", toolName: "bash", args: { command: "bun run test" } },
+            {
+              kind: "tool",
+              toolName: "subagent",
+              args: { run: [{ agent: "review" }, { agent: "explorer" }] },
+            },
+            { kind: "visible", toolName: "return", text: "done" },
+          ],
+        },
+        timestamp: 2000,
+      },
+    ];
+
+    const artifacts = buildCompressionArtifactsForRange(messages, makeState(), 2000, 2000);
+    const rendered = renderCompressedBlockMessage({
+      id: 9,
+      topic: "fo run effects",
+      summary: "The focused fix was applied after inspecting the implementation.",
+      activityLogVersion: artifacts.activityLogVersion,
+      activityLog: artifacts.activityLog,
+      metadata: artifacts.metadata,
+    }).content?.[0]?.text;
+
+    expect(artifacts.activityLog.map((entry) => entry.kind)).toEqual(["assistant_excerpt"]);
+    expect(artifacts.metadata.effectStats).toEqual({
+      reads: 2,
+      searches: 1,
+      mutations: 1,
+      commands: 1,
+      delegations: 2,
+    });
+    expect(artifacts.metadata.fileReadStats).toEqual([]);
+    expect(artifacts.metadata.fileWriteStats.map((stat) => stat.path)).toEqual([
+      "src/app.ts",
+      "tests/app.test.ts",
+    ]);
+    expect(artifacts.metadata.commandStats).toEqual([]);
+    expect(rendered).toContain("<conversation>");
+    expect(rendered).toContain("reads: 2");
+    expect(rendered).toContain("commands: 1");
+    expect(rendered).toContain("src/app.ts");
+    expect(rendered).not.toContain("tool: run");
+    expect(rendered).not.toContain("bun run test");
   });
 
   // ---------------------------------------------------------------------------

@@ -119,6 +119,7 @@ function applyCompressionBlocks(messages: any[], state: DcpState, config: DcpCon
         summary: block.summary,
         activityLogVersion: block.activityLogVersion,
         activityLog: block.activityLog,
+        metadata: block.metadata,
         detailLevel: blockDetailById.get(block.id),
       }),
       // anchorTimestamp is always finite (resolveAnchorTimestamp returns
