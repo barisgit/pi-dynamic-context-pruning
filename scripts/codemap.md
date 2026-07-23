@@ -8,16 +8,16 @@ The `scripts/` directory houses standalone development and debugging utilities f
 
 ## Files
 
-### `llm-proxy.ts`
+### `llm-proxy.ts` / `llm-proxy-codec.ts`
 
-Local HTTP proxy server that intercepts outbound LLM API requests (Anthropic `/messages`, OpenAI `/chat/completions`, OpenAI `/responses`) and writes structured request/response artifacts to disk for analysis.
+Local HTTP proxy server plus its pure HTTP body decoder that intercepts outbound LLM API requests (Anthropic `/messages`, OpenAI `/chat/completions`, OpenAI `/responses`) and writes structured request/response artifacts to disk for analysis.
 
 **Responsibilities:**
 
 - Acts as a capture-only proxy: forwards requests upstream unchanged while simultaneously writing a snapshot.
 - Supports two providers: `anthropic` and `openai` (filterable by CLI positional argument).
 - Detects the provider from request path and auth headers (API key, `anthropic-version`, `openai-organization`, etc.).
-- Handles both standard JSON and SSE response bodies, decompressing `gzip`/`br`/`deflate` as needed.
+- Decodes `gzip`/`br`/`zstd`/`deflate` request captures before JSON parsing while forwarding the original bytes unchanged; applies the same decoding support to JSON and SSE responses.
 - Extracts and normalises API token usage (input, output, cache read, cache write) across all three payload shapes (Anthropic messages, OpenAI chat completions, OpenAI responses).
 - Writes two files per capture:
   - `${prefix}.json` — raw request body.

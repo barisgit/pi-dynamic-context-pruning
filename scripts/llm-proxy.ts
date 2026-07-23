@@ -25,7 +25,7 @@ import https from "node:https";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
-import zlib from "node:zlib";
+import { decompressBody, headerString, parseJsonHttpBody } from "./llm-proxy-codec.js";
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = resolve(SCRIPT_DIR, "..");
@@ -219,41 +219,6 @@ interface TokenUsageCapture {
 
 function asNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
-}
-
-function headerString(headers: IncomingHttpHeaders, name: string): string {
-  const v = headers[name];
-  if (typeof v === "string") return v;
-  if (Array.isArray(v)) return v.join(",");
-  return "";
-}
-
-function decompressBody(buffer: Buffer, headers: IncomingHttpHeaders): Buffer {
-  const enc = headerString(headers, "content-encoding");
-  if (enc.length === 0) return buffer;
-  const lowered = enc.toLowerCase();
-  if (lowered.includes("gzip")) {
-    try {
-      return Buffer.from(zlib.gunzipSync(buffer));
-    } catch {
-      return buffer;
-    }
-  }
-  if (lowered.includes("br")) {
-    try {
-      return Buffer.from(zlib.brotliDecompressSync(buffer));
-    } catch {
-      return buffer;
-    }
-  }
-  if (lowered.includes("deflate")) {
-    try {
-      return Buffer.from(zlib.inflateSync(buffer));
-    } catch {
-      return buffer;
-    }
-  }
-  return buffer;
 }
 
 function parseSseJsonPayloads(body: string): unknown[] {
@@ -970,11 +935,14 @@ const server = http.createServer((req, res) => {
     const requestCaptureReady = new Promise<void>((resolve) => {
       setImmediate(() => {
         let body: Record<string, unknown>;
-        const raw = forwardBytes.toString("utf8");
         try {
-          body = JSON.parse(raw);
-        } catch {
-          console.error("[proxy] Capture: failed to parse request body");
+          body = parseJsonHttpBody(forwardBytes, req.headers);
+        } catch (error) {
+          const encoding = headerString(req.headers, "content-encoding") || "none";
+          console.error(
+            `[proxy] Capture: failed to parse request body (${forwardBytes.length} bytes, content-encoding=${encoding})`,
+            error
+          );
           resolve();
           return;
         }
