@@ -603,4 +603,17 @@ describe("DCP provider payload filter.test", () => {
     expect(aliases).toEqual([]);
     expect(filtered).toEqual(payloadInput);
   });
+
+  test("provider owner lookup supports widened visible refs beyond m9999", () => {
+    const metadataTag = "<" + "dcp-id>m10000</" + "dcp-id>";
+    const ownerByMessageRef = new Map([["m10000", buildSourceOwnerKey(10_000)]]);
+    const message: any = {
+      role: "user",
+      content: [{ type: "input_text", text: `long session\n${metadataTag}` }],
+    };
+
+    expect(extractCanonicalOwnerKeyFromMessageLike(message, ownerByMessageRef)).toBe(
+      buildSourceOwnerKey(10_000)
+    );
+  });
 });

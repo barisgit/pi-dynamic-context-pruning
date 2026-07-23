@@ -18,7 +18,7 @@ This sidesteps rendering/parsing entirely and preserves the last-turn prefix-cac
 
 ### Owner key derivation — fallback path
 
-Regex fallbacks exist only for non-assistant messages and legacy payloads that may not yet carry `__dcpOwnerKey`:
+Regex fallbacks exist only for non-assistant messages and legacy payloads that may not yet carry `__dcpOwnerKey`; message refs accept widened values such as `m10000`:
 
 | Source pattern      | Derived owner key                 |
 | ------------------- | --------------------------------- |

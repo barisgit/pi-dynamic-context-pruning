@@ -26,7 +26,7 @@ On `session_start` / `session_tree`, `restoreStateFromBranch()` uses the single 
 - `resetState()` + `initializeSessionState()` prepare an empty runtime state.
 - Latest coverage-bearing `dcp-state` entry (v1/v5) → `restorePersistedState()` restores full block state plus scalar continuity directly (`restoredStateEntries = 1`).
 - No coverage-bearing entry → latest `dcp-state` entry, if any, restores scalar continuity only via `restorePersistedStateScalars()` (`prunedToolIds`, turn watermarks, `lifetimeTokensSavedRealized`); blocks stay empty, which is safe for lossy legacy v4.
-- Then `repairOffBranchNativeCompactionState()` and `repairStaleNudgeWatermarks()` run. The context handler has no replay trigger.
+- Then `repairOffBranchNativeCompactionState()` and conditional `repairStaleNudgeWatermarks()` run; watermarks reset only when they exceed the restored branch's logical-turn count. The context handler has no replay trigger.
 
 ### Active runtime path
 
@@ -102,7 +102,7 @@ before_agent_start
     └─ inject SYSTEM_PROMPT
 
 tool_call / tool_result
-    └─ populate state.toolCalls (toolCallId → ToolRecord)
+    └─ populate state.toolCalls (toolCallId → ToolRecord; missing resumed records are rehydrated on context)
 
 context ← main transform
     ├─ materializeContextMessages()

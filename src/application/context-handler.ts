@@ -18,6 +18,7 @@ import {
 import { buildLiveOwnerKeys } from "../domain/transcript/index.js";
 import { appendDebugLog, buildSessionDebugPayload } from "../infrastructure/debug-log.js";
 import { updateDcpStatus } from "./status.js";
+import { hydrateMissingToolRecords } from "./tool-recording.js";
 
 function cloneRenderedMessages(messages: DcpMessage[]): DcpMessage[] {
   return messages.map((message) => {
@@ -163,6 +164,7 @@ export function materializeContextMessages(
   state: DcpState,
   config: DcpConfig
 ): ContextMaterializationResult {
+  hydrateMissingToolRecords(messages, state);
   const liveOwnerKeys = buildLiveOwnerKeys(messages, state.compressionBlocks);
   return {
     messages: applyPruning(messages, state, config),

@@ -55,7 +55,7 @@ interface ReplayDcpStateOptions {
    - `buildCompressionArtifactsForRange` — build conversation/effect digest metadata + exact canonical coverage
    - `resolveSupersededBlockIdsForRange` — exact-coverage supersession check; throws on
      partial-ambiguous overlap
-   - block created, active blocks deactivated if superseded, `tokensSaved` recomputed
+   - block created, active blocks deactivated if superseded (including blocks planned earlier in the same invocation), `tokensSaved` recomputed
    - `estimateCreationSavings` computed against pre-result snapshot
 
 5. **Native compaction** — `dcp-native-compaction` entries call `applyNativeCompaction`:

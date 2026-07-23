@@ -54,13 +54,14 @@ function messageEntry(message: any): any {
   };
 }
 
-function nativeCompactionEntry(representedBlockIds: number[]): any {
+function nativeCompactionEntry(representedBlockIds: number[], firstKeptEntryId?: string): any {
   return {
     type: "compaction",
     summary: "native compaction",
     id: "comp-1",
     parentId: null,
     timestamp: new Date().toISOString(),
+    firstKeptEntryId,
     details: {
       source: "dcp-native-compaction",
       version: 1,
@@ -353,6 +354,59 @@ describe("restoreOutcome distinguishes restore branches", () => {
     expect(result.restoredSchemaVersion).toBeNull();
     expect(result.restoredStateEntries).toBe(0);
     expect(state.compressionBlocks).toHaveLength(0);
+  });
+
+  test("preserves valid post-compaction nudge watermarks on resume", () => {
+    const persisted = makeState([block(1, false), { ...block(2, true), topic: "later block" }]);
+    persisted.currentTurn = 3;
+    persisted.lastCompressTurn = 3;
+    persisted.lastNudgeTurn = 2;
+    const branch = [
+      nativeCompactionEntry([1], "msg-1000"),
+      messageEntry({ role: "user", content: [{ type: "text", text: "one" }], timestamp: 1000 }),
+      messageEntry({ role: "user", content: [{ type: "text", text: "two" }], timestamp: 2000 }),
+      messageEntry({ role: "user", content: [{ type: "text", text: "three" }], timestamp: 3000 }),
+      dcpStateEntry(serializePersistedState(persisted)),
+    ];
+
+    const state = makeState();
+    const result = restoreStateFromBranch(branch, state, makeConfig());
+
+    expect(result.repairedNudgeWatermarks).toBe(false);
+    expect(state.lastCompressTurn).toBe(3);
+    expect(state.lastNudgeTurn).toBe(2);
+  });
+
+  test("repairs pre-compaction watermarks that exceed the restored transcript", () => {
+    const persisted = makeState([block(1, false)]);
+    persisted.currentTurn = 30;
+    persisted.lastCompressTurn = 29;
+    persisted.lastNudgeTurn = 28;
+    const hiddenMessages = Array.from({ length: 30 }, (_, index) =>
+      messageEntry({
+        role: "user",
+        content: [{ type: "text", text: `hidden ${index}` }],
+        timestamp: index + 1,
+      })
+    );
+    const firstKept = messageEntry({
+      role: "user",
+      content: [{ type: "text", text: "new turn" }],
+      timestamp: 1000,
+    });
+    const branch = [
+      ...hiddenMessages,
+      firstKept,
+      nativeCompactionEntry([1], firstKept.id),
+      dcpStateEntry(serializePersistedState(persisted)),
+    ];
+
+    const state = makeState();
+    const result = restoreStateFromBranch(branch, state, makeConfig());
+
+    expect(result.repairedNudgeWatermarks).toBe(true);
+    expect(state.lastCompressTurn).toBe(-1);
+    expect(state.lastNudgeTurn).toBe(-1);
   });
 
   test("latest-entry-wins: older v5 blocks + NEWER lossy v4 -> reset-legacy-v4 (stale blocks NOT resurrected)", () => {

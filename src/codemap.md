@@ -26,7 +26,7 @@ Domain modules must not import from `@mariozechner/pi-coding-agent`, filesystem 
 
 `DcpState` is the single mutable runtime object. It holds:
 
-- `toolCalls: Map<toolCallId, ToolRecord>` — bookkeeping for dedup/error purging
+- `toolCalls: Map<toolCallId, ToolRecord>` — bookkeeping for dedup/error purging, rehydrated from transcript exchanges after resume when live records are absent
 - `prunedToolIds: Set<toolCallId>` — tombstones applied each context pass
 - `compressionBlocks: CompressionBlock[]` — **active runtime path** (legacy timestamp-backed blocks)
 - `messageAliases` / `messageRefSnapshot` / `messageOwnerSnapshot` — stable visible-ref bookkeeping
@@ -54,7 +54,7 @@ A **logical turn** is one standalone visible message, or one assistant tool-call
 
 ### Ownership vs. visibility
 
-Visible IDs (`m0001`, `bN`) are agent-facing boundaries only. Canonical owner keys (`s0`, `block:b1`) are internal runtime bookkeeping. `src/domain/provider/payload-filter.ts` uses owner keys — never rendered text patterns — to decide what hidden provider-payload history to suppress.
+Visible IDs (`m0001` through widened refs such as `m10000`, plus `bN`) are agent-facing boundaries only. Canonical owner keys (`s0`, `block:b1`) are internal runtime bookkeeping. `src/domain/provider/payload-filter.ts` uses owner keys — never rendered text patterns — to decide what hidden provider-payload history to suppress.
 
 ### Nudge strategy
 
@@ -184,17 +184,17 @@ src/
 
 ### Application orchestration
 
-| File                                            | Role                                                                                                                                                                      |
-| ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `src/application/context-handler.ts`            | `registerContextHandler()`. The `context` event handler — calls `materializeContextMessages`, applies pruning, emits nudges via `REMINDER_UPSERT_EVENT`.                  |
-| `src/application/session-handler.ts`            | `registerSessionHandlers()`, `restoreStateFromBranch()`, `saveState()`. Single direct-restore path (`mode: "persisted"`); dirty-flag persistence.                         |
-| `src/application/compress-tool/registration.ts` | `registerCompressTool()`. Tool schema, `execute()` body, passthrough-aware native-compaction auto-trigger, post-compress planning hints, sets `pendingSave`.              |
-| `src/application/native-compaction.ts`          | `registerDcpNativeCompactionBridge()`. `session_before_compact`, `session_compact`, `turn_end` hooks. `buildDcpNativeCompactionResult()`, `triggerDcpNativeCompaction()`. |
-| `src/application/commands/dcp.ts`               | `registerCommands()`. `/dcp help`, `/dcp context`, `/dcp stats`, `/dcp compact`.                                                                                          |
-| `src/application/provider-handler.ts`           | `registerProviderHandler()`. `before_provider_request` hook — calls `filterProviderPayloadInput()`.                                                                       |
-| `src/application/tool-recording.ts`             | `registerToolRecordingHandlers()`. `tool_call` / `tool_result` hooks — populates `state.toolCalls`.                                                                       |
-| `src/application/system-prompt-handler.ts`      | `registerSystemPromptHandler()`. `before_agent_start` hook — appends system prompt addition.                                                                              |
-| `src/application/status.ts`                     | `updateDcpStatus()`, `buildDcpStatusText()`, `computeDisplayedTokensSaved()`. Pi footer status integration.                                                               |
+| File                                            | Role                                                                                                                                                                                           |
+| ----------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/application/context-handler.ts`            | `registerContextHandler()`. The `context` event handler — calls `materializeContextMessages`, applies pruning, emits nudges via `REMINDER_UPSERT_EVENT`.                                       |
+| `src/application/session-handler.ts`            | `registerSessionHandlers()`, `restoreStateFromBranch()`, `saveState()`. Single direct-restore path (`mode: "persisted"`); dirty-flag persistence.                                              |
+| `src/application/compress-tool/registration.ts` | `registerCompressTool()`. Tool schema, `execute()` body, passthrough-aware native-compaction auto-trigger, post-compress planning hints, sets `pendingSave`.                                   |
+| `src/application/native-compaction.ts`          | `registerDcpNativeCompactionBridge()`. `session_before_compact`, `session_compact`, `turn_end` hooks. `buildDcpNativeCompactionResult()`, `triggerDcpNativeCompaction()`.                      |
+| `src/application/commands/dcp.ts`               | `registerCommands()`. `/dcp help`, `/dcp context`, `/dcp stats`, `/dcp compact`.                                                                                                               |
+| `src/application/provider-handler.ts`           | `registerProviderHandler()`. `before_provider_request` hook — calls `filterProviderPayloadInput()`.                                                                                            |
+| `src/application/tool-recording.ts`             | `registerToolRecordingHandlers()` plus `hydrateMissingToolRecords()`. Event hooks populate `state.toolCalls`; context materialization fills missing resumed records from transcript exchanges. |
+| `src/application/system-prompt-handler.ts`      | `registerSystemPromptHandler()`. `before_agent_start` hook — appends system prompt addition.                                                                                                   |
+| `src/application/status.ts`                     | `updateDcpStatus()`, `buildDcpStatusText()`, `computeDisplayedTokensSaved()`. Pi footer status integration.                                                                                    |
 
 ### Prompts
 

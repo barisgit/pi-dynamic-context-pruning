@@ -611,7 +611,7 @@ export function registerCompressTool(pi: ExtensionAPI, state: DcpState, config: 
 
         if (plannedBlocks.length > 0) {
           state.nextBlockId = nextBlockId;
-          for (const existing of state.compressionBlocks) {
+          for (const existing of [...state.compressionBlocks, ...plannedBlocks]) {
             if (pendingSupersededBlockIds.has(existing.id)) {
               existing.active = false;
             }

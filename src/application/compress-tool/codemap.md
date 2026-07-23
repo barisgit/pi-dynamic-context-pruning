@@ -16,7 +16,7 @@ Wires the `compress` tool into pi, adapts pi session/provider payloads, and dele
 
 1. `registerCompressTool` called at extension init.
 2. User/agent calls `compress` with `ranges[{ startId, endId, summary, topic? }]`.
-3. Execute handler: fetches current branch messages → resolves protected tail → validates boundary IDs and order → checks hot-tail guard (throws if violated outside emergency) → expands `(bN)` placeholders in summary → delegates `buildCompressionArtifactsForRange` → marks superseded blocks → appends new `CompressionBlock`s to `state.compressionBlocks` → updates `state.tokensSaved`, `state.nextBlockId` → notifies UI → decides native-compaction auto-trigger → recomputes post-compress planning hints → returns result with block IDs and safe-range hints.
+3. Execute handler: fetches current branch messages → resolves protected tail → validates boundary IDs and order → checks hot-tail guard (throws if violated outside emergency) → expands `(bN)` placeholders in summary → delegates `buildCompressionArtifactsForRange` → marks superseded blocks across both prior state and earlier ranges planned in the same call → appends new `CompressionBlock`s to `state.compressionBlocks` → updates `state.tokensSaved`, `state.nextBlockId` → notifies UI → decides native-compaction auto-trigger → recomputes post-compress planning hints → returns result with block IDs and safe-range hints.
 4. Native compaction, if queued, runs as a separate deferred task.
 
 ## Integration

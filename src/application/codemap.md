@@ -20,7 +20,7 @@ Registers the `/dcp` slash command with subcommands: `context`, `stats`, `compac
 Thin wrapper around `src/domain/compression/tooling.js`. Exports everything re-exported from `tooling.js` plus the three source files below.
 
 - **`index.ts`** — re-exports `artifacts`, `registration`, and `validation`.
-- **`registration.ts`** — calls `pi.registerTool` for the `compress` tool. Full `execute` callback: validates boundaries via domain tooling, resolves timestamps/source-keys, enforces protected-tail (with emergency override), builds `CompressionBlock` objects with coverage metadata, deactivates superseded blocks, sets `pendingSave`, updates compress/nudge watermarks, estimates creation savings, runs `decideNativeCompactionAutoTrigger()` (passthrough roles excluded from LLM message counts), and returns post-compress planning hints in the tool response.
+- **`registration.ts`** — calls `pi.registerTool` for the `compress` tool. Full `execute` callback: validates boundaries via domain tooling, resolves timestamps/source-keys, enforces protected-tail (with emergency override), builds `CompressionBlock` objects with coverage metadata, deactivates superseded blocks (including earlier blocks planned in the same multi-range call), sets `pendingSave`, updates compress/nudge watermarks, estimates creation savings, runs `decideNativeCompactionAutoTrigger()` (passthrough roles excluded from LLM message counts), and returns post-compress planning hints in the tool response.
 - **`validation.ts`** — re-exports from `domain/compression/tooling.js`. Contains `validateCompressionRangeBoundaryIds` and related helpers.
 - **`artifacts.ts`** — re-exports from `domain/compression/tooling.js`. Contains `buildCompressionArtifactsForRange`, `buildCompressionPlanningHints`, `expandBlockPlaceholders`, `renderCompressionPlanningHints`.
 
@@ -37,7 +37,7 @@ Registers the `context` event hook (`pi.on("context", ...)`). The handler:
 7. Updates the pi status footer via `updateDcpStatus`.
 8. Writes a `context_evaluated` debug log entry.
 
-Exported helper: `materializeContextMessages` — dispatches to v2 materialization path when active V2 blocks exist, otherwise falls through to the legacy `applyPruning` path.
+Exported helper: `materializeContextMessages` — first rehydrates missing runtime `ToolRecord`s from canonical assistant/result exchanges (without overwriting live event records), then dispatches to the legacy `applyPruning` path.
 
 ### `native-compaction.ts`
 
@@ -69,7 +69,7 @@ Registers session lifecycle hooks (`session_start`, `session_tree`, `session_shu
   - Runs a single direct-restore path: `resetState(state)` + `initializeSessionState(state, config)`.
   - Latest-entry-wins: `findLatestDcpStateEntry(branchEntries)` picks the newest non-`unchanged` snapshot. If that entry is coverage-bearing (v1/v5), `restorePersistedState()` restores full block state plus scalars directly (`restoredStateEntries = 1`); otherwise the scalar branch runs (a newer lossy v4 therefore resets rather than resurrecting older coverage).
   - Otherwise `findLatestDcpStateEntry(branchEntries)` + `restorePersistedStateScalars()` restores scalar continuity only (`prunedToolIds`, turn watermarks, `lifetimeTokensSavedRealized`) and never resurrects blocks.
-  - Always finishes with `repairOffBranchNativeCompactionState()` and `repairStaleNudgeWatermarks()`.
+  - Always finishes with `repairOffBranchNativeCompactionState()` and `repairStaleNudgeWatermarks()`; stale nudge/compress watermarks are reset only when either exceeds the logical-turn count of the restored branch.
 - **`session_shutdown` / `agent_end`** — calls `saveState()` when `state.pendingSave` is true. Guarded by `ctx.hasUI` (skip in `-p` print mode).
 - **`saveState`** — no-op when `!pendingSave`; otherwise `pi.appendEntry("dcp-state", serializePersistedState(state))` and clears the dirty flag.
 - **`restoreStateFromBranch`** — returns `RestoreStateFromBranchResult` with `mode: "persisted"` plus repair metadata. The mode name identifies the single restore path; it is not a success claim.
@@ -87,7 +87,7 @@ Registers the `before_agent_start` event hook. Appends `SYSTEM_PROMPT` (from `sr
 
 ### `tool-recording.ts`
 
-Registers `tool_call` and `tool_result` event hooks. On `tool_call`, inserts a `ToolRecord` into `state.toolCalls` (input fingerprint, turn index). On `tool_result`, updates the existing record (isError, timestamp, token estimate) or creates a new orphan record. These records feed deduplication and error-purging decisions in `src/domain/pruning/`.
+Registers `tool_call` and `tool_result` event hooks. On `tool_call`, inserts a `ToolRecord` into `state.toolCalls` (input fingerprint, turn index). On `tool_result`, updates the existing record (isError, timestamp, token estimate) or creates a new orphan record. `hydrateMissingToolRecords` reconstructs absent records from the source transcript during context materialization while preserving live event records. These records feed deduplication and error-purging decisions in `src/domain/pruning/`.
 
 ## Key Patterns
 

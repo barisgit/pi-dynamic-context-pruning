@@ -278,6 +278,7 @@ Why this matters in practice:
 
 - Resume does not replay the live context buffer, so post-compaction rebuilt buffers cannot erase active block coverage.
 - v1/v5 snapshots restore blocks directly. v3/v4 entries without coverage clean-reset to empty compression state rather than attempting lossy replay.
+- Runtime-only tool records are rehydrated from the current source transcript on each context pass, so deduplication, error purging, and custom strategies continue to recognize pre-restart results.
 - `replayDcpState()` remains available for offline scripts such as vacuuming old session JSONL files, where the raw append-only transcript is still present.
 
 ### Vacuuming old fat snapshots

@@ -170,7 +170,9 @@ function recordToolResult(message: any, state: DcpState): void {
   if (typeof toolCallId !== "string" || toolCallId.length === 0) return;
   const outputText = Array.isArray(message.content)
     ? message.content
-        .map((part: any) => (part?.type === "text" && typeof part.text === "string" ? part.text : ""))
+        .map((part: any) =>
+          part?.type === "text" && typeof part.text === "string" ? part.text : ""
+        )
         .join("")
     : "";
   const tokenEstimate = estimateTokens(outputText);
@@ -387,7 +389,7 @@ function applyCompressInvocation(
   if (plannedBlocks.length === 0) return;
 
   state.nextBlockId = nextBlockId;
-  for (const existing of state.compressionBlocks) {
+  for (const existing of [...state.compressionBlocks, ...plannedBlocks]) {
     if (pendingSupersededBlockIds.has(existing.id)) {
       existing.active = false;
     }
@@ -407,10 +409,7 @@ function applyCompressInvocation(
     .reduce((sum, block) => sum + (block.savedTokenEstimate ?? 0), 0);
 }
 
-function estimateCreationSavings(
-  block: CompressionBlock,
-  messages: readonly any[]
-): number {
+function estimateCreationSavings(block: CompressionBlock, messages: readonly any[]): number {
   const coveredSourceKeys = block.metadata?.coveredSourceKeys;
   if (!coveredSourceKeys || coveredSourceKeys.length === 0) return 0;
   const covered = new Set(coveredSourceKeys);

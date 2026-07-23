@@ -1587,6 +1587,71 @@ describe("DCP compression.test", () => {
     console.log("TEST 23d PASSED\n");
   });
 
+  test("same-call supersession deactivates an earlier planned block", async () => {
+    const messages = Array.from({ length: 10 }, (_, index) => ({
+      role: "user",
+      content: [{ type: "text", text: `message ${index} `.repeat(100) }],
+      timestamp: (index + 1) * 1000,
+    }));
+    const state = makeState();
+    for (const [index, message] of messages.entries()) {
+      const ref = `m${String(index + 1).padStart(4, "0")}`;
+      state.messageIdSnapshot.set(ref, message.timestamp);
+      state.messageRefSnapshot.set(ref, {
+        ref,
+        sourceKey: `msg:${message.timestamp}:user:${index}`,
+        timestamp: message.timestamp,
+        ownerKey: `source:${ref}`,
+      });
+    }
+
+    const config = makeConfig();
+    config.compress.protectRecentTurns = 0;
+    config.nativeCompaction.autoTriggerMessageCount = 1_000_000;
+    let registeredTool: any = null;
+    const pi = {
+      registerTool(tool: any) {
+        registeredTool = tool;
+      },
+      appendEntry: () => undefined,
+    };
+    const ctx = {
+      sessionManager: {
+        getSessionId: () => "session-1",
+        getCwd: () => "/tmp/dcp-test",
+        getSessionDir: () => "/tmp/dcp-test/session",
+        getSessionFile: () => "/tmp/dcp-test/session.jsonl",
+        getLeafId: () => null,
+        getBranch: () => messages.map((message) => ({ type: "message", message })),
+      },
+      getContextUsage: () => ({ tokens: 0, contextWindow: 100_000 }),
+      hasUI: false,
+      ui: { notify: () => undefined },
+    };
+    registerCompressTool(pi as any, state, config);
+
+    await registeredTool.execute(
+      "compress-call-1",
+      {
+        topic: "Outer",
+        ranges: [
+          { startId: "m0001", endId: "m0005", summary: "inner summary", topic: "Inner" },
+          { startId: "m0001", endId: "m0010", summary: "outer summary", topic: "Outer" },
+        ],
+      },
+      undefined,
+      undefined,
+      ctx
+    );
+
+    const inner = state.compressionBlocks.find((block) => block.topic === "Inner")!;
+    const outer = state.compressionBlocks.find((block) => block.topic === "Outer")!;
+    expect(outer.metadata?.supersededBlockIds).toEqual([inner.id]);
+    expect(inner.active).toBe(false);
+    expect(state.compressionBlocks.filter((block) => block.active)).toEqual([outer]);
+    expect(state.tokensSaved).toBe(outer.savedTokenEstimate ?? 0);
+  });
+
   // ---------------------------------------------------------------------------
   // Test 23e — COMPRESS TOOL KEEPS POST-COMPRESS HINTS OUT OF MODEL TEXT
   // ---------------------------------------------------------------------------

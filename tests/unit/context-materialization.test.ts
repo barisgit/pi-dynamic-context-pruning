@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { materializeContextMessages } from "../../src/application/context-handler.js";
+import { hydrateMissingToolRecords } from "../../src/application/tool-recording.js";
 import { filterProviderPayloadInput } from "../../src/domain/provider/payload-filter.js";
 import { applyPruning } from "../../src/domain/pruning/index.js";
 import { buildBlockOwnerKey, buildSourceOwnerKey } from "../../src/domain/transcript/index.js";
@@ -95,5 +96,91 @@ describe("context materialization routing", () => {
     expect(
       providerFiltered.some((message: any) => textOf(message).includes("legacy summary"))
     ).toBe(true);
+  });
+
+  test("rebuilds missing tool records so pre-restart duplicates remain prunable", () => {
+    const repeatedOutput = "same file content ".repeat(200);
+    const messages: any[] = [
+      { role: "user", content: [{ type: "text", text: "first read" }], timestamp: 1000 },
+      {
+        role: "assistant",
+        content: [{ type: "toolCall", id: "read-1", name: "read", arguments: { path: "a.ts" } }],
+        timestamp: 2000,
+      },
+      {
+        role: "toolResult",
+        toolCallId: "read-1",
+        toolName: "read",
+        content: [{ type: "text", text: repeatedOutput }],
+        isError: false,
+        timestamp: 3000,
+      },
+      { role: "user", content: [{ type: "text", text: "again" }], timestamp: 4000 },
+      {
+        role: "assistant",
+        content: [{ type: "toolCall", id: "read-2", name: "read", arguments: { path: "a.ts" } }],
+        timestamp: 5000,
+      },
+      {
+        role: "toolResult",
+        toolCallId: "read-2",
+        toolName: "read",
+        content: [{ type: "text", text: repeatedOutput }],
+        isError: false,
+        timestamp: 6000,
+      },
+      { role: "user", content: [{ type: "text", text: "continue" }], timestamp: 7000 },
+    ];
+    const state = makeState();
+    const config = makeConfig();
+    config.strategies.deduplication.enabled = true;
+
+    const routed = materializeContextMessages(messages, state, config);
+    const firstResult = routed.messages.find((message: any) => message.toolCallId === "read-1");
+
+    expect(state.toolCalls.has("read-1")).toBe(true);
+    expect(state.toolCalls.has("read-2")).toBe(true);
+    expect(state.prunedToolIds.has("read-1")).toBe(true);
+    expect(textOf(firstResult)).toContain("[Output removed to save context");
+  });
+
+  test("rebuilds string-form tool arguments without collapsing distinct fingerprints", () => {
+    const messages: any[] = [
+      {
+        role: "assistant",
+        content: [{ type: "toolCall", id: "read-a", name: "read", arguments: '{"path":"a.ts"}' }],
+        timestamp: 1000,
+      },
+      {
+        role: "toolResult",
+        toolCallId: "read-a",
+        toolName: "read",
+        content: [{ type: "text", text: "a" }],
+        isError: false,
+        timestamp: 2000,
+      },
+      {
+        role: "assistant",
+        content: [{ type: "toolCall", id: "read-b", name: "read", arguments: '{"path":"b.ts"}' }],
+        timestamp: 3000,
+      },
+      {
+        role: "toolResult",
+        toolCallId: "read-b",
+        toolName: "read",
+        content: [{ type: "text", text: "b" }],
+        isError: false,
+        timestamp: 4000,
+      },
+    ];
+    const state = makeState();
+
+    hydrateMissingToolRecords(messages, state);
+
+    expect(state.toolCalls.get("read-a")?.inputArgs).toEqual({ path: "a.ts" });
+    expect(state.toolCalls.get("read-b")?.inputArgs).toEqual({ path: "b.ts" });
+    expect(state.toolCalls.get("read-a")?.inputFingerprint).not.toBe(
+      state.toolCalls.get("read-b")?.inputFingerprint
+    );
   });
 });

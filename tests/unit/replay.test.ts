@@ -148,6 +148,42 @@ describe("DCP replay engine", () => {
     expect(compressRecord?.isError).toBe(false);
   });
 
+  test("R1b — same-call containing range supersedes an earlier planned block", () => {
+    const messages = Array.from({ length: 10 }, (_, index) =>
+      makeUser(`${LONG_BODY} message ${index}`, (index + 1) * 1000)
+    );
+    const assistantCompress = makeAssistantToolCall(
+      "call-compress-nested",
+      "compress",
+      {
+        topic: "Outer",
+        ranges: [
+          { startId: "m0001", endId: "m0005", summary: "inner", topic: "Inner" },
+          { startId: "m0001", endId: "m0010", summary: "outer", topic: "Outer" },
+        ],
+      },
+      11_000
+    );
+    const compressResult = makeToolResult(
+      "call-compress-nested",
+      "compress",
+      "Compressed 2 range(s)",
+      12_000
+    );
+
+    const state = replayDcpState(
+      makeBranch([...messages, assistantCompress, compressResult]),
+      makeConfig()
+    );
+    const inner = state.compressionBlocks.find((block) => block.topic === "Inner")!;
+    const outer = state.compressionBlocks.find((block) => block.topic === "Outer")!;
+
+    expect(outer.metadata?.supersededBlockIds).toEqual([inner.id]);
+    expect(inner.active).toBe(false);
+    expect(state.compressionBlocks.filter((block) => block.active)).toEqual([outer]);
+    expect(state.tokensSaved).toBe(outer.savedTokenEstimate ?? 0);
+  });
+
   // -------------------------------------------------------------------------
   // Test R2 — Two compresses with the second fully covering the first
   //           → supersession deactivates the earlier block
@@ -252,10 +288,7 @@ describe("DCP replay engine", () => {
     // Native compaction representing block id=1
     const compactionEntry = makeCompactionEntry([1], "2024-01-01T00:00:00.000Z");
 
-    const branch = [
-      ...makeBranch([m1, m2, compress1, compress1Result]),
-      compactionEntry,
-    ];
+    const branch = [...makeBranch([m1, m2, compress1, compress1Result]), compactionEntry];
     const state = replayDcpState(branch, makeConfig());
 
     expect(state.compressionBlocks.length).toBe(1);
@@ -300,5 +333,4 @@ describe("DCP replay engine", () => {
     expect(r1Record?.inputFingerprint).toBe(r2Record?.inputFingerprint);
     expect(r1Record?.toolName).toBe("bash");
   });
-
 });

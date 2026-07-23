@@ -8,6 +8,7 @@ import {
   restorePersistedStateScalars,
   serializePersistedState,
 } from "../infrastructure/persistence.js";
+import { countLogicalTurns } from "../domain/transcript/index.js";
 import { updateDcpStatus } from "./status.js";
 
 /** Apply config-derived baseline state before session hooks run. */
@@ -28,6 +29,25 @@ function isCoverageBearingDcpState(data: unknown): boolean {
     return Array.isArray(persisted.compressionBlocks);
   }
   return false;
+}
+
+function resolveRestoredLiveTurnCount(branchEntries: readonly any[]): number | null {
+  let latestCompaction: any = null;
+  for (const entry of branchEntries) {
+    if (entry?.type === "compaction") latestCompaction = entry;
+  }
+  if (!latestCompaction || typeof latestCompaction.firstKeptEntryId !== "string") return null;
+
+  const firstKeptIndex = branchEntries.findIndex(
+    (entry) => entry?.id === latestCompaction.firstKeptEntryId
+  );
+  if (firstKeptIndex < 0) return null;
+
+  const restoredMessages = branchEntries
+    .slice(firstKeptIndex)
+    .filter((entry) => entry?.type === "message" && entry.message)
+    .map((entry) => entry.message);
+  return countLogicalTurns(restoredMessages);
 }
 
 /**
@@ -158,16 +178,25 @@ function branchHasDcpNativeCompaction(entries: readonly any[]): boolean {
  * if lastCompressTurn/lastNudgeTurn still hold the pre-compaction values, the
  * `currentTurn <= lastCompressTurn` gate silences nudges indefinitely.
  *
- * Safe heuristic: if the active branch already contains a DCP-native
- * compaction entry, the watermarks must not be greater than the current
- * compactionEntry-aware turn count. We don't have a clean lower bound here,
- * so we reset to the initial sentinel (-1). This only reduces the debounce
- * window; it never falsely re-emits a nudge in the middle of a logical turn
- * because getNudgeType still requires the context threshold to be reached.
+ * Safe heuristic: mirror pi's post-compaction context window using the latest
+ * compaction entry's `firstKeptEntryId`. Preserve watermarks that fit inside
+ * that live logical-turn count; reset only values that exceed it. If the
+ * boundary is missing or unresolved, reset conservatively rather than risk an
+ * indefinite `currentTurn <= lastCompressTurn` suppression.
  */
 function repairStaleNudgeWatermarks(branchEntries: readonly any[], state: DcpState): boolean {
   if (state.lastCompressTurn <= 0 && state.lastNudgeTurn <= 0) return false;
   if (!branchHasDcpNativeCompaction(branchEntries)) return false;
+
+  const restoredTurnCount = resolveRestoredLiveTurnCount(branchEntries);
+  if (
+    restoredTurnCount !== null &&
+    state.lastCompressTurn <= restoredTurnCount &&
+    state.lastNudgeTurn <= restoredTurnCount
+  ) {
+    return false;
+  }
+
   state.lastCompressTurn = -1;
   state.lastNudgeTurn = -1;
   return true;

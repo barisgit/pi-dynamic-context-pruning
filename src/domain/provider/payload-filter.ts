@@ -25,7 +25,7 @@ function normalizeInlineWhitespace(text: string): string {
 
 function findLastVisibleMessageRef(text: string): string | null {
   let lastRef: string | null = null;
-  for (const match of text.matchAll(/<dcp-id>(m\d{3,4})<\/dcp-id>/gi)) {
+  for (const match of text.matchAll(/<dcp-id>(m\d{3,})<\/dcp-id>/gi)) {
     if (typeof match[1] === "string") lastRef = match[1].toLowerCase();
   }
   return lastRef;
@@ -77,7 +77,7 @@ function isMetadataOnlyMessageLike(item: any): boolean {
   if (!normalized) return false;
 
   const stripped = normalized
-    .replace(/<dcp-id>m\d{3,4}<\/dcp-id>/gi, "")
+    .replace(/<dcp-id>m\d{3,}<\/dcp-id>/gi, "")
     .replace(/<dcp-owner>[^<]+<\/dcp-owner>/gi, "")
     .replace(/<dcp-block-id>b\d+<\/dcp-block-id>/gi, "")
     .trim();
