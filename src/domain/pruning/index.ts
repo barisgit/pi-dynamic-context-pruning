@@ -9,7 +9,13 @@ import type { DcpMessage } from "../../types/message.js";
 import { stripDcpHallucinationsFromString } from "../refs/metadata.js";
 import { renderCompressedBlockMessage } from "../compression/materialize.js";
 import { allocateMessageRef } from "../refs/index.js";
-import { buildSourceItemKey, buildSourceOwnerKey, countLogicalTurns } from "../transcript/index.js";
+import {
+  INTERNAL_BLOCK_ID,
+  buildBlockOwnerKey,
+  buildSourceItemKey,
+  buildSourceOwnerKey,
+  countLogicalTurns,
+} from "../transcript/index.js";
 
 // Always-protected tool names for deduplication
 const ALWAYS_PROTECTED_DEDUP = new Set(["compress", "write", "edit"]);
@@ -720,6 +726,11 @@ function gcPrunedToolIds(messages: any[], state: DcpState): void {
  * are agent-input boundaries. Updates state.messageIdSnapshot.
  */
 function extractBlockOwnerKey(message: any): string | null {
+  const blockId = message?.[INTERNAL_BLOCK_ID];
+  if (typeof blockId === "number" && Number.isInteger(blockId) && blockId > 0) {
+    return buildBlockOwnerKey(blockId);
+  }
+
   const content = message?.content;
   const text =
     typeof content === "string"

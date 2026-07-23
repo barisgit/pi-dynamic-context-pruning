@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { materializeContextMessages } from "../../src/application/context-handler.js";
 import { filterProviderPayloadInput } from "../../src/domain/provider/payload-filter.js";
 import { applyPruning } from "../../src/domain/pruning/index.js";
-import { buildSourceOwnerKey } from "../../src/domain/transcript/index.js";
+import { buildBlockOwnerKey, buildSourceOwnerKey } from "../../src/domain/transcript/index.js";
 import { createEmptyCompressionBlockMetadata } from "../../src/state.js";
 import type { CompressionBlock } from "../../src/types/state.js";
 import { makeConfig, makeMessages, makeState } from "../helpers/dcp-test-utils.js";
@@ -78,5 +78,22 @@ describe("context materialization routing", () => {
     expect(providerFiltered.some((message: any) => textOf(message).includes("still visible"))).toBe(
       true
     );
+  });
+
+  test("provider filtering retains a materialized compression block", () => {
+    const state = makeState([makeLegacyToolBlock()]);
+    const routed = materializeContextMessages(makeMessages(), state, makeConfig());
+
+    const providerFiltered = filterProviderPayloadInput(
+      routed.messages as any[],
+      routed.liveOwnerKeys,
+      state.compressionBlocks,
+      state.messageOwnerSnapshot
+    );
+
+    expect(routed.liveOwnerKeys.has(buildBlockOwnerKey(4))).toBe(true);
+    expect(
+      providerFiltered.some((message: any) => textOf(message).includes("legacy summary"))
+    ).toBe(true);
   });
 });
