@@ -27,7 +27,7 @@ Regex fallbacks exist only for non-assistant messages and legacy payloads that m
 
 ### Represented compress receipts
 
-Active `CompressionBlock`s with `compressCallId` and a live `block:bN` owner key are grouped by call ID. The newest receipt is minified to a compact success message; older receipts for the same call are suppressed. See `buildRepresentedCompressArtifacts`.
+Active `CompressionBlock`s with `compressCallId` and a live `block:bN` owner key are grouped by call ID. `collectSandboxCompressCallAliases` also recognizes fo `sandbox.result` v1 `run` envelopes whose timeline contains only successful `compress` operations with identifiable block IDs; mixed runs and failed/unidentified operations remain untouched. These aliases participate in represented-receipt selection, so the newest receipt is minified to a compact success message and older represented pairs are suppressed. See `buildRepresentedCompressArtifacts`.
 
 ### Payload item ownership
 
@@ -44,7 +44,8 @@ Active `CompressionBlock`s with `compressCallId` and a live `block:bN` owner key
 ```text
 provider payload items
   → buildDirectOwnerKeys / buildPreviousAssistantOwners / buildNextAssistantOwners
-  → buildRepresentedCompressArtifacts  (live blocks → call-id → receipt/newest)
+  → collectSandboxCompressCallAliases  (compress-only fo run envelopes → call-id/block aliases)
+  → buildRepresentedCompressArtifacts  (live blocks + aliases → call-id → receipt/newest)
   → for each item: check owner vs liveOwnerKeys set
       └── owned  → keep (possibly minified)
       └── not owned → drop
@@ -54,5 +55,5 @@ provider payload items
 
 - **Called from:** `src/application/provider-handler.ts` — receives the raw provider payload array and `liveOwnerKeys` (a `Set<string>` of canonical owner keys from `src/domain/transcript/`)
 - **Depends on:** `src/domain/transcript/` for `__dcpOwnerKey` injection and `liveOwnerKeys` population
-- **Input:** raw provider payload items, live owner key set, active compression blocks (for represented compress logic)
+- **Input:** raw provider payload items, live owner key set, active compression blocks, and aliases from successful compress-only fo sandbox runs
 - **Output:** filtered array with stale artifacts removed and newest compress pair minified to a receipt

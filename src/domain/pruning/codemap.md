@@ -53,7 +53,7 @@ Walks messages in ordinal order. For each `ID_ELIGIBLE_ROLES` entry:
 
 1. Builds a stable `sourceKey` (prefers `__dcpSourceKey` internal property; falls back to `buildSourceItemKey`).
 2. Allocates a dense `mNNNN` ref via `allocateMessageRef`.
-3. Derives `ownerKey` from `__dcpOwnerKey` or `buildSourceOwnerKey`.
+3. Derives `ownerKey`: synthetic compressed-block messages first use `INTERNAL_BLOCK_ID` to build `block:bN`; other messages use `__dcpOwnerKey` or `buildSourceOwnerKey`.
 4. Injects the ref as a metadata tag appended to `msg.content`.
 5. Records `{ref, sourceKey, timestamp, ownerKey}` in `messageRefSnapshot` and `messageOwnerSnapshot`.
 

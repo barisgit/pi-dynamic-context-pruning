@@ -45,9 +45,9 @@ Consumed by: `application/compress-tool/registration.ts`, `application/context-h
 
 **Purpose:** Filter stale hidden artifacts from provider payloads using canonical owner keys.
 
-| File                | Responsibility                                                                                                                                                                                                                                                                                                                                          |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `payload-filter.ts` | Derive owner keys from `__dcpOwnerKey` Symbol attached to assistant message objects. Build represented compress receipts. Minify the newest live represented compress exchange to a compact receipt; suppress older represented pairs. Filter `reasoning`, `function_call`, `function_call_output` items by live owner key. No rendered tag dependency. |
+| File                | Responsibility                                                                                                                                                                                                                                                                                                                                                      |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `payload-filter.ts` | Derive owner keys from `__dcpOwnerKey` Symbol attached to assistant message objects. Recognize successful compress-only fo sandbox `run` envelopes as represented-call aliases while leaving mixed runs intact. Minify the newest live represented compress exchange to a compact receipt; suppress older represented pairs. Filter hidden items by live owner key. |
 
 **Key types:** `RepresentedCompressCallReceipt`, `RepresentedCompressArtifacts`.
 
@@ -156,7 +156,7 @@ New blocks persist `startSourceKey`, `endSourceKey`, and `anchorSourceKey` for s
 
 ### 7. Owner Key Derivation
 
-Owner keys are derived from canonical transcript/source metadata captured in `messageOwnerSnapshot` for visible non-assistant messages and compressed blocks, plus the non-enumerable `__dcpOwnerKey` Symbol attached to assistant message objects during context materialization. Assistant messages do not receive visible refs, preserving provider prefix cache. `provider/payload-filter.ts` reads canonical owner data directly and uses rendered-tag parsing only as a legacy/non-assistant fallback — no arbitrary rendered-text ownership dependency.
+Owner keys are derived from canonical transcript/source metadata captured in `messageOwnerSnapshot` for visible non-assistant messages and compressed blocks; synthetic block messages are identified directly through `INTERNAL_BLOCK_ID`, while assistant messages carry the non-enumerable `__dcpOwnerKey` Symbol during context materialization. Assistant messages do not receive visible refs, preserving provider prefix cache. `provider/payload-filter.ts` reads canonical owner data directly and uses rendered-tag parsing only as a legacy/non-assistant fallback — no arbitrary rendered-text ownership dependency.
 
 ### 8. Passthrough Roles
 

@@ -40,6 +40,7 @@ export {
   parseVisibleRef,
 };
 export {
+  collectSandboxCompressCallAliases,
   extractCanonicalOwnerKeyFromMessageLike,
   filterProviderPayloadInput,
 } from "../../src/domain/provider/payload-filter.js";

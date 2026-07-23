@@ -161,7 +161,7 @@ DCP intentionally changes older rendered context in a few places. Treat these as
 - Logical-turn note: "turns" here is the DCP logical-turn model, not user turns. A standalone visible message is one turn and an assistant tool-call batch plus its matching tool results is one turn, so cadence advances during tool-only autonomous loops with no user message.
 - `applyToolOutputPruning()` does **not** remove the whole assistant/tool pair; it replaces matching `toolResult.content` with a stable tombstone or deterministic reduction. The cache break happens when the ID first enters `state.prunedToolIds`; later renders should be stable.
 - Render detail aging can change older block text when blocks move full → compact → minimal according to `renderFullBlockCount` / `renderCompactBlockCount`.
-- Provider-payload filtering is separate from visible transcript rendering. The newest represented successful `compress` exchange is minified to a receipt; older represented pairs are suppressed.
+- Provider-payload filtering is separate from visible transcript rendering. The newest represented successful `compress` exchange is minified to a receipt; older represented pairs are suppressed. Successful fo `run` envelopes are treated as represented compress exchanges only when every nested sandbox tool event is `compress`; mixed runs remain intact so unrelated work is never hidden with the compression artifact.
 
 Ideas discussed but not currently implemented:
 

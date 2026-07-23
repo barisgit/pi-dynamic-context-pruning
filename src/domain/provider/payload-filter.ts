@@ -157,6 +157,11 @@ function buildNextAssistantOwners(
 
 type CompressArtifactBlock = Pick<CompressionBlock, "id" | "active" | "compressCallId" | "topic">;
 
+export interface SandboxCompressCallAlias {
+  callId: string;
+  blockIds: number[];
+}
+
 interface RepresentedCompressBlockReceipt {
   id: number;
   topic: string;
@@ -170,7 +175,71 @@ interface RepresentedCompressCallReceipt {
 
 interface RepresentedCompressArtifacts {
   byProviderCallId: Map<string, RepresentedCompressCallReceipt>;
+  sandboxProviderCallIds: Set<string>;
   newestReceipt: RepresentedCompressCallReceipt | null;
+}
+
+/**
+ * Find fo `run` calls whose structured sandbox timeline contains only
+ * successful `compress` tool operations. Mixed runs stay untouched because
+ * removing or minifying their outer provider pair would also hide unrelated
+ * work performed by the same container call.
+ */
+export function collectSandboxCompressCallAliases(
+  messages: readonly DcpMessage[]
+): SandboxCompressCallAlias[] {
+  const aliases: SandboxCompressCallAlias[] = [];
+
+  for (const message of messages) {
+    if (message?.role !== "toolResult") continue;
+    if (String((message as any).toolName ?? "").toLowerCase() !== "run") continue;
+    if (typeof (message as any).toolCallId !== "string") continue;
+
+    const details = (message as any).details;
+    if (!details || typeof details !== "object") continue;
+    if (details.kind !== "sandbox.result" || details.version !== 1) continue;
+    if (!Array.isArray(details.timeline)) continue;
+
+    const toolEvents = details.timeline.filter(
+      (entry: any) => entry && typeof entry === "object" && entry.kind === "tool"
+    );
+    if (toolEvents.length === 0) continue;
+    if (
+      toolEvents.some(
+        (entry: any) =>
+          String(entry.toolName ?? "").toLowerCase() !== "compress" || entry.isError !== false
+      )
+    ) {
+      continue;
+    }
+
+    const blockIds = new Set<number>();
+    let hasUnidentifiedResult = false;
+    for (const event of toolEvents) {
+      const resultDetails = event?.result?.details;
+      const ids = Array.isArray(resultDetails?.blockIds)
+        ? resultDetails.blockIds
+        : Array.isArray(resultDetails?.blocks)
+          ? resultDetails.blocks.map((block: any) => block?.id)
+          : [];
+      const validIds = ids.filter(
+        (id: unknown): id is number => typeof id === "number" && Number.isInteger(id) && id > 0
+      );
+      if (validIds.length === 0) {
+        hasUnidentifiedResult = true;
+        break;
+      }
+      for (const id of validIds) blockIds.add(id);
+    }
+    if (hasUnidentifiedResult || blockIds.size === 0) continue;
+
+    aliases.push({
+      callId: (message as any).toolCallId,
+      blockIds: Array.from(blockIds).sort((a, b) => a - b),
+    });
+  }
+
+  return aliases;
 }
 
 function addProviderCallIdAliases(
@@ -191,9 +260,11 @@ function addProviderCallIdAliases(
 
 function buildRepresentedCompressArtifacts(
   liveOwnerKeys: Set<string>,
-  compressionBlocks: readonly CompressArtifactBlock[]
+  compressionBlocks: readonly CompressArtifactBlock[],
+  sandboxAliases: readonly SandboxCompressCallAlias[]
 ): RepresentedCompressArtifacts {
   const receiptsByStoredCallId = new Map<string, RepresentedCompressCallReceipt>();
+  const representedBlocksById = new Map<number, RepresentedCompressBlockReceipt>();
 
   for (const block of compressionBlocks) {
     if (!block.active) continue;
@@ -205,6 +276,7 @@ function buildRepresentedCompressArtifacts(
       id: block.id,
       topic: typeof block.topic === "string" && block.topic.trim() ? block.topic : "untitled",
     };
+    representedBlocksById.set(block.id, blockReceipt);
 
     if (existing) {
       existing.blocks.push(blockReceipt);
@@ -219,6 +291,7 @@ function buildRepresentedCompressArtifacts(
   }
 
   const byProviderCallId = new Map<string, RepresentedCompressCallReceipt>();
+  const sandboxProviderCallIds = new Set<string>();
   let newestReceipt: RepresentedCompressCallReceipt | null = null;
 
   for (const receipt of receiptsByStoredCallId.values()) {
@@ -229,7 +302,27 @@ function buildRepresentedCompressArtifacts(
     addProviderCallIdAliases(byProviderCallId, receipt.callId, receipt);
   }
 
-  return { byProviderCallId, newestReceipt };
+  for (const alias of sandboxAliases) {
+    const blocks = alias.blockIds
+      .map((id) => representedBlocksById.get(id))
+      .filter((block): block is RepresentedCompressBlockReceipt => block !== undefined);
+    if (blocks.length !== alias.blockIds.length || blocks.length === 0) continue;
+
+    const receipt: RepresentedCompressCallReceipt = {
+      callId: alias.callId,
+      blocks,
+      newestBlockId: Math.max(...blocks.map((block) => block.id)),
+    };
+    addProviderCallIdAliases(byProviderCallId, alias.callId, receipt);
+    sandboxProviderCallIds.add(alias.callId);
+    const pipeIndex = alias.callId.indexOf("|");
+    if (pipeIndex > 0) sandboxProviderCallIds.add(alias.callId.slice(0, pipeIndex));
+    if (newestReceipt === null || receipt.newestBlockId >= newestReceipt.newestBlockId) {
+      newestReceipt = receipt;
+    }
+  }
+
+  return { byProviderCallId, sandboxProviderCallIds, newestReceipt };
 }
 
 function getRepresentedCompressReceipt(
@@ -240,7 +333,8 @@ function getRepresentedCompressReceipt(
   if (typeof item?.call_id !== "string") return null;
 
   if (item?.type === "function_call") {
-    return item?.name === "compress"
+    return item?.name === "compress" ||
+      representedCompressArtifacts.sandboxProviderCallIds.has(item.call_id)
       ? (representedCompressArtifacts.byProviderCallId.get(item.call_id) ?? null)
       : null;
   }
@@ -288,7 +382,8 @@ export function filterProviderPayloadInput(
   input: DcpProviderPayloadItem[],
   liveOwnerKeys: Iterable<string>,
   compressionBlocks: readonly CompressArtifactBlock[] = [],
-  ownerByMessageRef: ReadonlyMap<string, string> = new Map()
+  ownerByMessageRef: ReadonlyMap<string, string> = new Map(),
+  sandboxCompressCallAliases: readonly SandboxCompressCallAlias[] = []
 ): DcpProviderPayloadItem[] {
   if (!Array.isArray(input)) return input;
 
@@ -300,7 +395,8 @@ export function filterProviderPayloadInput(
   const nextAssistantOwners = buildNextAssistantOwners(input, directOwners);
   const representedCompressArtifacts = buildRepresentedCompressArtifacts(
     liveOwners,
-    compressionBlocks
+    compressionBlocks,
+    sandboxCompressCallAliases
   );
   const filtered: DcpProviderPayloadItem[] = [];
 

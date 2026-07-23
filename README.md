@@ -261,7 +261,7 @@ DCP optimizes context size first, but some strategies intentionally mutate previ
 - **Red-zone override — _ignore cache efficiency, we need space:_** when the live effective context from the previous pass exceeds `compress.maxContextPercent` / `compress.maxContextTokens`, both net-savings gates are bypassed and every cadence-eligible candidate is pruned immediately. Cadence still applies. This pressure signal is live-only (never reconstructed during offline replay).
 - **Block detail aging:** when newer blocks are added, older blocks can move from full → compact → minimal according to `renderFullBlockCount` / `renderCompactBlockCount` (defaults: 4 full, 8 compact), changing prior block text.
 - **Nudges:** reminder text is appended near the active context tail, so it is usually a suffix change rather than an old-prefix rewrite.
-- **Provider-payload filtering:** hidden provider artifacts can be suppressed or minified independently of the visible transcript. Represented successful `compress` artifacts keep only the newest compact receipt and suppress older represented pairs.
+- **Provider-payload filtering:** hidden provider artifacts can be suppressed or minified independently of the visible transcript. Represented successful `compress` artifacts keep only the newest compact receipt and suppress older represented pairs. A fo `run` envelope receives the same treatment only when its structured sandbox timeline contains successful `compress` calls and no other tool calls; mixed runs remain intact.
 
 Ideas considered for a more cache-stable future policy:
 

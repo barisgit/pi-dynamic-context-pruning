@@ -59,7 +59,7 @@ Integrates DCP state with pi's native session-compaction lifecycle via `session_
 
 ### `provider-handler.ts`
 
-Registers the `before_provider_request` event hook. Calls `filterProviderPayloadInput` from `src/domain/provider/payload-filter.js` to prune stale `reasoning`, `function_call`, and `function_call_output` artifacts from the provider request payload using canonical owner keys and the latest live owner map. Writes a `provider_payload_filtered` debug log entry when any items were removed.
+Registers the `before_provider_request` event hook. Extracts aliases from successful compress-only fo `sandbox.result` v1 `run` envelopes in `state.lastRenderedMessages`, then calls `filterProviderPayloadInput` from `src/domain/provider/payload-filter.js` to prune stale `reasoning`, `function_call`, and `function_call_output` artifacts using canonical owner keys and the latest live owner map. Mixed sandbox runs are not aliased. Writes a `provider_payload_filtered` debug log entry when any items were removed.
 
 ### `session-handler.ts`
 
@@ -151,7 +151,7 @@ Native compaction auto-trigger queues a request via `queueDcpAutoNativeCompactio
 | `src/application/context-handler.ts`            | `src/domain/transcript/`                | calls     | `buildTranscriptSnapshot`, `buildLiveOwnerKeys`                                          |
 | `src/application/context-handler.ts`            | `src/infrastructure/debug-log.js`       | calls     | `appendDebugLog`, `buildSessionDebugPayload`                                             |
 | `src/application/context-handler.ts`            | `src/application/status.ts`             | calls     | `updateDcpStatus`                                                                        |
-| `src/application/provider-handler.ts`           | `src/domain/provider/payload-filter.ts` | calls     | `filterProviderPayloadInput`                                                             |
+| `src/application/provider-handler.ts`           | `src/domain/provider/payload-filter.ts` | calls     | `collectSandboxCompressCallAliases`, `filterProviderPayloadInput`                        |
 | `src/application/session-handler.ts`            | `src/state.ts`                          | calls     | `createState`, `resetState`                                                              |
 | `src/application/session-handler.ts`            | `src/infrastructure/persistence.ts`     | calls     | `serializePersistedState`, `restorePersistedState`, `restorePersistedStateScalars`       |
 | `src/application/session-handler.ts`            | `src/application/status.ts`             | calls     | `updateDcpStatus`                                                                        |

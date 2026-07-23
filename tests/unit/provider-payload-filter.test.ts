@@ -9,6 +9,7 @@ import {
   buildSessionDebugPayload,
   buildSourceOwnerKey,
   buildTranscriptSnapshot,
+  collectSandboxCompressCallAliases,
   extractCanonicalOwnerKeyFromMessageLike,
   filterProviderPayloadInput,
   findOrphanedToolUse,
@@ -498,5 +499,108 @@ describe("DCP provider payload filter.test", () => {
 
     console.log("  PASS: native compaction summary user message survives filter");
     console.log("TEST 20d PASSED\n");
+  });
+
+  test("compress-only sandbox runs become compact represented receipts", () => {
+    const sourceMessages: any[] = [
+      {
+        role: "toolResult",
+        toolName: "run",
+        toolCallId: "call_outer|fc_item",
+        details: {
+          kind: "sandbox.result",
+          version: 1,
+          timeline: [
+            {
+              kind: "tool",
+              toolName: "compress",
+              isError: false,
+              result: { details: { blockIds: [7] } },
+            },
+            { kind: "visible", toolName: "out", text: "Compressed 1 range(s): cleanup" },
+          ],
+        },
+      },
+    ];
+    const aliases = collectSandboxCompressCallAliases(sourceMessages);
+    const payloadInput: any[] = [
+      {
+        type: "function_call",
+        name: "run",
+        call_id: "call_outer",
+        arguments: JSON.stringify({ code: "compress(...)".repeat(1_000) }),
+      },
+      {
+        type: "function_call_output",
+        call_id: "call_outer",
+        output: "Compressed 1 range(s): cleanup",
+      },
+    ];
+
+    const filtered = filterProviderPayloadInput(
+      payloadInput,
+      [buildBlockOwnerKey(7)],
+      [{ id: 7, active: true, compressCallId: "nested_compress", topic: "cleanup" }],
+      new Map(),
+      aliases
+    );
+
+    expect(filtered).toHaveLength(2);
+    expect((filtered[0] as any).arguments).toContain("receiptOnly");
+    expect((filtered[0] as any).arguments).not.toContain("compress(...)compress(...)");
+    expect((filtered[1] as any).output).toContain("Created b7: cleanup");
+  });
+
+  test("sandbox runs mixing compress with other tools remain intact", () => {
+    const sourceMessages: any[] = [
+      {
+        role: "toolResult",
+        toolName: "run",
+        toolCallId: "call_mixed|fc_item",
+        details: {
+          kind: "sandbox.result",
+          version: 1,
+          timeline: [
+            {
+              kind: "tool",
+              toolName: "read",
+              isError: false,
+              result: { content: [{ type: "text", text: "file contents" }] },
+            },
+            {
+              kind: "tool",
+              toolName: "compress",
+              isError: false,
+              result: { details: { blockIds: [8] } },
+            },
+          ],
+        },
+      },
+    ];
+    const aliases = collectSandboxCompressCallAliases(sourceMessages);
+    const payloadInput: any[] = [
+      {
+        type: "function_call",
+        name: "run",
+        call_id: "call_mixed",
+        arguments: '{"code":"const source = await read(...); await compress(...);"}',
+      },
+      {
+        type: "function_call_output",
+        call_id: "call_mixed",
+        output: "inspected source and compressed history",
+      },
+    ];
+
+    const filtered = filterProviderPayloadInput(
+      payloadInput,
+      [buildBlockOwnerKey(8)],
+      [{ id: 8, active: true, compressCallId: "nested_compress", topic: "cleanup" }],
+      new Map(),
+      aliases
+    );
+
+    expect(aliases).toEqual([]);
+    expect(filtered).toEqual(payloadInput);
   });
 });
