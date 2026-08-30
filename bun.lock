@@ -7,7 +7,7 @@
       "dependencies": {
         "gpt-tokenizer": "^3.4.0",
         "jsonc-parser": "^3.3.1",
-        "pi-extension-utils": "^0.7.3",
+        "pi-extension-utils": "^0.7.4",
       },
       "devDependencies": {
         "@eslint/js": "^10.0.1",
@@ -617,7 +617,7 @@
 
     "pend": ["pend@1.2.0", "", {}, "sha512-F3asv42UuXchdzt+xXqfW1OGlVBe+mxa2mqI0pg5yAHZPvFmY3Y6drSf/GQ1A86WgWEN9Kzh/WrgKa6iGcHXLg=="],
 
-    "pi-extension-utils": ["pi-extension-utils@0.7.3", "", { "dependencies": { "jsonc-parser": "^3.3.1", "typebox": "^1.2.9" }, "peerDependencies": { "@earendil-works/pi-agent-core": "*", "@earendil-works/pi-ai": "*", "@earendil-works/pi-coding-agent": "*", "@earendil-works/pi-tui": "*" } }, "sha512-zJUbGhM0h6pakMa+Tvgd3ab78yiFsDItAJA3NnSqbPm8LKUEOYZgMh7UQ5aCsX+2utS3+lpTR4K/mZyCTXrLhg=="],
+    "pi-extension-utils": ["pi-extension-utils@0.7.4", "", { "dependencies": { "jsonc-parser": "^3.3.1", "typebox": "^1.2.9" }, "peerDependencies": { "@earendil-works/pi-agent-core": "*", "@earendil-works/pi-ai": "*", "@earendil-works/pi-coding-agent": "*", "@earendil-works/pi-tui": "*" } }, "sha512-n3VKpQ+2yuMan7kFlo197hT9zi2Frz+fr40lwWMBqJ8GsNT024bl8GjwhMiD1uI5/mm+LguDA+pAIVuVi3vvQg=="],
 
     "picomatch": ["picomatch@4.0.4", "", {}, "sha512-QP88BAKvMam/3NxH6vj2o21R6MjxZUAd6nlwAS/pnGvN9IVLocLHxGYIzFhg6fUQ+5th6P4dv4eW9jX3DSIj7A=="],
 
