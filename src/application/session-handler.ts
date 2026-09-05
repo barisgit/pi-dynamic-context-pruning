@@ -414,6 +414,7 @@ export function saveState(
     return;
   }
 
+  if (typeof pi.appendEntry !== "function") return;
   pi.appendEntry("dcp-state", serializePersistedState(state));
   state.pendingSave = false;
   appendDebugLog(config, "state_saved", {
@@ -486,24 +487,24 @@ export function registerSessionHandlers(
   });
 
   pi.on("session_shutdown", async (_event, ctx) => {
-    let hasUI: boolean;
+    let sessionPayload: Record<string, unknown>;
     try {
-      hasUI = ctx.hasUI;
+      if (!ctx.sessionManager) return;
+      sessionPayload = buildSessionDebugPayload(ctx.sessionManager);
     } catch {
       return;
-    } // stale ctx after dispose (e.g. -p print mode)
-    if (!hasUI) return;
-    saveState(pi, state, config, "session_shutdown", buildSessionDebugPayload(ctx.sessionManager));
+    } // Session API unavailable after dispose; leave the save queued.
+    saveState(pi, state, config, "session_shutdown", sessionPayload);
   });
 
   pi.on("agent_end", async (_event, ctx) => {
-    let hasUI: boolean;
+    let sessionPayload: Record<string, unknown>;
     try {
-      hasUI = ctx.hasUI;
+      if (!ctx.sessionManager) return;
+      sessionPayload = buildSessionDebugPayload(ctx.sessionManager);
     } catch {
       return;
-    } // stale ctx after dispose (e.g. -p print mode)
-    if (!hasUI) return;
-    saveState(pi, state, config, "agent_end", buildSessionDebugPayload(ctx.sessionManager));
+    } // Session API unavailable after dispose; leave the save queued.
+    saveState(pi, state, config, "agent_end", sessionPayload);
   });
 }

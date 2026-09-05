@@ -58,7 +58,123 @@ function nativeCompactionEntry(
   };
 }
 
+function lifecycleFixture(hasUI = false) {
+  const state = makeState();
+  const entries: any[] = [];
+  const handlers = new Map<string, any>();
+  let statusUpdates = 0;
+  const pi = {
+    on(event: string, handler: any) {
+      handlers.set(event, handler);
+    },
+    appendEntry(kind: string, data: unknown) {
+      expect(kind).toBe("dcp-state");
+      entries.push(dcpStateEntry(JSON.parse(JSON.stringify(data))));
+    },
+  };
+  const ctx = {
+    hasUI,
+    ui: { setStatus: () => statusUpdates++ },
+    sessionManager: {
+      getBranch: () => entries,
+      getEntries: () => entries,
+      getSessionId: () => "session-test",
+      getCwd: () => "/tmp",
+      getSessionDir: () => "/tmp",
+      getSessionFile: () => "/tmp/session.jsonl",
+      getLeafId: () => entries.at(-1)?.id ?? null,
+    },
+  };
+  registerSessionHandlers(pi as any, state, makeConfig());
+  return { state, entries, handlers, pi, ctx, statusUpdates: () => statusUpdates };
+}
+
 describe("DCP session handler", () => {
+  for (const event of ["agent_end", "session_shutdown"]) {
+    for (const hasUI of [false, true]) {
+      test(`${event} persists queued changes and resumes with hasUI=${hasUI}`, async () => {
+        const fixture = lifecycleFixture(hasUI);
+        const { state, handlers, ctx, entries, pi } = fixture;
+        await handlers.get("session_start")({ type: "session_start", reason: "new" }, ctx);
+        state.compressionBlocks = [block(true)];
+        state.nextBlockId = 2;
+        state.tokensSaved = 100;
+        state.prunedToolIds.add("old-result");
+        state.pendingSave = true;
+
+        await handlers.get(event)({ type: event }, ctx);
+        expect(entries).toHaveLength(1);
+        expect(state.pendingSave).toBe(false);
+        await handlers.get(event)({ type: event }, ctx);
+        expect(entries).toHaveLength(1);
+
+        const resumed = makeState();
+        registerSessionHandlers(pi as any, resumed, makeConfig());
+        await handlers.get("session_start")({ type: "session_start", reason: "resume" }, ctx);
+        expect(resumed.compressionBlocks[0]?.summary).toBe("branch summary");
+        expect(resumed.compressionBlocks[0]?.active).toBe(true);
+        expect(resumed.nextBlockId).toBe(2);
+        expect(resumed.tokensSaved).toBe(100);
+        expect(resumed.prunedToolIds.has("old-result")).toBe(true);
+        expect(fixture.statusUpdates()).toBe(hasUI ? 2 : 0);
+      });
+    }
+  }
+
+  test("unavailable append API leaves the save queued for a later lifecycle event", async () => {
+    const { state, handlers, ctx, entries, pi } = lifecycleFixture();
+    state.pendingSave = true;
+    const appendEntry = pi.appendEntry;
+    (pi as any).appendEntry = undefined;
+    await handlers.get("agent_end")({ type: "agent_end" }, ctx);
+    expect(state.pendingSave).toBe(true);
+    expect(entries).toHaveLength(0);
+    pi.appendEntry = appendEntry;
+    await handlers.get("session_shutdown")({ type: "session_shutdown" }, ctx);
+    expect(state.pendingSave).toBe(false);
+    expect(entries).toHaveLength(1);
+  });
+
+  for (const event of ["agent_end", "session_shutdown"]) {
+    for (const unavailable of ["missing", "disposed"]) {
+      test(`${event} keeps queued state when session API is ${unavailable}`, async () => {
+        const { state, handlers, ctx, entries } = lifecycleFixture(true);
+        state.pendingSave = true;
+        const unavailableCtx = {
+          ...ctx,
+          get sessionManager() {
+            if (unavailable === "disposed") throw new Error("Session disposed");
+            return undefined;
+          },
+        };
+        await handlers.get(event)({ type: event }, unavailableCtx);
+        expect(entries).toHaveLength(0);
+        expect(state.pendingSave).toBe(true);
+        await handlers.get(event)({ type: event }, ctx);
+        expect(entries).toHaveLength(1);
+        expect(state.pendingSave).toBe(false);
+      });
+    }
+  }
+
+  test("append failure surfaces and shutdown retries the queued save", async () => {
+    const { state, handlers, ctx, entries, pi } = lifecycleFixture();
+    state.pendingSave = true;
+    const appendEntry = pi.appendEntry;
+    pi.appendEntry = () => {
+      throw new Error("Append failed");
+    };
+    await expect(handlers.get("agent_end")({ type: "agent_end" }, ctx)).rejects.toThrow(
+      "Append failed"
+    );
+    expect(state.pendingSave).toBe(true);
+    expect(entries).toHaveLength(0);
+    pi.appendEntry = appendEntry;
+    await handlers.get("session_shutdown")({ type: "session_shutdown" }, ctx);
+    expect(state.pendingSave).toBe(false);
+    expect(entries).toHaveLength(1);
+  });
+
   test("session_tree restores DCP state from the newly selected branch", async () => {
     const state = makeState([block(false)]);
     state.nextBlockId = 2;

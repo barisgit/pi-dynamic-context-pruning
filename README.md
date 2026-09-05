@@ -272,6 +272,8 @@ Ideas considered for a more cache-stable future policy:
 
 ## Session persistence (direct restore)
 
+Queued changes save on `agent_end` and `session_shutdown` in interactive, RPC, print, and JSON modes when the session API is available. Status updates remain UI-only. Unavailable session APIs leave changes queued; append failures also retain the queue and surface to the host for reporting. Pi's `--no-session` mode remains ephemeral.
+
 DCP restores in-memory compression state from the latest coverage-bearing `custom:dcp-state` entry on the active branch. Empty sessions still write a tiny schemaVersion 3 scalar marker. Once blocks exist, DCP writes schemaVersion 5: v3 scalar counters plus active compression blocks with exact `coveredSourceKeys` / `coveredSpanKeys`, source-key anchors, and finite timestamp fallbacks. Inactive blocks are slimmed.
 
 Why this matters in practice:

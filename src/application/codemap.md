@@ -70,8 +70,8 @@ Registers session lifecycle hooks (`session_start`, `session_tree`, `session_shu
   - Latest-entry-wins: `findLatestDcpStateEntry(branchEntries)` picks the newest non-`unchanged` snapshot. If that entry is coverage-bearing (v1/v5), `restorePersistedState()` restores full block state plus scalars directly (`restoredStateEntries = 1`); otherwise the scalar branch runs (a newer lossy v4 therefore resets rather than resurrecting older coverage).
   - Otherwise `findLatestDcpStateEntry(branchEntries)` + `restorePersistedStateScalars()` restores scalar continuity only (`prunedToolIds`, turn watermarks, `lifetimeTokensSavedRealized`) and never resurrects blocks.
   - Always finishes with `repairOffBranchNativeCompactionState()` and `repairStaleNudgeWatermarks()`; stale nudge/compress watermarks are reset only when either exceeds the logical-turn count of the restored branch.
-- **`session_shutdown` / `agent_end`** — calls `saveState()` when `state.pendingSave` is true. Guarded by `ctx.hasUI` (skip in `-p` print mode).
-- **`saveState`** — no-op when `!pendingSave`; otherwise `pi.appendEntry("dcp-state", serializePersistedState(state))` and clears the dirty flag.
+- **`session_shutdown` / `agent_end`** — calls `saveState()` when the session API is available, independently of `ctx.hasUI`. Missing or disposed session contexts leave the save queued.
+- **`saveState`** — no-op when `!pendingSave` or the append API is absent; otherwise `pi.appendEntry("dcp-state", serializePersistedState(state))` and clears the dirty flag only after success. Append errors propagate with the dirty flag intact for a later lifecycle retry.
 - **`restoreStateFromBranch`** — returns `RestoreStateFromBranchResult` with `mode: "persisted"` plus repair metadata. The mode name identifies the single restore path; it is not a success claim.
 
 ### `status.ts`
