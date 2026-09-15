@@ -1,3 +1,4 @@
+import { normalizeHeading } from "../domain/compression/heading.js";
 // ---------------------------------------------------------------------------
 // Dynamic Context Pruning (DCP) — persisted state migration helpers
 // ---------------------------------------------------------------------------
@@ -249,6 +250,8 @@ function normalizeLegacyBlock(value: unknown): CompressionBlock | null {
     id: block.id,
     topic: block.topic,
     summary: block.summary,
+    startId: typeof block.startId === "string" ? block.startId : undefined,
+    endId: typeof block.endId === "string" ? block.endId : undefined,
     startTimestamp: block.startTimestamp,
     endTimestamp: block.endTimestamp,
     anchorTimestamp: isFiniteNumber(block.anchorTimestamp) ? block.anchorTimestamp : Infinity,
@@ -387,7 +390,7 @@ export function serializePersistedState(state: DcpState): PersistedDcpState {
     totalPruneCount: state.totalPruneCount,
   };
 
-  if (state.compressionBlocks.length === 0) {
+  if (state.compressionBlocks.length === 0 && !state.heading) {
     const persisted: PersistedDcpStateV3 = {
       schemaVersion: 3,
       ...scalars,
@@ -398,6 +401,7 @@ export function serializePersistedState(state: DcpState): PersistedDcpState {
   const persisted: PersistedDcpStateV5 = {
     schemaVersion: 5,
     ...scalars,
+    heading: state.heading,
     blocks: state.compressionBlocks.map(persistCompressionBlockV5),
     nextBlockId: state.nextBlockId,
   };
@@ -476,9 +480,12 @@ export function restorePersistedState(data: unknown, state: DcpState): void {
   // state restored from the nearest previous DCP snapshot on this branch".
   if (persisted.unchanged === true) return;
 
+  state.heading = undefined;
+
   // v5 direct-restore state. Active blocks carry exact coverage, anchors, and
   // finite timestamp fallbacks, so live resume does not need replay.
   if (persisted.schemaVersion === 5) {
+    state.heading = normalizeHeading(persisted.heading);
     const blocks = Array.isArray(persisted.blocks)
       ? persisted.blocks.map(normalizeLegacyBlock).filter((b): b is CompressionBlock => b !== null)
       : [];

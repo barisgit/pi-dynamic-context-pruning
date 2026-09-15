@@ -169,7 +169,7 @@ All commands are available in the pi TUI via `/dcp <subcommand>`:
 
 ### Compression blocks
 
-When the LLM calls the `compress` tool it provides one or more `{startId, endId, summary}` ranges. DCP:
+When the LLM calls the `compress` tool it provides one or more `{startId, endId, topic?, summary}` ranges. DCP:
 
 1. Resolves visible non-assistant message refs (`m0001`, `m0042`, etc.) and block refs (`b1`, `b3`) through stable internal source/span keys
 2. Records the range as a `CompressionBlock` with legacy timestamps plus canonical source-key coverage/anchor metadata when available
@@ -183,7 +183,26 @@ By default, DCP also protects the hot tail of the conversation: ranges that end 
 
 Message IDs (`m0001`, `m0042`, etc.) are injected only on user/toolResult/bashExecution messages, and block IDs (`b1`, `b3`) are injected on compressed blocks, so the LLM can reference exact compression boundaries without mutating freshly generated assistant output. Assistant turns are selected through surrounding visible boundaries and atomic tool-pair expansion. Internal owner keys are not rendered as model-visible metadata; provider-payload filtering uses canonical source/span/block ownership tracked in state.
 
-The deterministic digest deliberately does not render individual tool calls or commands. `conversation` contains bounded chronological `u:` / `a:` excerpts; `effects` reports only aggregate read, search, mutation, command, and delegation counts; `modified-files` lists bounded unique changed paths. The agent-authored summary remains responsible for semantic facts such as important commands, verification outcomes, delegated findings, decisions, and unresolved work. DCP recognizes fo-coding-agent's versioned `sandbox.result` timeline as a container and aggregates its nested operations rather than rendering hundreds of outer `run` calls.
+The deterministic digest deliberately does not render individual tool calls or commands. `conversation` contains bounded chronological `u:` / `a:` excerpts; `effects` reports only aggregate read, search, mutation, command, and delegation counts; `modified-files` lists bounded unique changed paths. The single `summary` records what happened in past tense: decisions, artifacts or commits, verified facts, consequential commands, verification outcomes, and delegated findings. Include each covered `(bN)` placeholder exactly once in the summary. Do not write goals, current state, or next steps into blocks; put them in the heading.
+
+Blocks with selected boundary IDs render `Record m0003–m0016 (ended <endId ISO timestamp>)` above their summary. Existing blocks without those IDs render unchanged. Compact and minimal tiers retain their existing bounded-summary behavior. Boundary IDs persist in schema v5 without migration.
+
+### Present-state heading
+
+`compress` also accepts `heading: { goal, now, next, constraints? }`, with or without `ranges`. Each heading replaces the previous one in full:
+
+- `goal`: the authorized outcome; in a charter session, `Objective: .charters/<id>/charter.md`.
+- `now`: what is done versus the remaining gap as of this call.
+- `next`: one step and why.
+- `constraints`: optional user rules still in force.
+
+The four strings have a combined 1000-character limit. DCP rejects oversized headings with the actual count; it never truncates or interprets the strings. The heading persists with the last visible message ID (`revisedAfterId`) and call time (`revisedAt`) in schema v5, even when there are no blocks. Old state has no heading.
+
+The heading is the only place present intent lives. It renders once, in full, as a user message immediately before the protected logical-turn tail, after older raw messages and blocks. It has an internal synthetic ID, not a visible compression boundary, and is excluded from pruning and logical-turn counts. Native compaction and DCP-triggered fallback instructions put the heading first and reserve its space before historical blocks; the heading is never dropped for budget.
+
+Reminders retain the closed-work/live-work decision and append heading age in logical turns. If no heading exists and at least two blocks are active, they ask for one. After restore, v5 does not retain visible aliases; when the original reference cannot be resolved, heading age uses the latest visible source at revision time from branch history. Missing or colliding timestamps can make that fallback approximate.
+
+DCP recognizes fo-coding-agent's versioned `sandbox.result` timeline as a container and aggregates its nested operations rather than rendering hundreds of outer `run` calls.
 
 ### Native pi compaction
 

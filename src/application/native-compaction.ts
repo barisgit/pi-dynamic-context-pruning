@@ -1,3 +1,4 @@
+import { renderHeading, stripHeadingPrefix } from "../domain/compression/heading.js";
 import type {
   CompactionResult,
   ExtensionAPI,
@@ -7,7 +8,7 @@ import type {
 } from "@mariozechner/pi-coding-agent";
 import type { DcpConfig } from "../types/config.js";
 import type { CompressionBlock, DcpState } from "../types/state.js";
-import { renderCompressedBlockText } from "../domain/compression/materialize.js";
+import { renderBlockRecord, renderCompressedBlockText } from "../domain/compression/materialize.js";
 import { estimateTokens } from "../domain/tokens/estimate.js";
 import { buildTranscriptSnapshot } from "../domain/transcript/index.js";
 import type { DcpMessage } from "../types/message.js";
@@ -152,15 +153,18 @@ export function computeDcpHiddenCoverage(
 
 export function buildDcpFallbackCustomInstructions(state: DcpState): string | undefined {
   const active = state.compressionBlocks.filter((b) => b.active);
-  if (active.length === 0) return undefined;
+  if (active.length === 0 && !state.heading) return undefined;
   const sections = active.map(
     (block) =>
       `<block id="b${block.id}" topic="${escapeAttr(block.topic)}">\n${renderBlockForCompaction(block)}\n</block>`
   );
   return [
+    state.heading ? renderHeading(state.heading) : "",
     "Authoritative pre-compacted slices of the conversation (DCP). Treat these as ground truth for what already happened; do not re-derive them. Use them to inform the summary you write.",
     sections.join("\n\n"),
-  ].join("\n\n");
+  ]
+    .filter(Boolean)
+    .join("\n\n");
 }
 
 function isDcpNativeCompactionDetails(value: unknown): value is DcpNativeCompactionDetails {
@@ -455,12 +459,7 @@ function collectFileLists(
 
 function renderBlockForCompaction(block: CompressionBlock): string {
   return renderCompressedBlockText({
-    id: block.id,
-    topic: block.topic,
-    summary: block.summary,
-    activityLogVersion: block.activityLogVersion,
-    activityLog: block.activityLog,
-    metadata: block.metadata,
+    ...block,
     detailLevel: "full",
   }).trim();
 }
@@ -474,7 +473,7 @@ function renderSectionFull(block: CompressionBlock): string {
 }
 
 function renderSectionCompact(block: CompressionBlock): string {
-  const body = (block.summary ?? "").trim() || "(no summary)";
+  const body = renderBlockRecord(block) || "(no summary)";
   return `<section topic="${escapeAttr(block.topic)}" tier="compact">\n<agent-summary>\n${body}\n</agent-summary>\n</section>`;
 }
 
@@ -627,14 +626,20 @@ export function buildDcpNativeCompactionResult({
   const { readFiles, modifiedFiles } = collectFileLists(allBlocks, preparation.fileOps);
   const representedBlockIds = represented.blocks.map((block) => block.id);
   const requestedBlockIds = request.requestedBlockIds ?? [];
-  const summaryParts: string[] = [];
+  const headingText = state.heading ? renderHeading(state.heading) : "";
+  const headingTokens = estimateTokens(headingText);
+  const blockBudget =
+    _config.nativeCompaction.maxSummaryTokens > 0
+      ? Math.max(1, _config.nativeCompaction.maxSummaryTokens - headingTokens)
+      : _config.nativeCompaction.maxSummaryTokens;
+  const summaryParts: string[] = headingText ? [headingText] : [];
 
   // Strip any prior DCP envelope from previousSummary so we don't nest. Keep
   // anything outside the envelope (LLM-fallback prose, user notes). Cap residue
   // by tokens to keep it bounded.
   const previousRaw = preparation.previousSummary?.trim() ?? "";
   if (previousRaw.length > 0) {
-    const residue = stripDcpEnvelope(previousRaw);
+    const residue = stripHeadingPrefix(stripDcpEnvelope(previousRaw));
     if (residue.length > 0) {
       const capped = truncateByTokens(residue, _config.nativeCompaction.maxPreviousSummaryTokens);
       if (capped.length > 0) summaryParts.push(capped);
@@ -646,7 +651,7 @@ export function buildDcpNativeCompactionResult({
       allBlocks,
       _config.compress.renderFullBlockCount,
       _config.compress.renderCompactBlockCount,
-      _config.nativeCompaction.maxSummaryTokens
+      blockBudget
     );
     if (dcpBody.length > 0) {
       summaryParts.push(`${DCP_ENVELOPE_OPEN}\n${dcpBody}\n${DCP_ENVELOPE_CLOSE}`);
@@ -720,7 +725,7 @@ export function registerDcpNativeCompactionBridge(
   config: DcpConfig
 ): void {
   pi.on("session_before_compact", async (event: SessionBeforeCompactEvent, ctx) => {
-    if (!state.compressionBlocks.some((block) => block.active)) return;
+    if (!state.heading && !state.compressionBlocks.some((block) => block.active)) return;
 
     const coverage = computeDcpHiddenCoverage(
       state,
@@ -869,7 +874,7 @@ export function registerDcpNativeCompactionBridge(
     // drain so the next turn_end does not re-fire compaction in a loop.
     pendingAutoRequests.delete(state);
 
-    if (!state.compressionBlocks.some((block) => block.active)) return;
+    if (!state.heading && !state.compressionBlocks.some((block) => block.active)) return;
 
     // CRITICAL: fire-and-forget. `ctx.compact()` is void; internally it awaits
     // `session.compact()` -> `waitForIdle()`, which cannot resolve until the

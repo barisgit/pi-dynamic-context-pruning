@@ -92,6 +92,10 @@ describe("DCP nudge.test", () => {
 
     expect(reminder.text.trim().length).toBeGreaterThan(0);
     expect(reminder.text).toContain("Compress now");
+    expect(reminder.text).toContain("if its work is closed, compress it now");
+    expect(reminder.text).toContain("If it is still live, leave it.");
+    expect(reminder.text).toContain("Do not put present intent or next steps into a block.");
+    expect(reminder.text).not.toContain("not just the biggest");
     expect(reminder.text).toContain("Protected hot tail");
     expect(reminder.text).not.toContain("dcp-system-reminder");
     expect(reminder.text).not.toContain("<");
@@ -235,6 +239,10 @@ describe("DCP nudge.test", () => {
     const reminder = upsert!.payload as ReminderIntent;
     expect(reminder.metadata).toMatchObject({ nudgeType: "context-soft", contextTokens: 203_000 });
     expect(reminder.text).toContain("Compress now");
+    expect(reminder.text).toContain("if its work is closed, compress it now");
+    expect(reminder.text).toContain("If it is still live, leave it.");
+    expect(reminder.text).toContain("Do not put present intent or next steps into a block.");
+    expect(reminder.text).not.toContain("not just the biggest");
     expect(reminder.text).toContain("120k-200k tokens");
     expect(reminder.text).not.toContain("16%");
   });
@@ -368,3 +376,36 @@ describe("DCP nudge.test", () => {
     expect(getNudgeDecisionReason(0.8, state, config, null, 80_000)).toBe("turn_debounce");
   });
 });
+
+for (const iteration of [false, true]) {
+  test(`checkpoint ${iteration ? "iteration" : "turn"} asks for a per-stretch closure decision`, async () => {
+    const config = makeConfig();
+    config.compress.minContextPercent = 0.1;
+    config.compress.maxContextPercent = 0.9;
+    config.compress.iterationNudgeThreshold = iteration ? 1 : 100;
+    const { pi, handlers, emitted } = createMockPi();
+    registerContextHandler(pi as any, makeState(), config);
+    const messages = [
+      ...makeMessages(),
+      {
+        role: "assistant",
+        content: [{ type: "toolCall", id: "last-read", name: "read", arguments: {} }],
+        timestamp: 98_000,
+      },
+      {
+        role: "toolResult",
+        toolCallId: "last-read",
+        toolName: "read",
+        content: [{ type: "text", text: "done" }],
+        timestamp: 99_000,
+      },
+    ];
+    await handlers.get("context")!({ messages }, createMockContext(50_000, 100_000));
+    const reminder = emitted.find((event) => event.name === REMINDER_UPSERT_EVENT)
+      ?.payload as ReminderIntent;
+    expect(reminder.metadata?.nudgeType).toBe(iteration ? "iteration" : "turn");
+    expect(reminder.text).toContain("if its work is closed, compress it now");
+    expect(reminder.text).toContain("If it is still live, leave it.");
+    expect(reminder.text).toContain("Do not put present intent or next steps into a block.");
+  });
+}

@@ -2,6 +2,7 @@
 // Dynamic Context Pruning (DCP) — pure compression helpers
 // ---------------------------------------------------------------------------
 
+import { renderBlockRecord } from "./materialize.js";
 import { createEmptyCompressionBlockMetadata } from "./metadata.js";
 import type {
   CompressionBlock,
@@ -70,7 +71,7 @@ export function expandBlockPlaceholders(summary: string, state: DcpState): strin
   return summary.replace(/\(b(\d+)\)/g, (match, idStr) => {
     const id = parseInt(idStr, 10);
     const block = state.compressionBlocks.find((b) => b.id === id && b.active);
-    return block ? `[Previously compressed: ${block.topic}]\n${block.summary}` : match;
+    return block ? `[Previously compressed: ${block.topic}]\n${renderBlockRecord(block)}` : match;
   });
 }
 

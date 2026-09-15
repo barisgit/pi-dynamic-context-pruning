@@ -73,6 +73,8 @@ describe("DCP native pi compaction bridge", () => {
       id: 1,
       topic: "Setup block",
       summary: "Setup summary with the durable decision.",
+      startId: "m0001",
+      endId: "m0001",
       startTimestamp: 1000,
       endTimestamp: 1000,
       anchorTimestamp: 1001,

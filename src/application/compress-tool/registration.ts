@@ -1,3 +1,4 @@
+import { createHeading } from "../../domain/compression/heading.js";
 // ---------------------------------------------------------------------------
 // Dynamic Context Pruning (DCP) — compress tool registration
 // ---------------------------------------------------------------------------
@@ -417,31 +418,51 @@ export function registerCompressTool(pi: ExtensionAPI, state: DcpState, config: 
             "Optional default short label (3-5 words) used for ranges that omit ranges[].topic",
         })
       ),
-      ranges: Type.Array(
+      heading: Type.Optional(
         Type.Object({
-          startId: Type.String({
+          goal: Type.String({
             description:
-              "Visible boundary marking start of range (e.g. non-assistant message m0001, or b2). Assistant turns are selected via surrounding user/toolResult/bashExecution IDs.",
+              "Authorized outcome; in a charter session: Objective: .charters/<id>/charter.md",
           }),
-          endId: Type.String({
-            description:
-              "Visible boundary marking end of range (e.g. non-assistant message m0042, or b5). Assistant turns are selected via surrounding user/toolResult/bashExecution IDs.",
+          now: Type.String({
+            description: "What is done versus the remaining gap as of this call",
           }),
-          summary: Type.String({
-            description: "Complete technical summary replacing all content in range",
-          }),
-          topic: Type.Optional(
-            Type.String({
+          next: Type.String({ description: "One step and why" }),
+          constraints: Type.Optional(Type.String({ description: "User rules still in force" })),
+        })
+      ),
+      ranges: Type.Optional(
+        Type.Array(
+          Type.Object({
+            startId: Type.String({
               description:
-                "Short label (3-5 words) for this compressed block; falls back to top-level topic",
-            })
-          ),
-        }),
-        { description: "One or more ranges to compress; each range creates one compressed block" }
+                "Visible boundary marking start of range (e.g. non-assistant message m0001, or b2). Assistant turns are selected via surrounding user/toolResult/bashExecution IDs.",
+            }),
+            endId: Type.String({
+              description:
+                "Visible boundary marking end of range (e.g. non-assistant message m0042, or b5). Assistant turns are selected via surrounding user/toolResult/bashExecution IDs.",
+            }),
+            summary: Type.String({
+              description:
+                "Past-tense record of decisions, artifacts/commits, verified facts, and delegated findings. Not goals, current state, or next steps; those go in heading.",
+            }),
+            topic: Type.Optional(
+              Type.String({
+                description:
+                  "Short label (3-5 words) for this compressed block; falls back to top-level topic",
+              })
+            ),
+          }),
+          { description: "Ranges to compress; may be omitted when replacing heading" }
+        )
       ),
     }),
 
     async execute(toolCallId, params, _signal, _onUpdate, ctx) {
+      const ranges = params.ranges ?? [];
+      if (!params.heading && ranges.length === 0)
+        throw new Error("Provide heading or at least one range.");
+      const heading = params.heading ? createHeading(params.heading, state, Date.now()) : undefined;
       const newBlockIds: number[] = [];
       const currentMessages = buildCurrentBranchMessages(ctx);
       const usage = ctx.getContextUsage();
@@ -477,8 +498,8 @@ export function registerCompressTool(pi: ExtensionAPI, state: DcpState, config: 
       appendDebugLog(config, "compress_requested", {
         ...buildSessionDebugPayload(ctx.sessionManager),
         topic: params.topic,
-        rangeCount: params.ranges.length,
-        ranges: params.ranges.map((range) => ({
+        rangeCount: ranges.length,
+        ranges: ranges.map((range) => ({
           startId: range.startId,
           endId: range.endId,
           topic: range.topic,
@@ -493,7 +514,7 @@ export function registerCompressTool(pi: ExtensionAPI, state: DcpState, config: 
       });
 
       try {
-        for (const range of params.ranges) {
+        for (const range of ranges) {
           const { startId, endId, summary } = range;
           const blockTopic = resolveEffectiveRangeTopic(range, params.topic);
           activeRange = { startId, endId };
@@ -588,6 +609,8 @@ export function registerCompressTool(pi: ExtensionAPI, state: DcpState, config: 
             id: nextBlockId++,
             topic: blockTopic,
             summary: expandedSummary,
+            startId,
+            endId,
             startTimestamp,
             endTimestamp,
             anchorTimestamp,
@@ -622,8 +645,13 @@ export function registerCompressTool(pi: ExtensionAPI, state: DcpState, config: 
           state.pendingSave = true;
         }
 
-        if (config.pruneNotification !== "off") {
-          const count = params.ranges.length;
+        if (heading) {
+          state.heading = heading;
+          state.pendingSave = true;
+        }
+
+        if (plannedBlocks.length > 0 && config.pruneNotification !== "off") {
+          const count = ranges.length;
           const rangeWord = count === 1 ? "range" : "ranges";
 
           if (config.pruneNotification === "detailed") {
@@ -663,7 +691,7 @@ export function registerCompressTool(pi: ExtensionAPI, state: DcpState, config: 
         // accounting is finalized above — means the snapshot is complete and the
         // block survives a mid-run restore. No-op when nothing was created
         // (`pendingSave` stays false).
-        if (plannedBlocks.length > 0) {
+        if (plannedBlocks.length > 0 || heading) {
           saveState(pi, state, config, "compress", buildSessionDebugPayload(ctx.sessionManager));
         }
 
@@ -721,7 +749,10 @@ export function registerCompressTool(pi: ExtensionAPI, state: DcpState, config: 
           contextPercent,
         });
 
-        const headerLine = `Compressed ${params.ranges.length} range(s): ${formatTopicList(plannedTopics)}`;
+        const headerLine =
+          ranges.length > 0
+            ? `Compressed ${ranges.length} range(s): ${formatTopicList(plannedTopics)}${heading ? "; heading replaced" : ""}`
+            : "Heading replaced.";
         const shouldRenderNativeCompactionLine = [
           "force-threshold",
           "likely-dcp-owned",

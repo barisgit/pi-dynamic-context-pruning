@@ -65,8 +65,11 @@ export interface CompressionBlock {
   id: number;
   /** Short human-readable topic label */
   topic: string;
-  /** LLM-generated summary text */
+  /** Past-tense record of decisions, artifacts, and verified facts. */
   summary: string;
+  /** Original selected visible boundaries, retained across restores. */
+  startId?: string;
+  endId?: string;
   /** Timestamp of the first message in the compressed range */
   startTimestamp: number;
   /** Timestamp of the last message in the compressed range */
@@ -219,9 +222,20 @@ export interface PersistedDcpStateV4 extends Omit<PersistedDcpStateV3, "schemaVe
 /** Persisted v5 block metadata with direct-restore coverage for active blocks. */
 export type PersistedCompressionBlockV5 = CompressionBlock;
 
+/** Mutable present-state direction, separate from historical blocks. */
+export interface DcpHeading {
+  goal: string;
+  now: string;
+  next: string;
+  constraints?: string;
+  revisedAfterId: string;
+  revisedAt: number;
+}
+
 /** Persisted v5 DCP state — v3 scalars plus direct-restorable block coverage. */
 export interface PersistedDcpStateV5 extends Omit<PersistedDcpStateV3, "schemaVersion"> {
   schemaVersion: 5;
+  heading?: DcpHeading;
   blocks: PersistedCompressionBlockV5[];
   nextBlockId: number;
 }
@@ -280,6 +294,7 @@ export interface DcpState {
   schemaVersion: 1;
   /** Legacy v1 timestamp-based compression blocks (active runtime path today) */
   compressionBlocks: CompressionBlock[];
+  heading?: DcpHeading;
   /** Monotonically increasing counter used to assign compression block IDs */
   nextBlockId: number;
   /** Latest rendered visible transcript returned from the `context` hook. */

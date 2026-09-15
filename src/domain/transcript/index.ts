@@ -7,8 +7,8 @@
 // without changing the active runtime behavior. The current runtime still uses
 // `pruner.ts` for message transformation.
 
-import type { CompressionBlock } from "../../types/state.js"
-import type { DcpMessage } from "../../types/message.js"
+import type { CompressionBlock } from "../../types/state.js";
+import type { DcpMessage } from "../../types/message.js";
 
 // ---------------------------------------------------------------------------
 // Internal markers used to give DCP-synthesized messages a stable, buffer-
@@ -17,86 +17,87 @@ import type { DcpMessage } from "../../types/message.js"
 // into the rendered transcript.
 // ---------------------------------------------------------------------------
 
-export const INTERNAL_NUDGE_TURN = Symbol.for("dcp.internal.nudgeTurn")
-export const INTERNAL_BLOCK_ID = Symbol.for("dcp.internal.blockId")
+export const INTERNAL_NUDGE_TURN = Symbol.for("dcp.internal.nudgeTurn");
+export const INTERNAL_BLOCK_ID = Symbol.for("dcp.internal.blockId");
+export const INTERNAL_HEADING = Symbol.for("dcp.internal.heading");
 
 /** One source item in the canonical transcript snapshot. */
 export interface TranscriptSourceItem {
   /** Stable-ish internal key derived from source order and message metadata */
-  key: string
+  key: string;
   /** Zero-based ordinal in the source transcript */
-  ordinal: number
+  ordinal: number;
   /** Raw role from the source message */
-  role: string
+  role: string;
   /** Original source message */
-  message: DcpMessage
+  message: DcpMessage;
   /** Numeric timestamp when available */
-  timestamp: number | null
+  timestamp: number | null;
 }
 
 /** Kinds of spans the v2 materializer will eventually operate on. */
-export type TranscriptSpanKind = "message" | "tool-exchange"
+export type TranscriptSpanKind = "message" | "tool-exchange";
 
 /** Canonical span in the transcript snapshot. */
 export interface TranscriptSpan {
   /** Stable key for the span itself */
-  key: string
+  key: string;
   /** Span kind */
-  kind: TranscriptSpanKind
+  kind: TranscriptSpanKind;
   /** Inclusive first source item key in the span */
-  startSourceKey: string
+  startSourceKey: string;
   /** Inclusive last source item key in the span */
-  endSourceKey: string
+  endSourceKey: string;
   /** Source items covered by the span */
-  sourceKeys: string[]
+  sourceKeys: string[];
   /** Dominant visible role for this span */
-  role: string
+  role: string;
   /** Number of source messages inside the span */
-  messageCount: number
+  messageCount: number;
 }
 
 /** Snapshot of the transcript before any v2 materialization is applied. */
 export interface TranscriptSnapshot {
-  sourceItems: TranscriptSourceItem[]
-  spans: TranscriptSpan[]
+  sourceItems: TranscriptSourceItem[];
+  spans: TranscriptSpan[];
 }
 
 function getRole(message: DcpMessage): string {
-  return typeof message?.role === "string" ? message.role : "unknown"
+  return typeof message?.role === "string" ? message.role : "unknown";
 }
 
 function getTimestamp(message: DcpMessage): number | null {
   return typeof message?.timestamp === "number" && Number.isFinite(message.timestamp)
     ? message.timestamp
-    : null
+    : null;
 }
 
-const PASSTHROUGH_ROLES = new Set(["compaction", "branch_summary", "custom_message"])
-const LIVE_OWNER_ELIGIBLE_ROLES = new Set(["user", "assistant", "toolResult", "bashExecution"])
-const LOGICAL_TURN_ELIGIBLE_ROLES = LIVE_OWNER_ELIGIBLE_ROLES
+const PASSTHROUGH_ROLES = new Set(["compaction", "branch_summary", "custom_message"]);
+const LIVE_OWNER_ELIGIBLE_ROLES = new Set(["user", "assistant", "toolResult", "bashExecution"]);
+const LOGICAL_TURN_ELIGIBLE_ROLES = LIVE_OWNER_ELIGIBLE_ROLES;
 
 function getAssistantToolCallIds(message: any): Set<string> {
-  const ids = new Set<string>()
-  const content: any[] = Array.isArray(message?.content) ? message.content : []
+  const ids = new Set<string>();
+  const content: any[] = Array.isArray(message?.content) ? message.content : [];
 
   for (const block of content) {
     if (block?.type === "toolCall" && typeof block.id === "string") {
-      ids.add(block.id)
+      ids.add(block.id);
     }
   }
 
-  return ids
+  return ids;
 }
 
 function isMatchingToolResult(message: any, toolCallIds: Set<string>): boolean {
-  const role = getRole(message)
-  if (role !== "toolResult" && role !== "bashExecution") return false
-  return typeof message?.toolCallId === "string" && toolCallIds.has(message.toolCallId)
+  const role = getRole(message);
+  if (role !== "toolResult" && role !== "bashExecution") return false;
+  return typeof message?.toolCallId === "string" && toolCallIds.has(message.toolCallId);
 }
 
 function createSpan(kind: TranscriptSpanKind, items: TranscriptSourceItem[]): TranscriptSpan {
-  const first = items[0]!
-  const last = items[items.length - 1]!
+  const first = items[0]!;
+  const last = items[items.length - 1]!;
 
   return {
     key: `span:${first.key}..${last.key}`,
@@ -106,7 +107,7 @@ function createSpan(kind: TranscriptSpanKind, items: TranscriptSourceItem[]): Tr
     sourceKeys: items.map((item) => item.key),
     role: first.role,
     messageCount: items.length,
-  }
+  };
 }
 
 /**
@@ -124,169 +125,176 @@ function createSpan(kind: TranscriptSpanKind, items: TranscriptSourceItem[]): Tr
  *      guarantees by running replay against pi's live message buffer).
  */
 export function buildSourceItemKey(message: DcpMessage, ordinal: number): string {
-  const rawId = typeof message?.id === "string" && message.id.length > 0
-    ? message.id
-    : typeof message?.messageId === "string" && message.messageId.length > 0
-      ? message.messageId
-      : typeof message?.entryId === "string" && message.entryId.length > 0
-        ? message.entryId
-        : null
-  if (rawId) return `raw:${rawId}`
+  if ((message as any)?.[INTERNAL_HEADING]) return "synth:heading";
+  const rawId =
+    typeof message?.id === "string" && message.id.length > 0
+      ? message.id
+      : typeof message?.messageId === "string" && message.messageId.length > 0
+        ? message.messageId
+        : typeof message?.entryId === "string" && message.entryId.length > 0
+          ? message.entryId
+          : null;
+  if (rawId) return `raw:${rawId}`;
 
-  const nudgeTurn = (message as any)?.[INTERNAL_NUDGE_TURN]
+  const nudgeTurn = (message as any)?.[INTERNAL_NUDGE_TURN];
   if (typeof nudgeTurn === "number" && Number.isFinite(nudgeTurn)) {
-    return `synth:nudge:${nudgeTurn}`
+    return `synth:nudge:${nudgeTurn}`;
   }
 
-  const blockId = (message as any)?.[INTERNAL_BLOCK_ID]
+  const blockId = (message as any)?.[INTERNAL_BLOCK_ID];
   if (typeof blockId === "number" && Number.isFinite(blockId)) {
-    return `synth:block:b${blockId}`
+    return `synth:block:b${blockId}`;
   }
 
-  const role = getRole(message)
-  const timestamp = getTimestamp(message)
-  const toolCallId = typeof message?.toolCallId === "string" ? message.toolCallId : null
+  const role = getRole(message);
+  const timestamp = getTimestamp(message);
+  const toolCallId = typeof message?.toolCallId === "string" ? message.toolCallId : null;
 
   if (toolCallId) {
-    return `msg:${timestamp ?? "na"}:${role}:${toolCallId}:${ordinal}`
+    return `msg:${timestamp ?? "na"}:${role}:${toolCallId}:${ordinal}`;
   }
 
-  return `msg:${timestamp ?? "na"}:${role}:${ordinal}`
+  return `msg:${timestamp ?? "na"}:${role}:${ordinal}`;
 }
 
 export function buildSourceOwnerKey(ordinal: number): string {
-  return `s${ordinal}`
+  return `s${ordinal}`;
 }
 
 export function buildBlockOwnerKey(blockId: number): string {
-  return `block:b${blockId}`
+  return `block:b${blockId}`;
 }
 
 export function resolveCompressionBlockCoveredSourceKeys(
   snapshot: TranscriptSnapshot,
-  block: CompressionBlock,
+  block: CompressionBlock
 ): Set<string> | null {
-  const metadata = block.metadata
-  const exactSourceKeys = metadata?.coveredSourceKeys ?? []
-  const exactSpanKeys = metadata?.coveredSpanKeys ?? []
-  if (exactSourceKeys.length === 0 && exactSpanKeys.length === 0) return null
+  const metadata = block.metadata;
+  const exactSourceKeys = metadata?.coveredSourceKeys ?? [];
+  const exactSpanKeys = metadata?.coveredSpanKeys ?? [];
+  if (exactSourceKeys.length === 0 && exactSpanKeys.length === 0) return null;
 
-  const snapshotSourceKeys = new Set(snapshot.sourceItems.map((item) => item.key))
-  const spanByKey = new Map(snapshot.spans.map((span) => [span.key, span]))
-  const coveredSourceKeys = new Set<string>()
-  let unresolvedExactCoverage = false
+  const snapshotSourceKeys = new Set(snapshot.sourceItems.map((item) => item.key));
+  const spanByKey = new Map(snapshot.spans.map((span) => [span.key, span]));
+  const coveredSourceKeys = new Set<string>();
+  let unresolvedExactCoverage = false;
 
   for (const sourceKey of exactSourceKeys) {
     if (!snapshotSourceKeys.has(sourceKey)) {
-      unresolvedExactCoverage = true
-      continue
+      unresolvedExactCoverage = true;
+      continue;
     }
-    coveredSourceKeys.add(sourceKey)
+    coveredSourceKeys.add(sourceKey);
   }
 
   for (const spanKey of exactSpanKeys) {
-    const span = spanByKey.get(spanKey)
+    const span = spanByKey.get(spanKey);
     if (!span) {
-      unresolvedExactCoverage = true
-      continue
+      unresolvedExactCoverage = true;
+      continue;
     }
     for (const sourceKey of span.sourceKeys) {
-      coveredSourceKeys.add(sourceKey)
+      coveredSourceKeys.add(sourceKey);
     }
   }
 
-  if (unresolvedExactCoverage) return null
-  return coveredSourceKeys
+  if (unresolvedExactCoverage) return null;
+  return coveredSourceKeys;
 }
 
 export function countLogicalTurns(messages: DcpMessage[]): number {
-  return buildTranscriptSnapshot(messages).spans.filter((span) => LOGICAL_TURN_ELIGIBLE_ROLES.has(span.role)).length
+  return buildTranscriptSnapshot(messages).spans.filter((span) =>
+    LOGICAL_TURN_ELIGIBLE_ROLES.has(span.role)
+  ).length;
 }
 
 export function resolveLogicalTurnTailStartTimestamp(
   messages: DcpMessage[],
-  protectRecentTurns: number,
+  protectRecentTurns: number
 ): number | null {
-  const protectedTurns = Math.max(0, Math.floor(protectRecentTurns))
-  if (protectedTurns === 0) return null
+  const protectedTurns = Math.max(0, Math.floor(protectRecentTurns));
+  if (protectedTurns === 0) return null;
 
-  const snapshot = buildTranscriptSnapshot(messages)
-  const sourceItemByKey = new Map(snapshot.sourceItems.map((item) => [item.key, item]))
+  const snapshot = buildTranscriptSnapshot(messages);
+  const sourceItemByKey = new Map(snapshot.sourceItems.map((item) => [item.key, item]));
   const logicalTurnStartTimestamps = snapshot.spans
     .filter((span) => LOGICAL_TURN_ELIGIBLE_ROLES.has(span.role))
     .map((span) => sourceItemByKey.get(span.startSourceKey)?.timestamp ?? null)
-    .filter((timestamp): timestamp is number => timestamp !== null && Number.isFinite(timestamp))
+    .filter((timestamp): timestamp is number => timestamp !== null && Number.isFinite(timestamp));
 
-  if (logicalTurnStartTimestamps.length === 0) return null
+  if (logicalTurnStartTimestamps.length === 0) return null;
 
-  return logicalTurnStartTimestamps[Math.max(0, logicalTurnStartTimestamps.length - protectedTurns)] ?? null
+  return (
+    logicalTurnStartTimestamps[Math.max(0, logicalTurnStartTimestamps.length - protectedTurns)] ??
+    null
+  );
 }
 
 function resolveCoveredOrdinals(
   snapshot: TranscriptSnapshot,
-  compressionBlocks: CompressionBlock[],
+  compressionBlocks: CompressionBlock[]
 ): { coveredOrdinals: Set<number>; activeBlockOwnerKeys: Set<string> } {
-  const coveredOrdinals = new Set<number>()
-  const activeBlockOwnerKeys = new Set<string>()
-  const sourceOrdinalByKey = new Map(snapshot.sourceItems.map((item) => [item.key, item.ordinal]))
-  const spanByKey = new Map(snapshot.spans.map((span) => [span.key, span]))
+  const coveredOrdinals = new Set<number>();
+  const activeBlockOwnerKeys = new Set<string>();
+  const sourceOrdinalByKey = new Map(snapshot.sourceItems.map((item) => [item.key, item.ordinal]));
+  const spanByKey = new Map(snapshot.spans.map((span) => [span.key, span]));
 
   for (const block of compressionBlocks) {
-    if (!block.active) continue
+    if (!block.active) continue;
 
-    const exactCoveredSourceKeys = resolveCompressionBlockCoveredSourceKeys(snapshot, block)
+    const exactCoveredSourceKeys = resolveCompressionBlockCoveredSourceKeys(snapshot, block);
 
     if (exactCoveredSourceKeys !== null) {
-      activeBlockOwnerKeys.add(buildBlockOwnerKey(block.id))
+      activeBlockOwnerKeys.add(buildBlockOwnerKey(block.id));
 
       for (const sourceKey of exactCoveredSourceKeys) {
-        const ordinal = sourceOrdinalByKey.get(sourceKey)
+        const ordinal = sourceOrdinalByKey.get(sourceKey);
         if (ordinal !== undefined) {
-          coveredOrdinals.add(ordinal)
+          coveredOrdinals.add(ordinal);
         }
       }
 
-      continue
+      continue;
     }
 
-    if (!Number.isFinite(block.startTimestamp) || !Number.isFinite(block.endTimestamp)) continue
+    if (!Number.isFinite(block.startTimestamp) || !Number.isFinite(block.endTimestamp)) continue;
 
     const coveredItems = snapshot.sourceItems.filter(
       (item) =>
         item.timestamp !== null &&
         item.timestamp >= block.startTimestamp &&
-        item.timestamp <= block.endTimestamp,
-    )
+        item.timestamp <= block.endTimestamp
+    );
 
-    if (coveredItems.length === 0) continue
+    if (coveredItems.length === 0) continue;
 
-    activeBlockOwnerKeys.add(buildBlockOwnerKey(block.id))
+    activeBlockOwnerKeys.add(buildBlockOwnerKey(block.id));
     for (const item of coveredItems) {
-      coveredOrdinals.add(item.ordinal)
+      coveredOrdinals.add(item.ordinal);
     }
   }
 
-  return { coveredOrdinals, activeBlockOwnerKeys }
+  return { coveredOrdinals, activeBlockOwnerKeys };
 }
 
 export function buildLiveOwnerKeys(
   messages: DcpMessage[],
-  compressionBlocks: CompressionBlock[],
+  compressionBlocks: CompressionBlock[]
 ): Set<string> {
-  const snapshot = buildTranscriptSnapshot(messages)
+  const snapshot = buildTranscriptSnapshot(messages);
   const { coveredOrdinals, activeBlockOwnerKeys } = resolveCoveredOrdinals(
     snapshot,
-    compressionBlocks,
-  )
-  const liveOwnerKeys = new Set<string>(activeBlockOwnerKeys)
+    compressionBlocks
+  );
+  const liveOwnerKeys = new Set<string>(activeBlockOwnerKeys);
 
   for (const item of snapshot.sourceItems) {
-    if (!LIVE_OWNER_ELIGIBLE_ROLES.has(item.role)) continue
-    if (coveredOrdinals.has(item.ordinal)) continue
-    liveOwnerKeys.add(buildSourceOwnerKey(item.ordinal))
+    if (!LIVE_OWNER_ELIGIBLE_ROLES.has(item.role)) continue;
+    if (coveredOrdinals.has(item.ordinal)) continue;
+    liveOwnerKeys.add(buildSourceOwnerKey(item.ordinal));
   }
 
-  return liveOwnerKeys
+  return liveOwnerKeys;
 }
 
 /**
@@ -298,62 +306,64 @@ export function buildLiveOwnerKeys(
  * roles into a single `tool-exchange` span.
  */
 export function buildTranscriptSnapshot(messages: DcpMessage[]): TranscriptSnapshot {
-  const sourceItems: TranscriptSourceItem[] = messages.map((message, ordinal) => {
-    const key = buildSourceItemKey(message, ordinal)
-    return {
-      key,
-      ordinal,
-      role: getRole(message),
-      message,
-      timestamp: getTimestamp(message),
-    }
-  })
+  const sourceItems: TranscriptSourceItem[] = messages
+    .filter((message) => !(message as any)?.[INTERNAL_HEADING])
+    .map((message, ordinal) => {
+      const key = buildSourceItemKey(message, ordinal);
+      return {
+        key,
+        ordinal,
+        role: getRole(message),
+        message,
+        timestamp: getTimestamp(message),
+      };
+    });
 
-  const spans: TranscriptSpan[] = []
+  const spans: TranscriptSpan[] = [];
 
   for (let i = 0; i < sourceItems.length; i++) {
-    const item = sourceItems[i]!
+    const item = sourceItems[i]!;
 
     if (item.role === "assistant") {
-      const toolCallIds = getAssistantToolCallIds(item.message)
+      const toolCallIds = getAssistantToolCallIds(item.message);
 
       if (toolCallIds.size > 0) {
-        const grouped: TranscriptSourceItem[] = [item]
-        const trailingPassthrough: TranscriptSourceItem[] = []
-        let matchedResult = false
-        let j = i + 1
+        const grouped: TranscriptSourceItem[] = [item];
+        const trailingPassthrough: TranscriptSourceItem[] = [];
+        let matchedResult = false;
+        let j = i + 1;
 
         while (j < sourceItems.length) {
-          const next = sourceItems[j]!
+          const next = sourceItems[j]!;
 
           if (PASSTHROUGH_ROLES.has(next.role)) {
-            trailingPassthrough.push(next)
-            j++
-            continue
+            trailingPassthrough.push(next);
+            j++;
+            continue;
           }
 
           if (isMatchingToolResult(next.message, toolCallIds)) {
-            grouped.push(...trailingPassthrough, next)
-            trailingPassthrough.length = 0
-            matchedResult = true
-            j++
-            continue
+            grouped.push(...trailingPassthrough, next);
+            trailingPassthrough.length = 0;
+            matchedResult = true;
+            j++;
+            continue;
           }
 
-          break
+          break;
         }
 
         if (matchedResult) {
-          grouped.push(...trailingPassthrough)
-          spans.push(createSpan("tool-exchange", grouped))
-          i = j - 1
-          continue
+          grouped.push(...trailingPassthrough);
+          spans.push(createSpan("tool-exchange", grouped));
+          i = j - 1;
+          continue;
         }
       }
     }
 
-    spans.push(createSpan("message", [item]))
+    spans.push(createSpan("message", [item]));
   }
 
-  return { sourceItems, spans }
+  return { sourceItems, spans };
 }

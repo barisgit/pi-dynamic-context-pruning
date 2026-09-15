@@ -1,3 +1,4 @@
+import { renderCompressedBlockText } from "../../src/domain/compression/materialize.js";
 import { describe, expect, test } from "bun:test";
 import {
   allocateMessageRef,
@@ -46,6 +47,9 @@ describe("DCP compression.test", () => {
       id: 7,
       topic: "dogfood block format",
       summary: "Renderer work started for the new deterministic block shape.",
+      startId: "m0003",
+      endId: "m0016",
+      endTimestamp: 2000,
       activityLogVersion: 1,
       activityLog: [
         {
@@ -83,6 +87,7 @@ describe("DCP compression.test", () => {
     });
 
     const text = message.content?.[0]?.text ?? "";
+    expect(text).toContain("Record m0003–m0016 (ended 1970-01-01T00:00:02.000Z)");
     assert.ok(
       text.includes("[Compressed section: dogfood block format]"),
       "FAIL — missing compressed section header"
@@ -1514,12 +1519,21 @@ describe("DCP compression.test", () => {
 
     registerCompressTool(pi as any, state, config);
 
+    const rangeSchema = registeredTool.parameters.properties.ranges.items;
+    expect(rangeSchema.required).toEqual(["startId", "endId", "summary"]);
+    expect(rangeSchema.properties.summary).toBeDefined();
+
     const result = await registeredTool.execute(
       "compress-call-1",
       {
         topic: "Default topic",
         ranges: [
-          { startId: "m0001", endId: "m0001", summary: "First summary", topic: "First block" },
+          {
+            startId: "m0001",
+            endId: "m0001",
+            summary: "The first check passed.",
+            topic: "First block",
+          },
           { startId: "m0002", endId: "m0002", summary: "Second summary" },
         ],
       },
@@ -1528,6 +1542,17 @@ describe("DCP compression.test", () => {
       ctx
     );
 
+    expect(state.compressionBlocks[0]).toMatchObject({
+      summary: "The first check passed.",
+      startId: "m0001",
+      endId: "m0001",
+      endTimestamp: 1000,
+    });
+    const rendered = applyPruning(messages, state, config);
+    expect(JSON.stringify(rendered)).toContain("The first check passed.");
+    expect(JSON.stringify(rendered)).toContain(
+      "Record m0001–m0001 (ended 1970-01-01T00:00:01.000Z)"
+    );
     assert.deepStrictEqual(
       state.compressionBlocks.map((block) => block.topic),
       ["First block", "Default topic"],
@@ -1574,7 +1599,9 @@ describe("DCP compression.test", () => {
       () =>
         registeredTool.execute(
           "compress-call-2",
-          { ranges: [{ startId: "m0003", endId: "m0003", summary: "Missing topic" }] },
+          {
+            ranges: [{ startId: "m0003", endId: "m0003", summary: "Missing topic" }],
+          },
           undefined,
           undefined,
           ctx
@@ -2039,7 +2066,10 @@ describe("DCP compression.test", () => {
 
     const result = await registeredTool.execute(
       "compress-call-23i",
-      { topic: "force", ranges: [{ startId: "m0001", endId: "m0002", summary: "force summary" }] },
+      {
+        topic: "force",
+        ranges: [{ startId: "m0001", endId: "m0002", summary: "force summary" }],
+      },
       undefined,
       undefined,
       {
@@ -2192,4 +2222,17 @@ describe("DCP compression.test", () => {
     );
     console.log("  PASS: calm host + no estimate correctly keeps the protected tail closed");
   });
+});
+
+test("legacy summary-only rendering remains unchanged", () => {
+  const legacy = { id: 1, topic: "Old", summary: "  Original summary.  " };
+  for (const detailLevel of ["full", "compact", "minimal"] as const) {
+    const body =
+      detailLevel === "minimal"
+        ? "Original summary."
+        : "<agent-summary>\nOriginal summary.\n</agent-summary>";
+    expect(renderCompressedBlockText({ ...legacy, detailLevel })).toBe(
+      `[Compressed section: Old]\n\n\n\n${body}\n\n`
+    );
+  }
 });

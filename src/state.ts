@@ -68,6 +68,7 @@ export function resetState(state: DcpState): void {
   state.prunedToolActions.clear();
   state.schemaVersion = 1;
   state.compressionBlocks = [];
+  state.heading = undefined;
   state.nextBlockId = 1;
   state.lastRenderedMessages = [];
   state.lastLiveOwnerKeys = [];

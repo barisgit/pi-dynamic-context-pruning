@@ -15,7 +15,8 @@ import {
   buildCompressionPlanningHints,
   renderCompressionPlanningHints,
 } from "../domain/compression/tooling.js";
-import { buildLiveOwnerKeys } from "../domain/transcript/index.js";
+import { renderHeadingReminder } from "../domain/compression/heading.js";
+import { buildLiveOwnerKeys, INTERNAL_HEADING } from "../domain/transcript/index.js";
 import { appendDebugLog, buildSessionDebugPayload } from "../infrastructure/debug-log.js";
 import { updateDcpStatus } from "./status.js";
 import { hydrateMissingToolRecords } from "./tool-recording.js";
@@ -23,6 +24,8 @@ import { hydrateMissingToolRecords } from "./tool-recording.js";
 function cloneRenderedMessages(messages: DcpMessage[]): DcpMessage[] {
   return messages.map((message) => {
     const clone = { ...message };
+    if ((message as any)[INTERNAL_HEADING])
+      Object.defineProperty(clone, INTERNAL_HEADING, { value: true });
     if (Array.isArray(clone.content)) {
       clone.content = clone.content.map((part: any) =>
         typeof part === "object" && part !== null ? { ...part } : part
@@ -56,14 +59,14 @@ function buildNudgeHeader(
   const targetText = formatCleanupTarget(config);
 
   if (overCleanupTarget || nudgeType === "context-strong") {
-    return `Compress now: over DCP cleanup target${targetText}. Compress every eligible stretch below — not just the biggest. The list is a suggestion: you may also re-compress across existing \`bN\` blocks (merging or rewriting prior summaries) when that better serves the live task. \`bN\` summaries stay citable; carrying closed work raw degrades retrieval.`;
+    return `Compress now: over DCP cleanup target${targetText}. For each stretch below: if its work is closed, compress it now, recording what was settled and what was still open when it ended. If it is still live, leave it. Do not put present intent or next steps into a block.`;
   }
 
   if (nudgeType === "iteration") {
-    return `DCP checkpoint${targetText}. After a long tool run, compress every eligible stretch below — not just the biggest. The list is a suggestion: you may also re-compress across existing \`bN\` blocks when that better serves the live task. \`bN\` summaries stay citable; carrying closed work raw degrades retrieval.`;
+    return `DCP checkpoint${targetText}. After a long tool run, check each stretch below: if its work is closed, compress it now, recording what was settled and what was still open when it ended. If it is still live, leave it. Do not put present intent or next steps into a block.`;
   }
 
-  return `DCP checkpoint${targetText}. Compress every eligible stretch below — not just the biggest. The list is a suggestion: you may also re-compress across existing \`bN\` blocks when that better serves the live task. \`bN\` summaries stay citable; carrying closed work raw degrades retrieval.`;
+  return `DCP checkpoint${targetText}. For each stretch below: if its work is closed, compress it now, recording what was settled and what was still open when it ended. If it is still live, leave it. Do not put present intent or next steps into a block.`;
 }
 
 function formatCleanupTarget(config: DcpConfig): string {
@@ -92,6 +95,7 @@ function countToolCallsSinceLastUser(messages: DcpMessage[]): number {
   let count = 0;
   for (let index = messages.length - 1; index >= 0; index--) {
     const message = messages[index];
+    if ((message as any)?.[INTERNAL_HEADING]) continue;
     if (message?.role === "user") break;
     if (message?.role === "toolResult" || message?.role === "bashExecution") {
       count++;
@@ -216,7 +220,19 @@ export function registerContextHandler(pi: ExtensionAPI, state: DcpState, config
         );
         const planningHintText = renderCompressionPlanningHints(planningHints);
         const injectedNudgeText = buildCompactReminderText(
-          planningHintText,
+          [
+            planningHintText,
+            renderHeadingReminder(
+              state,
+              event.messages,
+              ctx.sessionManager
+                .getBranch?.()
+                .filter((entry: any) => entry.type === "message")
+                .map((entry: any) => entry.message) ?? event.messages
+            ),
+          ]
+            .filter(Boolean)
+            .join("\n"),
           nudgeType,
           config,
           contextPercent,

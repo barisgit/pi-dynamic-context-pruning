@@ -1,3 +1,4 @@
+import { createHeading, normalizeHeading, type HeadingInput } from "../compression/heading.js";
 // ---------------------------------------------------------------------------
 // DCP replay engine
 // ---------------------------------------------------------------------------
@@ -229,6 +230,7 @@ interface CompressInvocation {
   toolCallId: string;
   topic?: string;
   ranges: CompressRange[];
+  heading?: HeadingInput;
 }
 
 /**
@@ -256,7 +258,7 @@ function findCompressInvocation(
         if (!r || typeof r !== "object") continue;
         const startId = (r as any).startId;
         const endId = (r as any).endId;
-        const summary = (r as any).summary;
+        const summary = r.summary;
         if (typeof startId !== "string" || typeof endId !== "string") continue;
         if (typeof summary !== "string") continue;
         const range: CompressRange = { startId, endId, summary };
@@ -265,6 +267,7 @@ function findCompressInvocation(
         ranges.push(range);
       }
       const invocation: CompressInvocation = { toolCallId, ranges };
+      if (args.heading) invocation.heading = args.heading as HeadingInput;
       if (typeof args.topic === "string") invocation.topic = args.topic;
       return invocation;
     }
@@ -292,6 +295,13 @@ function applyCompressInvocation(
   // the replayed state on the same trajectory as the live state.
   applyPruning(messages as DcpMessage[], state, config);
 
+  if (invocation.heading) {
+    state.heading = createHeading(
+      invocation.heading,
+      state,
+      parseTimestamp(messages.at(-1)?.timestamp)
+    );
+  }
   const plannedBlocks: CompressionBlock[] = [];
   const pendingSupersededBlockIds = new Set<number>();
   let nextBlockId = state.nextBlockId;
@@ -367,6 +377,8 @@ function applyCompressInvocation(
       id: nextBlockId++,
       topic: blockTopic,
       summary: expandedSummary,
+      startId,
+      endId,
       startTimestamp,
       endTimestamp,
       anchorTimestamp,

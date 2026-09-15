@@ -1,3 +1,4 @@
+import { renderHeadingMessage, stripHeadingPrefix } from "../compression/heading.js";
 import type {
   DcpState,
   HeuristicPruneDecision,
@@ -10,7 +11,9 @@ import { stripDcpHallucinationsFromString } from "../refs/metadata.js";
 import { renderCompressedBlockMessage } from "../compression/materialize.js";
 import { allocateMessageRef } from "../refs/index.js";
 import {
+  buildTranscriptSnapshot,
   INTERNAL_BLOCK_ID,
+  INTERNAL_HEADING,
   buildBlockOwnerKey,
   buildSourceItemKey,
   buildSourceOwnerKey,
@@ -120,12 +123,7 @@ function applyCompressionBlocks(messages: any[], state: DcpState, config: DcpCon
     // Build synthetic user message for the compressed block
     const syntheticMsg = {
       ...renderCompressedBlockMessage({
-        id: block.id,
-        topic: block.topic,
-        summary: block.summary,
-        activityLogVersion: block.activityLogVersion,
-        activityLog: block.activityLog,
-        metadata: block.metadata,
+        ...block,
         detailLevel: blockDetailById.get(block.id),
       }),
       // anchorTimestamp is always finite (resolveAnchorTimestamp returns
@@ -771,6 +769,7 @@ export function injectMessageIds(messages: any[], state: DcpState): void {
 
   for (let ordinal = 0; ordinal < messages.length; ordinal++) {
     const msg = messages[ordinal];
+    if (msg?.[INTERNAL_HEADING]) continue;
     const role: string = msg.role ?? "";
 
     // Skip PI-internal passthrough messages
@@ -848,6 +847,7 @@ export function finalizeMaterializedMessages(
   config: DcpConfig,
   options: FinalizeMaterializedMessagesOptions = {}
 ): DcpMessage[] {
+  messages = messages.filter((message) => !(message as any)?.[INTERNAL_HEADING]);
   const msgs: DcpMessage[] = messages.map((m: DcpMessage, ordinal: number) => {
     const clone = { ...m };
     if (Array.isArray(clone.content)) {
@@ -887,6 +887,20 @@ export function finalizeMaterializedMessages(
   gcPrunedToolIds(msgs, state);
   injectMessageIds(msgs, state);
 
+  if (state.heading) {
+    const source = buildTranscriptSnapshot(options.turnMessages ?? messages);
+    const turns = source.spans.filter((span) =>
+      ["user", "assistant", "toolResult", "bashExecution"].includes(span.role)
+    );
+    const protectedTurns = Math.max(0, Math.floor(config.compress.protectRecentTurns));
+    const tailKeys = new Set(
+      protectedTurns > 0 ? turns.slice(-protectedTurns).flatMap((span) => span.sourceKeys) : []
+    );
+    const tailIndex = msgs.findIndex((message) =>
+      tailKeys.has((message as any)[INTERNAL_SOURCE_KEY])
+    );
+    msgs.splice(tailIndex < 0 ? msgs.length : tailIndex, 0, renderHeadingMessage(state.heading));
+  }
   return msgs;
 }
 
@@ -897,6 +911,7 @@ export function finalizeMaterializedMessages(
 export function applyPruning(messages: DcpMessage[], state: DcpState, config: DcpConfig): any[] {
   // Deep-clone each message and its content to prevent mutations from
   // affecting the original objects across context events.
+  messages = messages.filter((message) => !(message as any)?.[INTERNAL_HEADING]);
   const msgs: DcpMessage[] = messages.map((m: DcpMessage, ordinal: number) => {
     const clone = { ...m };
     if (Array.isArray(clone.content)) {
@@ -916,6 +931,15 @@ export function applyPruning(messages: DcpMessage[], state: DcpState, config: Dc
     });
     return clone;
   });
+
+  // Native compaction also stores direction; render only the current standalone heading.
+  if (state.heading) {
+    for (const message of msgs) {
+      if (message.role === "compactionSummary" && typeof message.summary === "string") {
+        message.summary = stripHeadingPrefix(message.summary);
+      }
+    }
+  }
 
   // 0. Strip generated DCP/protocol hallucinations before they can affect metadata.
   stripGeneratedDcpHallucinations(msgs);

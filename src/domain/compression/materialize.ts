@@ -14,6 +14,9 @@ export interface CompressionBlockRenderData {
   id: number;
   topic: string;
   summary: string;
+  startId?: string;
+  endId?: string;
+  endTimestamp?: number;
   activityLogVersion?: number;
   activityLog?: CompressionLogEntry[];
   metadata?: CompressionBlockMetadata;
@@ -112,16 +115,30 @@ function renderLogEntry(entry: CompressionLogEntry): string {
   );
 }
 
+/** Render authored historical content, retaining the legacy narrative unchanged. */
+export function renderBlockRecord(block: CompressionBlockRenderData): string {
+  if (!block.startId || !block.endId || block.endTimestamp === undefined)
+    return block.summary.trim();
+  return `Record ${block.startId}–${block.endId} (ended ${new Date(block.endTimestamp).toISOString()})\n\n${block.summary.trim()}`;
+}
+
 /** Render the plain text body for a compressed block. */
 export function renderCompressedBlockText(block: CompressionBlockRenderData): string {
   const detailLevel = block.detailLevel ?? "full";
-  const summary = block.summary.trim();
-  const normalizedSummary = normalizeInlineWhitespace(summary);
+  const summary = renderBlockRecord(block);
   const conversation = renderConversationLines(block.activityLog ?? []);
   const parts = [`[Compressed section: ${block.topic}]`, ``];
 
   if (detailLevel === "minimal") {
-    parts.push(truncateText(normalizedSummary, MAX_MINIMAL_SUMMARY_CHARS));
+    parts.push(
+      renderBlockRecord({
+        ...block,
+        summary: truncateText(
+          normalizeInlineWhitespace(block.summary.trim()),
+          MAX_MINIMAL_SUMMARY_CHARS
+        ),
+      })
+    );
   } else if (detailLevel === "compact") {
     parts.push(
       `<agent-summary>\n${truncateText(summary, MAX_COMPACT_SUMMARY_CHARS)}\n</agent-summary>`
