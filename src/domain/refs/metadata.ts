@@ -13,17 +13,19 @@ export function stripDcpMetadataTags(text: string): string {
     .replace(/<dcp-log\b[^>]*>/g, " ")
     .replace(/<\/dcp-log>/g, " ")
     .replace(/<dcp-system-reminder>/g, " ")
-    .replace(/<\/dcp-system-reminder>/g, " ")
+    .replace(/<\/dcp-system-reminder>/g, " ");
 }
 
-const DCP_PAIRED_TAG_REGEX = /<dcp[^>]*>[\s\S]*?<\/dcp[^>]*>/gi
-const DCP_UNPAIRED_TAG_REGEX = /<\/?dcp[^>]*>/gi
-const OWNER_PARAMETER_REGEX = /<parameter\s+name=["']owner["'][^>]*>[\s\S]*?<\/parameter>/gi
+const DCP_PAIRED_TAG_REGEX =
+  /<(dcp-(?:id|owner|block-id|log|system-reminder|summary))(?=[\s>])[^>]*>[\s\S]*?<\/\1\s*>/g;
+const DCP_UNPAIRED_TAG_REGEX =
+  /<\/?dcp-(?:id|owner|block-id|log|system-reminder|summary)(?=[\s/>])[^>]*>/g;
+const OWNER_PARAMETER_REGEX = /<parameter\s+name=["']owner["'][^>]*>[\s\S]*?<\/parameter>/gi;
 
 /** Strip generated DCP/protocol metadata hallucinations from assistant/tool output text. */
 export function stripDcpHallucinationsFromString(text: string): string {
   return text
     .replace(DCP_PAIRED_TAG_REGEX, "")
     .replace(DCP_UNPAIRED_TAG_REGEX, "")
-    .replace(OWNER_PARAMETER_REGEX, "")
+    .replace(OWNER_PARAMETER_REGEX, "");
 }
