@@ -62,7 +62,12 @@ export {
 // Minimal factories
 // ---------------------------------------------------------------------------
 
-export function makeConfig(): DcpConfig {
+export function makeConfig(): DcpConfig & {
+  strategies: {
+    purgeErrors: NonNullable<DcpConfig["strategies"]["purgeErrors"]>;
+    customStrategies: NonNullable<DcpConfig["strategies"]["customStrategies"]>;
+  };
+} {
   return {
     enabled: true,
     debug: false,
@@ -89,6 +94,7 @@ export function makeConfig(): DcpConfig {
       maxSummaryTokens: 20000,
     },
     strategies: {
+      candidates: { minAgeTurns: 15, minResultTokens: 300, protectedTools: [] },
       pruneCadenceTurns: 1,
       minPruneItemSavedTokens: 0,
       minPruneBatchSavedTokens: 0,

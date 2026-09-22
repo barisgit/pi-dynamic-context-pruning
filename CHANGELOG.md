@@ -1,5 +1,33 @@
 # Changelog
 
+## Unreleased
+
+- Simplified Jev to keep/drop decisions, recent public dialogue, all eligible outputs with bounded parallelism, and reevaluation every configured cadence. Audit suppresses same-cadence duplicates rather than caching relevance indefinitely.
+- Retired deterministic error purging and custom age-only clear/head-tail rules. Shared candidate age/size/protection settings replace those rules; exact-result deduplication and existing savings gates remain. Historical saved actions/configuration stay readable without re-enabling retired collectors.
+
+- Added opt-in, disabled-by-default Jev shadow judgments for eligible exposed tool outputs. Decisions are audited outside session folders under the agent directory `dcp/jev/`; shadow mode never changes pruning selections.
+- Promoted the typed Decisions API client from evaluation scripts into runtime infrastructure; evaluation imports remain compatible. Existing OpenRouter credentials are reused.
+
+## [2.0.0] - 2026-09-20
+
+### Changed
+
+- New `compress` calls require nonempty `ranges`, with optional topics and freeform summaries. Live heading updates are removed; native compaction generates a fresh working-model handoff using the effective context and recent tail.
+- Block retention is staged by the existing count settings: newest blocks retain full presentation, the next tier retains intact authored summaries without conversation/effect/file metadata, and older blocks leave working context entirely. Canonical originals remain saved.
+- Native checkpoints validate the actual boundary, use the existing coverage gate, and retain budgeted memory with a fresh handoff. Whole old blocks may be omitted instead of cancelling because all history cannot fit. Existing host summarization remains the fallback; no separate asynchronous summarizer is introduced.
+- Historical saved state and heading-bearing calls remain readable automatically. Persisted schema versions are unchanged; no manual conversion or fresh session is required. Pruning and native trigger timing remain unchanged. Retention is deliberately lossy, not a guarantee that every old instruction survives.
+
+### Fixed
+
+- Prevented final-cut omissions, age/budget clipping of authored memory, repeated-checkpoint duplication, and serialization of private tool details into checkpoint model text.
+- Deduplication requires identical visible results as well as requests. Old errors require retained successful retries; differing results and unresolved errors survive.
+
+### Added
+
+- Optional fo exposed-Ref bridge: precise public text-result pruning, exact recovery IDs, combined actual savings gates, and conservative protection of ambiguous, image-bearing, private, and derived output. Existing savings and cadence configuration is retained.
+- `dcp_recover` reads canonical current-branch originals without rerunning operations, with paged text and exact large-output files.
+- Repeated-cycle continuation harness and bounded Jev, selective-summary, and timing trials. Experimental mechanisms are not enabled as production defaults.
+
 ## [1.0.7] - 2026-04-14
 
 ### Fixed

@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { spawnSync } from "node:child_process";
 import { join } from "node:path";
-import { deepMerge as deepMergeTyped, loadConfig } from "../../src/infrastructure/config.js";
+import { deepMerge as deepMergeTyped, type loadConfig } from "../../src/infrastructure/config.js";
 
 // These tests exercise structural array-merge semantics, not full DcpConfig
 // shapes, so use a loosely-typed alias (deepMerge's `Partial<T>` is shallow and
@@ -72,46 +73,97 @@ describe("deepMerge array semantics", () => {
   });
 });
 
-describe("custom strategy config validation", () => {
-  function expectInvalidConfig(snippet: string, expected: string): void {
+describe("candidate config and deprecated compatibility", () => {
+  function withConfig(
+    snippet: object,
+    check: (config: ReturnType<typeof loadConfig>) => void
+  ): void {
     const dir = mkdtempSync(join(tmpdir(), "dcp-config-test-"));
-    const previous = process.env["PI_CONFIG_DIR"];
     try {
-      writeFileSync(join(dir, "dcp.jsonc"), snippet, "utf8");
-      process.env["PI_CONFIG_DIR"] = dir;
-      expect(() => loadConfig(dir)).toThrow(expected);
+      writeFileSync(join(dir, "dcp.jsonc"), JSON.stringify(snippet), "utf8");
+      // Isolate all config layers without touching the user's global config.
+      const result = spawnSync(
+        process.execPath,
+        [
+          "--eval",
+          `import { loadConfig } from ${JSON.stringify(new URL("../../src/infrastructure/config.ts", import.meta.url).pathname)}; console.log(JSON.stringify(loadConfig(${JSON.stringify(dir)})));`,
+        ],
+        { env: { ...process.env, HOME: dir, PI_CONFIG_DIR: dir }, encoding: "utf8" }
+      );
+      if (result.status !== 0) throw new Error(result.stderr);
+      check(JSON.parse(result.stdout));
     } finally {
-      if (previous === undefined) {
-        delete process.env["PI_CONFIG_DIR"];
-      } else {
-        process.env["PI_CONFIG_DIR"] = previous;
-      }
       rmSync(dir, { recursive: true, force: true });
     }
   }
 
-  test("rejects unknown custom strategy actions", () => {
-    expectInvalidConfig(
-      `{ "strategies": { "customStrategies": { "rules": [{ "tools": ["read"], "action": "drop" }] } } } }`,
-      "action must be"
+  test("ships shared candidates and savings gates, not retired collector defaults", () => {
+    withConfig({}, (config) => {
+      expect(config.strategies.candidates).toEqual({
+        minAgeTurns: 15,
+        minResultTokens: 300,
+        protectedTools: [],
+      });
+      // Deployment overrides (100/10000) are not package defaults.
+      expect(config.strategies.minPruneItemSavedTokens).toBe(25);
+      expect(config.strategies.minPruneBatchSavedTokens).toBe(100);
+      expect(config.strategies.purgeErrors).toBeUndefined();
+      expect(config.strategies.customStrategies).toBeUndefined();
+    });
+  });
+
+  test("ignores unknown deprecated actions", () => {
+    withConfig(
+      {
+        strategies: {
+          customStrategies: { enabled: true, rules: [{ tools: ["read"], action: "drop" }] },
+        },
+      },
+      (config) => expect(config.strategies.candidates.minAgeTurns).toBe(15)
     );
   });
 
-  test("rejects reduce rules without keep", () => {
-    expectInvalidConfig(
-      `{ "strategies": { "customStrategies": { "rules": [{ "tools": ["read"], "action": "reduce" }] } } } }`,
-      "keep is required"
+  test("ignores deprecated reduce rules without keep", () => {
+    withConfig(
+      { strategies: { customStrategies: { rules: [{ tools: ["read"], action: "reduce" }] } } },
+      (config) => expect(config.strategies.candidates.minResultTokens).toBe(300)
     );
   });
 
-  test("rejects empty tools and negative numbers", () => {
-    expectInvalidConfig(
-      `{ "strategies": { "customStrategies": { "rules": [{ "tools": [], "action": "clear" }] } } } }`,
-      "tools must be a non-empty array"
+  test("ignores empty deprecated tools and negative deprecated age", () => {
+    withConfig(
+      {
+        strategies: {
+          customStrategies: {
+            defaults: { minAgeTurns: -1 },
+            rules: [{ tools: [], action: "clear" }],
+          },
+        },
+      },
+      (config) => expect(config.strategies.candidates.minAgeTurns).toBe(15)
     );
-    expectInvalidConfig(
-      `{ "strategies": { "customStrategies": { "defaults": { "minAgeTurns": -1 }, "rules": [] } } } }`,
-      "minAgeTurns"
-    );
+  });
+
+  test("validates shared age, size and protection", () => {
+    for (const candidates of [
+      { minAgeTurns: -1 },
+      { minResultTokens: -1 },
+      { protectedTools: [123] },
+      null,
+    ]) {
+      expect(() => withConfig({ strategies: { candidates } }, () => {})).toThrow(
+        "strategies.candidates"
+      );
+    }
+  });
+
+  test("merges shared protection lists without losing defaults", () => {
+    withConfig({ strategies: { candidates: { protectedTools: ["read"] } } }, (config) => {
+      expect(config.strategies.candidates).toEqual({
+        minAgeTurns: 15,
+        minResultTokens: 300,
+        protectedTools: ["read"],
+      });
+    });
   });
 });

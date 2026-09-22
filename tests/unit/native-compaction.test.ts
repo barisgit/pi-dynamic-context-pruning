@@ -14,6 +14,7 @@ import {
   makeState,
 } from "../helpers/dcp-test-utils.js";
 import type { CompressionBlock } from "../../src/types/state.js";
+import { estimateTokens } from "../../src/domain/tokens/estimate.js";
 
 async function flushMacrotasks(): Promise<void> {
   // The auto-resume prompt is posted via setTimeout(..., 0) so it runs after the
@@ -50,7 +51,7 @@ function compactionEntry(
 }
 
 describe("DCP native pi compaction bridge", () => {
-  test("builds a pi compaction result from hidden DCP blocks and bounded raw gaps", () => {
+  test("builds a pi compaction result from DCP blocks without recursively carrying raw gaps", () => {
     const messages: any[] = [
       {
         role: "user",
@@ -114,16 +115,17 @@ describe("DCP native pi compaction bridge", () => {
 
     expect(result.firstKeptEntryId).toBe("entry-tail");
     expect(result.tokensBefore).toBe(1234);
-    expect(result.summary).toContain("Previous pi summary.");
+    expect(result.summary).not.toContain("Previous pi summary.");
     expect(result.summary).toContain('<section topic="Setup block">');
     expect(result.summary).toContain("Setup summary with the durable decision.");
     expect(result.summary).not.toContain("Uncompressed Hidden Transcript Excerpts");
     expect(result.summary).not.toContain("old uncovered note that still needs a bounded excerpt");
     expect(result.details?.representedBlockIds).toEqual([1]);
     expect(result.details?.uncoveredHiddenMessageCount).toBe(1);
+    expect(result.details?.renderedUncoveredExcerptCount).toBe(0);
   });
 
-  test("moves firstKeptEntryId forward when pi's default cut would keep an active DCP block raw", () => {
+  test("keeps the host boundary even when an active block remains in the tail", () => {
     const messages: any[] = [
       {
         role: "user",
@@ -177,9 +179,9 @@ describe("DCP native pi compaction bridge", () => {
       },
     });
 
-    expect(result.firstKeptEntryId).toBe("entry-tail");
+    expect(result.firstKeptEntryId).toBe("entry-covered");
     expect(result.summary).toContain('<section topic="Covered middle">');
-    expect(result.details?.representedBlockIds).toEqual([2]);
+    expect(result.details?.representedBlockIds).toEqual([]);
   });
 
   test("handles any native compaction with DCP summaries when active DCP blocks exist", async () => {
@@ -247,7 +249,12 @@ describe("DCP native pi compaction bridge", () => {
       },
     };
 
-    registerDcpNativeCompactionBridge(pi as any, state, config);
+    registerDcpNativeCompactionBridge(
+      pi as any,
+      state,
+      config,
+      async () => "Fresh orientation including tail."
+    );
     const beforeCompact = handlers.get("session_before_compact");
 
     const hostOverride = await beforeCompact(event, ctx);
@@ -327,7 +334,12 @@ describe("DCP native pi compaction bridge", () => {
       },
     };
 
-    registerDcpNativeCompactionBridge(pi as any, state, config);
+    registerDcpNativeCompactionBridge(
+      pi as any,
+      state,
+      config,
+      async () => "Fresh orientation including tail."
+    );
     queueDcpAutoNativeCompaction(state, [4]);
     expect(hasPendingDcpAutoNativeCompaction(state)).toBe(true);
 
@@ -457,7 +469,12 @@ describe("DCP native pi compaction bridge", () => {
       },
     };
 
-    registerDcpNativeCompactionBridge(pi as any, state, config);
+    registerDcpNativeCompactionBridge(
+      pi as any,
+      state,
+      config,
+      async () => "Fresh orientation including tail."
+    );
     queueDcpAutoNativeCompaction(state, [12]);
 
     const turnEnd = handlers.get("turn_end");
@@ -543,7 +560,12 @@ describe("DCP native pi compaction bridge", () => {
       },
     };
 
-    registerDcpNativeCompactionBridge(pi as any, state, config);
+    registerDcpNativeCompactionBridge(
+      pi as any,
+      state,
+      config,
+      async () => "Fresh orientation including tail."
+    );
     queueDcpAutoNativeCompaction(state, [5]);
 
     const turnEnd = handlers.get("turn_end");
@@ -629,7 +651,12 @@ describe("DCP native pi compaction bridge", () => {
       },
     };
 
-    registerDcpNativeCompactionBridge(pi as any, state, config);
+    registerDcpNativeCompactionBridge(
+      pi as any,
+      state,
+      config,
+      async () => "Fresh orientation including tail."
+    );
     queueDcpAutoNativeCompaction(state, [9]);
 
     const turnEnd = handlers.get("turn_end");
@@ -724,7 +751,12 @@ describe("DCP native pi compaction bridge", () => {
       },
     };
 
-    registerDcpNativeCompactionBridge(pi as any, state, config);
+    registerDcpNativeCompactionBridge(
+      pi as any,
+      state,
+      config,
+      async () => "Fresh orientation including tail."
+    );
 
     // Manual `/dcp compact` triggers compaction with reason "command". The
     // resume prompt is gated on reason === "auto" in session_compact, so a
@@ -763,7 +795,7 @@ describe("DCP native pi compaction bridge", () => {
     expect(sentUserMessages.length).toBe(0);
   });
 
-  test("session_before_compact returns undefined when hidden coverage is below the configured ratio", async () => {
+  test("session_before_compact seeds host previousSummary with a fresh handoff below the coverage gate", async () => {
     const hiddenMessages: any[] = [];
     for (let i = 0; i < 10; i++) {
       hiddenMessages.push({
@@ -814,26 +846,38 @@ describe("DCP native pi compaction bridge", () => {
       },
       appendEntry: () => undefined,
     };
-    registerDcpNativeCompactionBridge(pi as any, state, config);
-    const before = handlers.get("session_before_compact");
-    const result = await before(
-      {
-        branchEntries,
-        preparation: { firstKeptEntryId: "tail-entry", tokensBefore: 100 },
-      },
-      {
-        sessionManager: {
-          getSessionId: () => "s",
-          getCwd: () => "/tmp",
-          getSessionDir: () => "/tmp",
-          getSessionFile: () => "/tmp/s.jsonl",
-          getLeafId: () => "tail-entry",
-        },
-        hasUI: false,
-        ui: { notify: () => undefined },
-      }
+    registerDcpNativeCompactionBridge(
+      pi as any,
+      state,
+      config,
+      async () => "Fresh orientation including tail."
     );
+    const before = handlers.get("session_before_compact");
+    const event: any = {
+      branchEntries,
+      preparation: {
+        firstKeptEntryId: "tail-entry",
+        tokensBefore: 100,
+        previousSummary: "stale host summary",
+      },
+      customInstructions: "leave this field unchanged",
+    };
+    const result = await before(event, {
+      sessionManager: {
+        getSessionId: () => "s",
+        getCwd: () => "/tmp",
+        getSessionDir: () => "/tmp",
+        getSessionFile: () => "/tmp/s.jsonl",
+        getLeafId: () => "tail-entry",
+      },
+      hasUI: false,
+      ui: { notify: () => undefined },
+    });
     expect(result).toBeUndefined();
+    expect(event.preparation.firstKeptEntryId).toBe("tail-entry");
+    expect(event.preparation.previousSummary).toContain("Fresh orientation including tail.");
+    expect(event.preparation.previousSummary).not.toContain("stale host summary");
+    expect(event.customInstructions).toBe("leave this field unchanged");
   });
 
   test("computeDcpHiddenCoverage windows the hidden set at the prior compaction, not full lineage", () => {
@@ -896,15 +940,13 @@ describe("DCP native pi compaction bridge", () => {
 
     // Windowed: only the 3 live messages count, fully covered -> gate passes.
     expect(coverage.hiddenMessageCount).toBe(3);
-    expect(coverage.ratio).toBe(1);
+    expect(coverage.ratio).toBe(0);
+    // Exact keys minted in another ordinal space cannot certify coverage.
     // Without the lower bound this would have counted ~13 lineage items at
     // ratio ~0.23, below the default minHiddenCoverageRatio (pi summarizer).
-    expect(coverage.ratio).toBeGreaterThanOrEqual(
-      makeConfig().nativeCompaction.minHiddenCoverageRatio
-    );
   });
 
-  test("buildDcpFallbackCustomInstructions emits authoritative block sections", () => {
+  test("buildDcpFallbackCustomInstructions emits qualified historical block sections", () => {
     const messages: any[] = [
       { role: "user", content: [{ type: "text", text: "x" }], timestamp: 1000 },
     ];
@@ -928,12 +970,145 @@ describe("DCP native pi compaction bridge", () => {
     const state = makeState([block]);
     const text = buildDcpFallbackCustomInstructions(state);
     expect(text).toBeDefined();
-    expect(text).toContain("Authoritative pre-compacted slices");
+    expect(text).toContain("DCP records of prior work");
     expect(text).toContain('<block id="b9" topic="Seed slice">'); // customInstructions still uses block id for LLM seed clarity
     expect(text).toContain("Important seed summary text.");
   });
 
-  test("tiers all blocks across compactions; suppresses DCP-shaped previousSummary; preserves non-DCP previousSummary", () => {
+  test("retains newest four full and next eight compact through the shared tier contract", () => {
+    const source = [
+      { role: "user", content: [{ type: "text", text: "covered" }], timestamp: 1000 },
+      { role: "user", content: [{ type: "text", text: "tail" }], timestamp: 2000 },
+    ];
+    const artifacts = buildCompressionArtifactsForRange(source, makeState(), 1000, 1000);
+    const blocks: CompressionBlock[] = Array.from({ length: 14 }, (_, index) => {
+      const id = index + 1;
+      return {
+        id,
+        topic: `Topic ${id}`,
+        summary: `SUMMARY_${id}`,
+        startTimestamp: 1000,
+        endTimestamp: 1000,
+        anchorTimestamp: 1001,
+        active: true,
+        summaryTokenEstimate: 4,
+        savedTokenEstimate: 10,
+        createdAt: id,
+        activityLogVersion: 1,
+        activityLog: [{ kind: "user_excerpt", text: `EXCERPT_${id}` }],
+        metadata: artifacts.metadata,
+      };
+    });
+    const config = makeConfig();
+    const result = buildDcpNativeCompactionResult({
+      state: makeState(blocks),
+      config,
+      branchEntries: [
+        messageEntry("covered", source[0]),
+        messageEntry("tail", source[1], "covered"),
+      ],
+      preparation: { firstKeptEntryId: "tail", tokensBefore: 100 },
+      request: { id: "tiers", reason: "host", requestedAt: 1 },
+      handoff: "Fresh direction.",
+    });
+
+    for (let id = 1; id <= 2; id++)
+      expect(result.summary).not.toContain(`<agent-summary>\nSUMMARY_${id}\n`);
+    for (let id = 3; id <= 10; id++) {
+      expect(result.summary).toContain(`SUMMARY_${id}`);
+      expect(result.summary).not.toContain(`EXCERPT_${id}`);
+    }
+    for (let id = 11; id <= 14; id++) {
+      expect(result.summary).toContain(`SUMMARY_${id}`);
+      expect(result.summary).toContain(`EXCERPT_${id}`);
+    }
+  });
+
+  test("budget strips metadata, then drops oldest whole records, and hook falls back if orientation alone is too large", async () => {
+    const source = [
+      { role: "user", content: [{ type: "text", text: "covered" }], timestamp: 1000 },
+      { role: "user", content: [{ type: "text", text: "tail" }], timestamp: 2000 },
+    ];
+    const artifacts = buildCompressionArtifactsForRange(source, makeState(), 1000, 1000);
+    const makeBlock = (id: number): CompressionBlock => ({
+      id,
+      topic: `Budget ${id}`,
+      summary: `WHOLE_SUMMARY_${id}_END`,
+      startTimestamp: 1000,
+      endTimestamp: 1000,
+      anchorTimestamp: 1001,
+      active: true,
+      summaryTokenEstimate: 5,
+      savedTokenEstimate: 10,
+      createdAt: id,
+      activityLogVersion: 1,
+      activityLog: [{ kind: "user_excerpt", text: `LARGE_METADATA_${id} `.repeat(100) }],
+      metadata: artifacts.metadata,
+    });
+    const blocks = [makeBlock(1), makeBlock(2), makeBlock(3)];
+    const branchEntries = [
+      messageEntry("covered", source[0]),
+      messageEntry("tail", source[1], "covered"),
+    ];
+    const args = (state: any, config: any) => ({
+      state,
+      config,
+      branchEntries,
+      preparation: { firstKeptEntryId: "tail", tokensBefore: 100 },
+      request: { id: "budget", reason: "host" as const, requestedAt: 1 },
+      handoff: "Fresh bounded direction.",
+    });
+
+    const compactConfig = makeConfig();
+    compactConfig.compress.renderFullBlockCount = 0;
+    compactConfig.compress.renderCompactBlockCount = 3;
+    compactConfig.nativeCompaction.maxSummaryTokens = 0;
+    const compactSummary = buildDcpNativeCompactionResult(
+      args(makeState(blocks), compactConfig)
+    ).summary;
+
+    const metadataBudget = makeConfig();
+    metadataBudget.compress.renderFullBlockCount = 3;
+    metadataBudget.compress.renderCompactBlockCount = 0;
+    metadataBudget.nativeCompaction.maxSummaryTokens = estimateTokens(compactSummary);
+    const stripped = buildDcpNativeCompactionResult(args(makeState(blocks), metadataBudget));
+    for (let id = 1; id <= 3; id++) {
+      expect(stripped.summary).toContain(`WHOLE_SUMMARY_${id}_END`);
+      expect(stripped.summary).not.toContain(`LARGE_METADATA_${id}`);
+    }
+
+    const twoRecordConfig = structuredClone(compactConfig);
+    const twoRecordSummary = buildDcpNativeCompactionResult(
+      args(makeState(blocks.slice(1)), twoRecordConfig)
+    ).summary;
+    const dropConfig = makeConfig();
+    dropConfig.compress.renderFullBlockCount = 3;
+    dropConfig.compress.renderCompactBlockCount = 0;
+    dropConfig.nativeCompaction.maxSummaryTokens = estimateTokens(twoRecordSummary);
+    const dropped = buildDcpNativeCompactionResult(args(makeState(blocks), dropConfig));
+    expect(dropped.summary).not.toContain("WHOLE_SUMMARY_1_END");
+    expect(dropped.summary).toContain("WHOLE_SUMMARY_2_END");
+    expect(dropped.summary).toContain("WHOLE_SUMMARY_3_END");
+
+    const fallbackConfig = makeConfig();
+    fallbackConfig.nativeCompaction.maxSummaryTokens = 1;
+    const event: any = {
+      branchEntries,
+      preparation: { firstKeptEntryId: "tail", tokensBefore: 100, previousSummary: "stale" },
+    };
+    const handlers = new Map<string, any>();
+    registerDcpNativeCompactionBridge(
+      { on: (name: string, fn: any) => handlers.set(name, fn) } as any,
+      makeState([makeBlock(1)]),
+      fallbackConfig,
+      async () => "ORIENTATION_ALONE_EXCEEDS_ONE_TOKEN"
+    );
+    expect(await handlers.get("session_before_compact")(event, { hasUI: false })).toBeUndefined();
+    expect(event.preparation.previousSummary).toContain("ORIENTATION_ALONE_EXCEEDS_ONE_TOKEN");
+    expect(event.preparation.previousSummary).not.toContain("stale");
+  });
+
+  test("uses shared newest-record tiers and never revives inactive or previous checkpoint text", () => {
     const messages: any[] = [
       { role: "user", content: [{ type: "text", text: "old" }], timestamp: 1000 },
       { role: "user", content: [{ type: "text", text: "tail" }], timestamp: 2000 },
@@ -947,6 +1122,8 @@ describe("DCP native pi compaction bridge", () => {
       id,
       topic: `Topic ${id}`,
       summary: `Summary text for block ${id}. Detailed enough.`,
+      startId: "m0001",
+      endId: "m0001",
       startTimestamp: 1000,
       endTimestamp: 1000,
       anchorTimestamp: 1001,
@@ -988,41 +1165,18 @@ describe("DCP native pi compaction bridge", () => {
       request: { id: "req", reason: "command" as const, requestedAt: 1 },
     });
 
-    // Case 1: DCP-shaped previous summary (inside dcp-summary envelope) should be stripped.
-    const dcpPrev =
-      '<dcp-summary version="1">\n<section topic="Old">old body</section>\n</dcp-summary>';
-    const r1 = buildDcpNativeCompactionResult(buildArgs(dcpPrev));
-    expect(r1.summary).not.toContain("old body");
-    // Tier expectations: newest 2 full (b6, b7), next 2 compact (b4, b5), older archived.
-    expect(r1.summary).toContain('<section topic="Topic 7">');
-    expect(r1.summary).toContain('<section topic="Topic 6">');
-    expect(r1.summary).toContain('<section topic="Topic 5" tier="compact">');
-    expect(r1.summary).toContain('<section topic="Topic 4" tier="compact">');
-    expect(r1.summary).toContain(
-      '<section topic="Topic 5" tier="compact">\n<agent-summary>\nSummary text for block 5. Detailed enough.\n</agent-summary>'
-    );
-    expect(r1.summary).toContain("<archived-sections>");
-    expect(r1.summary).not.toContain("<read-files>");
-    expect(r1.summary).toContain("<modified-files>");
-    expect(r1.details?.readFiles).toContain("src/read-only.ts");
-    expect(r1.summary).toContain("- Topic 1 ");
-    expect(r1.summary).toContain("- Topic 3 ");
-    // No raw block ids leaked into rendered summary.
-    expect(r1.summary).not.toMatch(/<section topic=[^>]*id="b\d+"/);
-    // Envelope wraps the DCP-rendered portion.
-    expect(r1.summary).toContain('<dcp-summary version="1">');
-    expect(r1.summary).toContain("</dcp-summary>");
-
-    // Case 2: non-DCP previous summary should be preserved verbatim at the top.
-    const proseSummary = "Plain prose summary from pi LLM fallback.";
-    const r2 = buildDcpNativeCompactionResult(buildArgs(proseSummary));
-    expect(r2.summary.startsWith(proseSummary)).toBe(true);
-
-    // Case 3: mixed previous summary — prose outside envelope survives, envelope content drops.
-    const mixed = `Earlier LLM-style prose.\n\n<dcp-summary version="1">\n<section topic="Old">old body</section>\n</dcp-summary>\n\nMore prose after envelope.`;
-    const r3 = buildDcpNativeCompactionResult(buildArgs(mixed));
-    expect(r3.summary).toContain("Earlier LLM-style prose.");
-    expect(r3.summary).toContain("More prose after envelope.");
-    expect(r3.summary).not.toContain("old body");
+    const historical = "OLD_CHECKPOINT_MUST_NOT_RECURSE";
+    const result = buildDcpNativeCompactionResult({
+      ...buildArgs(historical),
+      handoff: "Fresh current direction.",
+    });
+    expect(result.summary).not.toContain(historical);
+    expect(result.summary).toContain("Fresh current direction.");
+    expect(result.summary).toContain("Summary text for block 7. Detailed enough.");
+    expect(result.summary).not.toContain("Summary text for block 1.");
+    expect(result.summary).not.toContain("Record m0001");
+    expect(result.summary).not.toMatch(/<(?:dcp-summary|section)\b[^>]*tier=/);
+    expect(result.details?.representedBlockIds).toEqual([7]);
+    expect(result.details?.readFiles).toContain("src/read-only.ts");
   });
 });

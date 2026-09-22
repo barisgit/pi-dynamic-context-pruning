@@ -1595,20 +1595,14 @@ describe("DCP compression.test", () => {
       "FAIL — created blocks should carry an immediate creation-time saved-token estimate"
     );
 
-    await assert.rejects(
-      () =>
-        registeredTool.execute(
-          "compress-call-2",
-          {
-            ranges: [{ startId: "m0003", endId: "m0003", summary: "Missing topic" }],
-          },
-          undefined,
-          undefined,
-          ctx
-        ),
-      /requires a non-empty topic/,
-      "FAIL — each range should require an effective range or default topic"
+    await registeredTool.execute(
+      "compress-call-2",
+      { ranges: [{ startId: "m0003", endId: "m0003", summary: "Untitled history" }] },
+      undefined,
+      undefined,
+      ctx
     );
+    assert.equal(state.compressionBlocks.at(-1)?.topic, "Compressed history");
 
     console.log("  PASS: per-range topics create correctly labelled compression blocks");
     console.log("TEST 23d PASSED\n");

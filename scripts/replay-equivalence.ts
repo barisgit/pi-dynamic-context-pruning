@@ -65,6 +65,7 @@ export const EQUIVALENCE_CONFIG: DcpConfig = {
     maxSummaryTokens: 20000,
   },
   strategies: {
+    candidates: { minAgeTurns: 15, minResultTokens: 300, protectedTools: [] },
     pruneCadenceTurns: 1,
     minPruneItemSavedTokens: 0,
     minPruneBatchSavedTokens: 0,

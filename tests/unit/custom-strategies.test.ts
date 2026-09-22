@@ -1,10 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { applyPruning, makeConfig, makeState } from "../helpers/dcp-test-utils.js";
 import { toolNameMatches } from "../../src/domain/pruning/index.js";
-import type { DcpConfig } from "../../src/types/config.js";
 import type { DcpState, ToolRecord } from "../../src/types/state.js";
 
-function customConfig(): DcpConfig {
+function customConfig(): ReturnType<typeof makeConfig> {
   const cfg = makeConfig();
   cfg.compress.protectRecentTurns = 1;
   cfg.strategies.customStrategies = {
@@ -80,18 +79,16 @@ describe("custom strategy glob matcher", () => {
   });
 });
 
-describe("customStrategies heuristic", () => {
-  test("clears old large configured-tool results every cadence without pressure", () => {
+describe("retired customStrategies compatibility", () => {
+  test("deprecated collectors cannot clear old large results", () => {
     const messages = [...padStandalone(6), ...toolPair("read_old", { toolName: "Read" })];
     const state = makeState();
     recordTool(state, "read_old", { toolName: "Read", turnIndex: 0, tokenEstimate: 500 });
 
     applyPruning(messages, state, customConfig());
 
-    expect(state.prunedToolIds.has("read_old")).toBe(true);
-    expect(state.lastHeuristicPruneDecision?.customCandidates).toBe(1);
-    expect(state.lastHeuristicPruneDecision?.committedByStrategy.custom).toBe(1);
-    expect(state.lastHeuristicPruneDecision?.committedByAction.cleared).toBe(1);
+    expect(state.prunedToolIds.has("read_old")).toBe(false);
+    expect(state.lastHeuristicPruneDecision).toBeNull();
   });
 
   test("produces nothing when disabled for replay determinism", () => {
@@ -125,7 +122,7 @@ describe("customStrategies heuristic", () => {
     expect(state.lastHeuristicPruneDecision).toBeNull();
   });
 
-  test("matches args with string and array patterns and requires all listed fields", () => {
+  test("deprecated argument matches cannot authorize clearing", () => {
     const messages = [
       ...padStandalone(6),
       ...toolPair("match", { toolName: "mcp_fetch" }),
@@ -158,12 +155,12 @@ describe("customStrategies heuristic", () => {
     ];
     applyPruning(messages, state, cfg);
 
-    expect(state.prunedToolIds.has("match")).toBe(true);
+    expect(state.prunedToolIds.has("match")).toBe(false);
     expect(state.prunedToolIds.has("missing")).toBe(false);
     expect(state.prunedToolIds.has("non_string")).toBe(false);
   });
 
-  test("first matching rule wins", () => {
+  test("ordered deprecated rules cannot create reductions", () => {
     const messages = [
       ...padStandalone(6),
       ...toolPair("read_old", { toolName: "Read", text: "a\nb\nc\nd" }),
@@ -178,10 +175,8 @@ describe("customStrategies heuristic", () => {
     ];
     const pruned = applyPruning(messages, state, cfg);
 
-    expect(resultText(pruned, "read_old")).toBe(
-      "a\n[... 3 lines removed by DCP to save context — re-run the tool if needed ...]"
-    );
-    expect(state.lastHeuristicPruneDecision?.committedByAction.reduced).toBe(1);
+    expect(resultText(pruned, "read_old")).toBe("a\nb\nc\nd");
+    expect(state.prunedToolActions.size).toBe(0);
   });
 
   test("renders reduce with head only, tail only, and head plus tail marker counts", () => {
@@ -203,20 +198,29 @@ describe("customStrategies heuristic", () => {
       { tools: ["bash"], action: "reduce", keep: { tailLines: 2 } },
       { tools: ["grep"], action: "reduce", keep: { headLines: 1, tailLines: 1 } },
     ];
+    // Historical persisted reductions still render; no collector is involved.
+    for (const [id, headLines, tailLines] of [
+      ["head", 2, 0],
+      ["tail", 0, 2],
+      ["both", 1, 1],
+    ] as const) {
+      state.prunedToolIds.add(id);
+      state.prunedToolActions.set(id, { action: "reduce", headLines, tailLines });
+    }
     const pruned = applyPruning(messages, state, cfg);
 
     expect(resultText(pruned, "head")).toBe(
-      "l1\nl2\n[... 3 lines removed by DCP to save context — re-run the tool if needed ...]"
+      'l1\nl2\n[... 3 lines removed by DCP; original retained: dcp_recover({id:"head"}) ...]'
     );
     expect(resultText(pruned, "tail")).toBe(
-      "[... 3 lines removed by DCP to save context — re-run the tool if needed ...]\nl4\nl5"
+      '[... 3 lines removed by DCP; original retained: dcp_recover({id:"tail"}) ...]\nl4\nl5'
     );
     expect(resultText(pruned, "both")).toBe(
-      "l1\n[... 3 lines removed by DCP to save context — re-run the tool if needed ...]\nl5"
+      'l1\n[... 3 lines removed by DCP; original retained: dcp_recover({id:"both"}) ...]\nl5'
     );
   });
 
-  test("minAgeTurns uses cadence buckets and per-rule overrides", () => {
+  test("deprecated age overrides cannot authorize clearing", () => {
     const messages = [
       ...padStandalone(8),
       ...toolPair("young", { toolName: "Read" }),
@@ -236,10 +240,10 @@ describe("customStrategies heuristic", () => {
     applyPruning(messages, state, cfg);
 
     expect(state.prunedToolIds.has("young")).toBe(false);
-    expect(state.prunedToolIds.has("old")).toBe(true);
+    expect(state.prunedToolIds.has("old")).toBe(false);
   });
 
-  test("per-rule minResultTokens overrides defaults", () => {
+  test("deprecated size overrides cannot authorize clearing", () => {
     const messages = [...padStandalone(6), ...toolPair("small", { toolName: "Read" })];
     const state = makeState();
     recordTool(state, "small", { toolName: "Read", turnIndex: 0, tokenEstimate: 100 });
@@ -251,7 +255,7 @@ describe("customStrategies heuristic", () => {
     ];
     applyPruning(messages, state, cfg);
 
-    expect(state.prunedToolIds.has("small")).toBe(true);
+    expect(state.prunedToolIds.has("small")).toBe(false);
   });
 
   test("reduce is skipped when keep covers the whole content", () => {
@@ -284,6 +288,8 @@ describe("customStrategies heuristic", () => {
     cfg.strategies.customStrategies.rules = [
       { tools: ["read"], action: "reduce", keep: { headLines: 1, tailLines: 1 } },
     ];
+    state.prunedToolIds.add("read_old");
+    state.prunedToolActions.set("read_old", { action: "reduce", headLines: 1, tailLines: 1 });
     const first = applyPruning(messages, state, cfg);
     const second = applyPruning(messages, state, cfg);
 
@@ -295,7 +301,7 @@ describe("customStrategies heuristic", () => {
     });
   });
 
-  test("savings gates use reduce net savings", () => {
+  test("savings gates cannot reactivate deprecated reductions", () => {
     const messages = [
       ...padStandalone(6),
       ...toolPair("read_old", { toolName: "Read", text: "a\nb\nc\nd" }),
@@ -311,11 +317,10 @@ describe("customStrategies heuristic", () => {
     applyPruning(messages, state, cfg);
 
     expect(state.prunedToolIds.has("read_old")).toBe(false);
-    expect(state.lastHeuristicPruneDecision?.customCandidates).toBe(1);
-    expect(state.lastHeuristicPruneDecision?.droppedByItemGate).toBe(1);
+    expect(state.lastHeuristicPruneDecision).toBeNull();
   });
 
-  test("handles bashExecution results in lockstep with toolResult pruning", () => {
+  test("deprecated collectors leave bashExecution results intact", () => {
     const messages = [
       ...padStandalone(6),
       ...toolPair("bash_old", { role: "bashExecution", toolName: "Bash" }),
@@ -325,8 +330,8 @@ describe("customStrategies heuristic", () => {
 
     const pruned = applyPruning(messages, state, customConfig());
 
-    expect(state.prunedToolIds.has("bash_old")).toBe(true);
-    expect(resultText(pruned, "bash_old")).toContain("Output removed to save context");
+    expect(state.prunedToolIds.has("bash_old")).toBe(false);
+    expect(resultText(pruned, "bash_old")).toBe("large successful output");
   });
 });
 
@@ -344,6 +349,6 @@ describe("prunedToolIds GC", () => {
     expect(state.prunedToolIds.has("present")).toBe(true);
     expect(state.prunedToolIds.has("absent")).toBe(false);
     expect(state.prunedToolActions.has("absent")).toBe(false);
-    expect(resultText(pruned, "present")).toContain("Output removed to save context");
+    expect(resultText(pruned, "present")).toContain('dcp_recover({id:"present"})');
   });
 });

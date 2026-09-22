@@ -1,11 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { REMINDER_UPSERT_EVENT } from "pi-extension-utils";
-import {
-  createHeading,
-  renderHeading,
-  renderHeadingMessage,
-  renderHeadingReminder,
-} from "../../src/domain/compression/heading.js";
+import { renderHeading, renderHeadingMessage } from "../../src/domain/compression/heading.js";
 import {
   buildSourceItemKey,
   buildTranscriptSnapshot,
@@ -112,41 +107,16 @@ function harness() {
 }
 
 describe("mutable heading", () => {
-  test("heading-only call replaces whole heading and flushes v5 without blocks", async () => {
+  test("live schema requires ranges and rejects heading-only calls without mutation", async () => {
     const h = harness();
-    expect(h.tool.parameters.required ?? []).not.toContain("ranges");
-    const result = await h.execute({ heading: input });
-    expect(result.content[0].text).toBe("Heading replaced.");
-    expect(h.state.heading).toMatchObject({ ...input, revisedAfterId: "m0003" });
-    expect(h.state.compressionBlocks).toHaveLength(0);
-    expect(h.saves.at(-1).data).toMatchObject({
-      schemaVersion: 5,
-      blocks: [],
-      heading: h.state.heading,
-    });
-    await h.execute({ heading: { goal: "New goal", now: "New gap", next: "New step" } });
-    expect(h.state.heading?.constraints).toBeUndefined();
-    expect(h.state.heading?.goal).toBe("New goal");
-    await expect(h.execute({})).rejects.toThrow("Provide heading or at least one range.");
-  });
-
-  test("rejects over-budget heading with actual count; never truncates or mutates", async () => {
-    const h = harness();
-    await h.execute({ heading: input });
-    const previous = h.state.heading;
-    await expect(
-      h.execute({ heading: { goal: "g".repeat(998), now: "n", next: "x", constraints: "!" } })
-    ).rejects.toThrow("1001 characters; maximum is 1000");
-    expect(h.state.heading).toBe(previous);
-    await h.execute({ heading: { goal: "g".repeat(998), now: "n", next: "x" } });
-    expect(h.state.heading?.goal).toHaveLength(998);
-    await expect(
-      h.execute({
-        heading: input,
-        ranges: [{ startId: "m9999", endId: "m9999", topic: "bad", summary: "Rejected." }],
-      })
-    ).rejects.toThrow();
-    expect(h.state.heading?.goal).toHaveLength(998);
+    h.state.heading = heading;
+    expect(h.tool.parameters.required).toContain("ranges");
+    expect(h.tool.parameters.properties.heading).toBeUndefined();
+    expect(h.tool.parameters.properties.ranges.minItems).toBe(1);
+    await expect(h.execute({ heading: input })).rejects.toThrow("Provide at least one range");
+    await expect(h.execute({ ranges: [] })).rejects.toThrow("Provide at least one range");
+    expect(h.state.heading).toEqual(heading);
+    expect(h.saves).toHaveLength(0);
   });
 
   test("v5 round trips heading and old state restores undefined", () => {
@@ -167,7 +137,7 @@ describe("mutable heading", () => {
     }
   });
 
-  test("renders exact full heading once after older raw work and before protected tail", () => {
+  test("renders exact full heading for compaction without injecting it into ordinary context", () => {
     const h = harness();
     h.state.compressionBlocks = [block()];
     h.state.heading = heading;
@@ -175,51 +145,65 @@ describe("mutable heading", () => {
     const expected =
       '<heading revised-after="m0002">\nGoal: Objective: .charters/example/charter.md\n\nNow: The renderer passed tests; release approval remains.\n\nNext: Request approval so the release can proceed.\n\nConstraints: Do not commit.\n</heading>';
     expect(renderHeading(heading)).toBe(expected);
-    expect(rendered.map((message) => Boolean(message[INTERNAL_HEADING]))).toEqual([
-      false,
-      false,
-      true,
-      false,
-    ]);
-    expect(rendered[2].role).toBe("user");
-    expect(rendered[2].content[0].text).toBe(expected);
+    expect(rendered).toHaveLength(3);
+    expect(rendered.some((message) => message[INTERNAL_HEADING])).toBe(false);
+    expect(JSON.stringify(rendered)).not.toContain("<heading ");
     expect(JSON.stringify(rendered[0])).toContain(
       "Record m0001–m0001 (ended 1970-01-01T00:00:01.000Z)"
     );
     expect(JSON.stringify(rendered[1])).toContain("raw before tail");
-    expect(JSON.stringify(rendered[3])).toContain("hot tail");
+    expect(JSON.stringify(rendered[2])).toContain("hot tail");
     expect(
       renderHeading({ goal: "g", now: "n", next: "x", revisedAfterId: "m0001", revisedAt: 1 })
     ).not.toContain("Constraints:");
-    const again = applyPruning(messages, h.state, h.config);
-    expect(again.filter((message) => message[INTERNAL_HEADING])).toHaveLength(1);
+    expect(applyPruning(messages, h.state, h.config)).toEqual(rendered);
     expect(h.state.currentTurn).toBe(3);
   });
 
-  test("heading stays outside tool batches, refs, pruning, and logical turns", () => {
+  test("ordinary tool calls preserve the rendered prefix even when heading state changes", () => {
+    for (const blocks of [[], [block()]]) {
+      const h = harness();
+      h.state.compressionBlocks = blocks;
+      h.state.heading = heading;
+      const source: any[] = [...messages];
+      let previous = applyPruning(source, h.state, h.config);
+      for (let i = 0; i < 3; i++) {
+        source.push(
+          {
+            role: "assistant",
+            timestamp: 4000 + i * 2000,
+            content: [{ type: "toolCall", id: `read-${i}`, name: "read", arguments: {} }],
+          },
+          {
+            role: "toolResult",
+            timestamp: 5000 + i * 2000,
+            toolCallId: `read-${i}`,
+            toolName: "read",
+            content: [{ type: "text", text: `output ${i}` }],
+          }
+        );
+        const rendered = applyPruning(source, h.state, h.config);
+        expect(JSON.stringify(rendered.slice(0, previous.length))).toBe(JSON.stringify(previous));
+        expect(rendered).toHaveLength(previous.length + 2);
+        expect(rendered.slice(-2).map((message) => message.role)).toEqual([
+          "assistant",
+          "toolResult",
+        ]);
+        h.state.heading = {
+          ...heading,
+          now: `Completed tool call ${i}.`,
+          revisedAt: 5000 + i * 2000,
+        };
+        expect(applyPruning(source, h.state, h.config)).toEqual(rendered);
+        previous = rendered;
+      }
+      expect(h.state.currentTurn).toBe(6);
+    }
+  });
+
+  test("legacy synthetic headings stay outside refs, pruning, and logical turns", () => {
     const h = harness();
     h.state.heading = heading;
-    const exchange = [
-      messages[0],
-      {
-        role: "assistant",
-        timestamp: 2000,
-        content: [{ type: "toolCall", id: "read", name: "read", arguments: {} }],
-      },
-      {
-        role: "toolResult",
-        timestamp: 3000,
-        toolCallId: "read",
-        toolName: "read",
-        content: [{ type: "text", text: "output" }],
-      },
-    ];
-    h.state.prunedToolIds.add("read");
-    const rendered = applyPruning(exchange, h.state, h.config);
-    expect(rendered[1][INTERNAL_HEADING]).toBe(true);
-    expect(rendered[2].role).toBe("assistant");
-    expect(rendered[3].role).toBe("toolResult");
-    expect(rendered[1].content[0].text).toBe(renderHeading(heading));
     const synthetic = renderHeadingMessage(heading);
     expect(buildSourceItemKey(synthetic, 999)).toBe("synth:heading");
     expect(buildTranscriptSnapshot([messages[0], synthetic]).sourceItems).toHaveLength(1);
@@ -228,11 +212,11 @@ describe("mutable heading", () => {
     expect(h.state.messageRefSnapshot.size).toBe(0);
     const inputWithHeading = [messages[0], synthetic, ...messages.slice(1)];
     const result = applyPruning(inputWithHeading, h.state, h.config);
-    expect(result.filter((message) => message[INTERNAL_HEADING])).toHaveLength(1);
+    expect(result.filter((message) => message[INTERNAL_HEADING])).toHaveLength(0);
     expect(h.state.currentTurn).toBe(3);
   });
 
-  test("native override and fallback seed put heading first and never drop it for budget", async () => {
+  test("legacy heading remains stored while fresh orientation replaces history and budget uses fallback", async () => {
     const h = harness();
     h.state.heading = heading;
     h.state.compressionBlocks = [block()];
@@ -242,72 +226,33 @@ describe("mutable heading", () => {
       branchEntries: branch as any,
       preparation: { firstKeptEntryId: "entry-1", tokensBefore: 1000 },
       request: { id: "req", reason: "command" as const, requestedAt: 4000 },
+      handoff: "Fresh orientation from recent corrections.",
     };
-    const expected = renderHeading(heading);
     const summary = buildDcpNativeCompactionResult(args).summary;
-    expect(summary.startsWith(expected)).toBe(true);
-    expect(summary.indexOf("Historical work")).toBeGreaterThan(summary.indexOf("</heading>"));
-    expect(buildDcpFallbackCustomInstructions(h.state)?.startsWith(expected)).toBe(true);
+    expect(summary.startsWith("<current-orientation>")).toBe(true);
+    expect(summary).not.toContain(renderHeading(heading));
+    expect(buildDcpFallbackCustomInstructions(h.state)).not.toContain("<heading");
     h.config.nativeCompaction.maxSummaryTokens = 1;
-    expect(buildDcpNativeCompactionResult(args).summary.startsWith(expected)).toBe(true);
-    expect(buildDcpNativeCompactionResult(args).summary).toBe(expected);
+    expect(() => buildDcpNativeCompactionResult(args)).toThrow("use host summarization");
     const handlers = new Map<string, any>();
     registerDcpNativeCompactionBridge(
       { on: (name: string, handler: any) => handlers.set(name, handler) } as any,
       h.state,
-      h.config
+      h.config,
+      async () => "fresh"
     );
-    const result = await handlers.get("session_before_compact")(
-      { branchEntries: branch, preparation: args.preparation },
-      h.ctx
-    );
-    expect(result.compaction.summary.startsWith(expected)).toBe(true);
-    const materialized = applyPruning(
-      [{ role: "compactionSummary", summary, timestamp: 4000 }, messages[2]],
-      h.state,
-      h.config
-    );
-    expect(JSON.stringify(materialized).split("<heading ")).toHaveLength(2);
-    const next = buildDcpNativeCompactionResult({
-      ...args,
-      preparation: { ...args.preparation, previousSummary: summary },
-    });
-    expect(next.summary.split("<heading ")).toHaveLength(2);
+    expect(
+      await handlers.get("session_before_compact")(
+        { branchEntries: branch, preparation: args.preparation },
+        h.ctx
+      )
+    ).toBeUndefined();
+    expect((args.preparation as any).previousSummary).toContain("fresh");
+    expect(h.state.heading).toEqual(heading);
+    expect(h.state.compressionBlocks[0].active).toBe(true);
   });
 
-  test("staleness counts logical turns rather than visible IDs and supports missing heading", () => {
-    const h = harness();
-    h.state.heading = heading;
-    const later = [
-      ...messages,
-      {
-        role: "assistant",
-        timestamp: 4000,
-        content: [
-          { type: "toolCall", id: "a", name: "read", arguments: {} },
-          { type: "toolCall", id: "b", name: "read", arguments: {} },
-        ],
-      },
-      { role: "toolResult", toolCallId: "a", timestamp: 5000 },
-      { role: "toolResult", toolCallId: "b", timestamp: 6000 },
-    ];
-    expect(renderHeadingReminder(h.state, later)).toBe(
-      "Heading revised after m0002 (2 turns ago) — replace it if it no longer matches where the work is."
-    );
-    const restored = makeState();
-    restorePersistedState(JSON.parse(JSON.stringify(serializePersistedState(h.state))), restored);
-    expect(renderHeadingReminder(restored, later)).toContain("(2 turns ago)");
-    h.state.heading = undefined;
-    expect(renderHeadingReminder(h.state, messages)).toBe("");
-    h.state.compressionBlocks = [block()];
-    expect(renderHeadingReminder(h.state, messages)).toBe("");
-    h.state.compressionBlocks.push(block(2));
-    expect(renderHeadingReminder(h.state, messages)).toBe(
-      "No heading. Write one: goal, now, next."
-    );
-  });
-
-  test("context reminder appends one heading line after candidate ranges", async () => {
+  test("context reminder never requests ongoing heading maintenance", async () => {
     for (const hasHeading of [true, false]) {
       const h = harness();
       h.config.compress.minContextPercent = 0.1;
@@ -332,11 +277,9 @@ describe("mutable heading", () => {
         { ...h.ctx, getContextUsage: () => ({ tokens: 90_000, contextWindow: 100_000 }) }
       );
       const text = emitted.find((e) => e.name === REMINDER_UPSERT_EVENT).payload.text as string;
-      const line = hasHeading
-        ? "Heading revised after m0002 (1 turns ago) — replace it if it no longer matches where the work is."
-        : "No heading. Write one: goal, now, next.";
-      expect(text.endsWith(line)).toBe(true);
-      expect(text.split(line)).toHaveLength(2);
+      expect(text).not.toContain("Heading revised");
+      expect(text).not.toContain("No heading");
+      expect(text).not.toContain("goal, now, next");
     }
   });
 

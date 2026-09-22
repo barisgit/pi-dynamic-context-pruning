@@ -1,11 +1,5 @@
-import { renderHeadingMessage, stripHeadingPrefix } from "../compression/heading.js";
-import type {
-  DcpState,
-  HeuristicPruneDecision,
-  PrunedToolAction,
-  ToolRecord,
-} from "../../types/state.js";
-import type { CustomStrategyRule, DcpConfig } from "../../types/config.js";
+import type { DcpState, HeuristicPruneDecision, PrunedToolAction } from "../../types/state.js";
+import type { DcpConfig } from "../../types/config.js";
 import type { DcpMessage } from "../../types/message.js";
 import { stripDcpHallucinationsFromString } from "../refs/metadata.js";
 import { renderCompressedBlockMessage } from "../compression/materialize.js";
@@ -19,9 +13,15 @@ import {
   buildSourceOwnerKey,
   countLogicalTurns,
 } from "../transcript/index.js";
+import {
+  collectFoRefAdapterCandidates,
+  projectFoRefOuterResult,
+  type FoRefAdapterCollection,
+  type FoRefBridgeV1,
+} from "./fo-ref-adapter.js";
 
 // Always-protected tool names for deduplication
-const ALWAYS_PROTECTED_DEDUP = new Set(["compress", "write", "edit"]);
+const ALWAYS_PROTECTED_DEDUP = new Set(["compress", "write", "edit", "dcp_recover"]);
 
 // Roles that get message IDs injected. Assistant messages are deliberately
 // excluded so DCP does not mutate freshly generated model output and break the
@@ -45,6 +45,27 @@ function getMessageSourceKey(message: any, ordinal: number): string {
   return typeof message?.[INTERNAL_SOURCE_KEY] === "string"
     ? message[INTERNAL_SOURCE_KEY]
     : buildSourceItemKey(message, ordinal);
+}
+
+function applyFoRefOutputPruning(
+  state: DcpState,
+  bridge: FoRefBridgeV1 | undefined,
+  contexts: FoRefPruningContext[]
+): Set<string> {
+  const liveCompositeIds = new Set<string>();
+  for (const context of contexts) {
+    for (const id of context.collection.liveCompositeIds) liveCompositeIds.add(id);
+    if (!bridge) continue;
+    const projected = projectFoContext(context, bridge, activePrunedActions(state));
+    if (projected.status !== "projected") continue;
+    context.outerMessage.content = projected.message.content;
+    for (const id of projected.ignoredCompositeIds) {
+      if (!state.prunedToolIds.delete(id)) continue;
+      state.prunedToolActions.delete(id);
+      state.pendingSave = true;
+    }
+  }
+  return liveCompositeIds;
 }
 
 function resolveCompressionRangeForBlock(
@@ -83,6 +104,35 @@ function resolveAnchorIndex(
   return null;
 }
 
+export type RetainedCompressionBlockDetail = "full" | "compact";
+
+/**
+ * Rank the canonical block log, then select active blocks in the retained tiers.
+ * Retired records still occupy their age positions: committing a checkpoint must
+ * not promote forgotten older blocks back into working context.
+ * Blocks absent from the returned map still hide their covered source range.
+ */
+export function selectRetainedCompressionBlockDetails(
+  blocks: readonly DcpState["compressionBlocks"][number][],
+  renderFullBlockCount: number,
+  renderCompactBlockCount: number
+): Map<number, RetainedCompressionBlockDetail> {
+  const blocksByRecency = [...blocks].sort(
+    (a, b) => (b.createdAt ?? b.id) - (a.createdAt ?? a.id) || b.id - a.id
+  );
+  const fullCount = Math.max(0, Math.floor(renderFullBlockCount));
+  const compactCount = Math.max(0, Math.floor(renderCompactBlockCount));
+  const retained = new Map<number, RetainedCompressionBlockDetail>();
+
+  blocksByRecency.slice(0, fullCount).forEach((block) => {
+    if (block.active) retained.set(block.id, "full");
+  });
+  blocksByRecency.slice(fullCount, fullCount + compactCount).forEach((block) => {
+    if (block.active) retained.set(block.id, "compact");
+  });
+  return retained;
+}
+
 function applyCompressionBlocks(messages: any[], state: DcpState, config: DcpConfig): any[] {
   const activeBlocks = state.compressionBlocks.filter((b) => b.active);
   if (activeBlocks.length === 0) {
@@ -90,18 +140,11 @@ function applyCompressionBlocks(messages: any[], state: DcpState, config: DcpCon
     return messages;
   }
 
-  const blocksByRecency = [...activeBlocks].sort(
-    (a, b) => (b.createdAt ?? b.id) - (a.createdAt ?? a.id)
+  const blockDetailById = selectRetainedCompressionBlockDetails(
+    state.compressionBlocks,
+    config.compress.renderFullBlockCount,
+    config.compress.renderCompactBlockCount
   );
-  const blockDetailById = new Map<number, "full" | "compact" | "minimal">();
-  const fullCount = Math.max(0, Math.floor(config.compress.renderFullBlockCount));
-  const compactCount = Math.max(0, Math.floor(config.compress.renderCompactBlockCount));
-
-  blocksByRecency.forEach((block, index) => {
-    const detailLevel =
-      index < fullCount ? "full" : index < fullCount + compactCount ? "compact" : "minimal";
-    blockDetailById.set(block.id, detailLevel);
-  });
 
   let totalSaved = 0;
 
@@ -120,31 +163,31 @@ function applyCompressionBlocks(messages: any[], state: DcpState, config: DcpCon
     // Remove the range (inclusive)
     messages.splice(lo, hi - lo + 1);
 
-    // Build synthetic user message for the compressed block
-    const syntheticMsg = {
-      ...renderCompressedBlockMessage({
-        ...block,
-        detailLevel: blockDetailById.get(block.id),
-      }),
-      // anchorTimestamp is always finite (resolveAnchorTimestamp returns
-      // endTimestamp + 1 instead of Infinity), but guard against corrupted
-      // state from older sessions where Infinity/null could leak in.
-      timestamp: Number.isFinite(block.anchorTimestamp)
-        ? block.anchorTimestamp - 0.5
-        : block.endTimestamp + 0.5,
-    };
+    const detailLevel = blockDetailById.get(block.id);
+    let addedTokens = 0;
+    if (detailLevel) {
+      // Build synthetic user message only for a retained full/compact block.
+      const syntheticMsg = {
+        ...renderCompressedBlockMessage({ ...block, detailLevel }),
+        // anchorTimestamp is always finite (resolveAnchorTimestamp returns
+        // endTimestamp + 1 instead of Infinity), but guard against corrupted
+        // state from older sessions where Infinity/null could leak in.
+        timestamp: Number.isFinite(block.anchorTimestamp)
+          ? block.anchorTimestamp - 0.5
+          : block.endTimestamp + 0.5,
+      };
 
-    // Estimate tokens added by the summary
-    const addedTokens = estimateMessageTokens(syntheticMsg);
+      addedTokens = estimateMessageTokens(syntheticMsg);
 
-    // Insert the synthetic message at its source-key anchor when available,
-    // falling back to legacy timestamp sorting for restored timestamp-only blocks.
-    const anchorIndex = resolveAnchorIndex(messages, block);
-    if (anchorIndex !== null) {
-      messages.splice(anchorIndex, 0, syntheticMsg);
-    } else {
-      messages.push(syntheticMsg);
-      messages.sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
+      // Insert the synthetic message at its source-key anchor when available,
+      // falling back to legacy timestamp sorting for restored timestamp-only blocks.
+      const anchorIndex = resolveAnchorIndex(messages, block);
+      if (anchorIndex !== null) {
+        messages.splice(anchorIndex, 0, syntheticMsg);
+      } else {
+        messages.push(syntheticMsg);
+        messages.sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
+      }
     }
 
     // Update the block's current saved-token estimate without double-counting
@@ -233,14 +276,15 @@ function bucketedTurn(currentTurn: number, config: DcpConfig): number {
   return Math.floor(currentTurn / cadence) * cadence;
 }
 
-// Fixed tombstone strings that replace a pruned tool result's content. Defined
-// once so the heuristic-pruning net-savings gate can subtract their token cost
-// from each candidate's saved tokens (a tombstone is not free).
-const ERROR_TOMBSTONE_TEXT = "[Error output removed - tool failed more than N turns ago]";
-const OUTPUT_TOMBSTONE_TEXT =
-  "[Output removed to save context - information superseded or no longer needed]";
-const ERROR_TOMBSTONE_TOKENS = estimateTokens(ERROR_TOMBSTONE_TEXT);
-const OUTPUT_TOMBSTONE_TOKENS = estimateTokens(OUTPUT_TOMBSTONE_TEXT);
+function recoveryCall(id: string): string {
+  return `dcp_recover({id:${JSON.stringify(id)}})`;
+}
+
+function tombstoneText(id: string, isError: boolean): string {
+  return isError
+    ? `[Error output removed by DCP; original retained: ${recoveryCall(id)}]`
+    : `[Output removed by DCP; original retained: ${recoveryCall(id)}]`;
+}
 
 /**
  * A tool result that is eligible to be tombstoned this pass, paired with the
@@ -249,13 +293,13 @@ const OUTPUT_TOMBSTONE_TOKENS = estimateTokens(OUTPUT_TOMBSTONE_TEXT);
 interface PruneCandidate {
   toolCallId: string;
   netSaved: number;
-  strategy: "dedup" | "error" | "custom";
+  strategy: "dedup";
   renderAction: PrunedToolAction;
   turnIndex: number;
 }
 
-function tombstoneTokenCost(isError: boolean): number {
-  return isError ? ERROR_TOMBSTONE_TOKENS : OUTPUT_TOMBSTONE_TOKENS;
+function tombstoneTokenCost(id: string, isError: boolean): number {
+  return estimateTokens(tombstoneText(id, isError));
 }
 
 function clearRenderAction(): PrunedToolAction {
@@ -283,12 +327,37 @@ export function createToolNameMatcher(patterns: string[]): (toolName: string) =>
 }
 
 /**
- * Return whether a tool or string argument matches case-insensitive custom-strategy patterns.
+ * Return whether a tool or string argument matches case-insensitive protection patterns.
  *
  * Supports exact names and `*` globs; omitted names stay protected.
  */
 export function toolNameMatches(toolName: string, patterns: string[]): boolean {
   return createToolNameMatcher(patterns)(toolName);
+}
+
+function hasOnlyTextContent(message: DcpMessage): boolean {
+  return (
+    typeof message.content === "string" ||
+    (Array.isArray(message.content) &&
+      message.content.every((part: any) => part?.type === "text" && typeof part.text === "string"))
+  );
+}
+
+// These tools contain mixed observations or authored conclusions. Their outer
+// responses are never raw-log candidates; supported containers are handled by
+// the exposed-result adapter instead. Unknown containers remain intact.
+const COMPOSITE_TOOL_NAMES = new Set(["run", "subagent", "workflow"]);
+const RECOVERY_TOOL_NAMES = new Set(["dcp_recover"]);
+
+function isProtectedResult(message: DcpMessage, state: DcpState): boolean {
+  if (message.role !== "toolResult" && message.role !== "bashExecution") return false;
+  const name = state.toolCalls.get(message.toolCallId ?? "")?.toolName ?? message.toolName ?? "";
+  const normalizedName = name.toLowerCase();
+  return (
+    COMPOSITE_TOOL_NAMES.has(normalizedName) ||
+    RECOVERY_TOOL_NAMES.has(normalizedName) ||
+    !hasOnlyTextContent(message)
+  );
 }
 
 /**
@@ -326,7 +395,11 @@ function collectDeduplicationCandidates(
     const record = state.toolCalls.get(msg.toolCallId);
     if (!record) continue;
 
-    const fp = record.inputFingerprint;
+    // Identical requests can observe different file contents, test results or state.
+    // Compare the complete visible result and its status, not just the request.
+    // Never flatten images or other nontext parts into a text tombstone.
+    if (!hasOnlyTextContent(msg)) continue;
+    const fp = JSON.stringify([record.inputFingerprint, msg.isError === true, msg.content]);
     if (!fingerprintMap.has(fp)) {
       fingerprintMap.set(fp, []);
     }
@@ -345,7 +418,7 @@ function collectDeduplicationCandidates(
       if (state.prunedToolIds.has(ids[i])) continue;
       candidates.push({
         toolCallId: ids[i],
-        netSaved: record.tokenEstimate - tombstoneTokenCost(record.isError),
+        netSaved: record.tokenEstimate - tombstoneTokenCost(ids[i], record.isError),
         strategy: "dedup",
         renderAction: clearRenderAction(),
         turnIndex: record.turnIndex,
@@ -353,73 +426,6 @@ function collectDeduplicationCandidates(
     }
   }
   return candidates;
-}
-
-/**
- * Collect error-purge candidates: old error tool outputs eligible for a
- * tombstone this pass. Pure — does not mutate state.
- *
- * Age is measured against the bucketed turn, so eligibility flips only at
- * bucket boundaries (multiples of `pruneCadenceTurns`). With the default
- * cadence of 1 the behavior is identical to measuring against currentTurn.
- */
-function collectErrorPurgeCandidates(
-  messages: any[],
-  state: DcpState,
-  config: DcpConfig
-): PruneCandidate[] {
-  if (!config.strategies.purgeErrors.enabled) return [];
-
-  const protectedTools = new Set(config.strategies.purgeErrors.protectedTools ?? []);
-  const turnsThreshold = config.strategies.purgeErrors.turns ?? 3;
-  const bucket = bucketedTurn(state.currentTurn, config);
-
-  const candidates: PruneCandidate[] = [];
-  for (const msg of messages) {
-    if (msg.role !== "toolResult") continue;
-    if (!msg.isError) continue;
-
-    const toolName: string = msg.toolName ?? "";
-    if (protectedTools.has(toolName)) continue;
-
-    const record = state.toolCalls.get(msg.toolCallId);
-    if (!record) continue;
-    if (state.prunedToolIds.has(msg.toolCallId)) continue;
-
-    if (bucket - record.turnIndex >= turnsThreshold) {
-      candidates.push({
-        toolCallId: msg.toolCallId,
-        netSaved: record.tokenEstimate - tombstoneTokenCost(true),
-        strategy: "error",
-        renderAction: clearRenderAction(),
-        turnIndex: record.turnIndex,
-      });
-    }
-  }
-  return candidates;
-}
-function toolArgsMatchRule(record: ToolRecord, rule: CustomStrategyRule): boolean {
-  if (!rule.args) return true;
-
-  for (const [field, patterns] of Object.entries(rule.args)) {
-    const value = record.inputArgs[field];
-    if (typeof value !== "string") return false;
-    const patternList = Array.isArray(patterns) ? patterns : [patterns];
-    if (!toolNameMatches(value, patternList)) return false;
-  }
-  return true;
-}
-
-function findMatchingCustomRule(record: ToolRecord, config: DcpConfig): CustomStrategyRule | null {
-  const custom = config.strategies.customStrategies;
-  if (!custom.enabled) return null;
-
-  for (const rule of custom.rules) {
-    if (!toolNameMatches(record.toolName, rule.tools)) continue;
-    if (!toolArgsMatchRule(record, rule)) continue;
-    return rule;
-  }
-  return null;
 }
 
 function extractToolResultText(message: any): string {
@@ -435,7 +441,8 @@ function normalizeLineCount(value: number | undefined): number {
 
 function buildReducedText(
   rawText: string,
-  action: Extract<PrunedToolAction, { action: "reduce" }>
+  action: Extract<PrunedToolAction, { action: "reduce" }>,
+  toolCallId: string
 ): string {
   const lines = rawText.split("\n");
   const headLines = normalizeLineCount(action.headLines);
@@ -447,84 +454,9 @@ function buildReducedText(
   const keptTail = tailLines > 0 ? lines.slice(lines.length - tailLines) : [];
   return [
     ...keptHead,
-    `[... ${removedCount} lines removed by DCP to save context — re-run the tool if needed ...]`,
+    `[... ${removedCount} lines removed by DCP; original retained: ${recoveryCall(toolCallId)} ...]`,
     ...keptTail,
   ].join("\n");
-}
-
-function buildReduceAction(
-  rule: CustomStrategyRule
-): Extract<PrunedToolAction, { action: "reduce" }> {
-  return {
-    action: "reduce",
-    headLines: normalizeLineCount(rule.keep?.headLines),
-    tailLines: normalizeLineCount(rule.keep?.tailLines),
-  };
-}
-
-/**
- * Collect custom-strategy candidates: old large successful tool outputs eligible
- * for a deterministic clear or reduction this pass. Pure — does not mutate state.
- *
- * Like dedup/error purge, this runs every cadence and is governed by explicit
- * custom-strategy age, the protected recent tail, and the shared cadence +
- * per-item/batch savings gates (it is NOT pressure-gated). It only touches
- * successful results matching the ordered safety-allowlist rules. Replay safety
- * comes from `EQUIVALENCE_CONFIG` disabling it.
- */
-function collectCustomStrategyCandidates(
-  messages: any[],
-  state: DcpState,
-  config: DcpConfig
-): PruneCandidate[] {
-  const customConfig = config.strategies.customStrategies;
-  if (!customConfig.enabled) return [];
-
-  const bucket = bucketedTurn(state.currentTurn, config);
-  const protectedTailStart = Math.max(0, state.currentTurn - config.compress.protectRecentTurns);
-
-  const candidates: PruneCandidate[] = [];
-  for (const msg of messages) {
-    if (msg.role !== "toolResult" && msg.role !== "bashExecution") continue;
-
-    const record = state.toolCalls.get(msg.toolCallId);
-    if (!record) continue;
-    if (record.isError) continue;
-    const rule = findMatchingCustomRule(record, config);
-    if (!rule) continue;
-    const minResultTokens = Math.max(
-      0,
-      Math.floor(rule.minResultTokens ?? customConfig.defaults.minResultTokens ?? 0)
-    );
-    const minAgeTurns = Math.max(
-      0,
-      Math.floor(rule.minAgeTurns ?? customConfig.defaults.minAgeTurns ?? 0)
-    );
-    if (record.tokenEstimate < minResultTokens) continue;
-    if (record.turnIndex >= bucket) continue;
-    if (bucket - record.turnIndex < minAgeTurns) continue;
-    if (record.turnIndex >= protectedTailStart) continue;
-    if (state.prunedToolIds.has(msg.toolCallId)) continue;
-
-    const renderAction = rule.action === "reduce" ? buildReduceAction(rule) : clearRenderAction();
-    const keptTokens =
-      renderAction.action === "reduce"
-        ? estimateTokens(buildReducedText(extractToolResultText(msg), renderAction))
-        : tombstoneTokenCost(false);
-    if (renderAction.action === "reduce") {
-      const lineCount = extractToolResultText(msg).split("\n").length;
-      if (renderAction.headLines + renderAction.tailLines >= lineCount) continue;
-    }
-
-    candidates.push({
-      toolCallId: msg.toolCallId,
-      netSaved: record.tokenEstimate - keptTokens,
-      strategy: "custom",
-      renderAction,
-      turnIndex: record.turnIndex,
-    });
-  }
-  return candidates;
 }
 
 /**
@@ -551,69 +483,250 @@ function isHeuristicPruneRedZone(state: DcpState, config: DcpConfig): boolean {
   return exceedsMaxContextLimit(pct ?? 0, config, tokens);
 }
 
+interface FoRefPruningContext {
+  outerMessage: DcpMessage;
+  outerToolCallId: string;
+  collection: Extract<FoRefAdapterCollection, { status: "supported" }>;
+  maxVisibleBytes: number;
+}
+
+function collectFoRefPruningContexts(
+  messages: DcpMessage[],
+  state: DcpState,
+  bridge: FoRefBridgeV1 | undefined
+): FoRefPruningContext[] {
+  if (!bridge) return [];
+  const contexts: FoRefPruningContext[] = [];
+  for (const message of messages) {
+    if (
+      message.role !== "toolResult" ||
+      typeof message.toolCallId !== "string" ||
+      !hasOnlyTextContent(message)
+    )
+      continue;
+    const outerRecord = state.toolCalls.get(message.toolCallId);
+    if (!outerRecord || outerRecord.toolName.toLowerCase() !== "run") continue;
+    const collection = collectFoRefAdapterCandidates({
+      bridge,
+      outerToolCallId: message.toolCallId,
+      details: message.details,
+      outerRecord,
+    });
+    if (collection.status !== "supported") continue;
+    for (const record of collection.records) state.toolCalls.set(record.toolCallId, record);
+    for (const virtualMessage of collection.messages) {
+      if (!isProtectedResult(virtualMessage, state)) continue;
+      if (!state.prunedToolIds.delete(virtualMessage.toolCallId ?? "")) continue;
+      state.prunedToolActions.delete(virtualMessage.toolCallId ?? "");
+      state.pendingSave = true;
+    }
+    const visibleText = extractToolResultText(message);
+    contexts.push({
+      outerMessage: message,
+      outerToolCallId: message.toolCallId,
+      collection,
+      maxVisibleBytes: Math.max(1, Buffer.byteLength(visibleText, "utf8")),
+    });
+  }
+  return contexts;
+}
+
+function projectFoContext(
+  context: FoRefPruningContext,
+  bridge: FoRefBridgeV1,
+  persistedActions: ReadonlyMap<string, PrunedToolAction>,
+  proposedActions?: ReadonlyMap<string, PrunedToolAction>
+) {
+  return projectFoRefOuterResult({
+    bridge,
+    outerMessage: context.outerMessage,
+    outerToolCallId: context.outerToolCallId,
+    details: context.outerMessage.details,
+    persistedActions,
+    proposedActions,
+    maxVisibleBytes: context.maxVisibleBytes,
+    maxVisibleEventBytes: context.maxVisibleBytes,
+  });
+}
+
+function activePrunedActions(state: DcpState): Map<string, PrunedToolAction> {
+  const actions = new Map<string, PrunedToolAction>();
+  for (const id of state.prunedToolIds) {
+    actions.set(id, state.prunedToolActions.get(id) ?? clearRenderAction());
+  }
+  return actions;
+}
+
+function buildOrderedHeuristicMessages(
+  messages: DcpMessage[],
+  state: DcpState,
+  foContexts: FoRefPruningContext[]
+): DcpMessage[] {
+  const virtualByOuterMessage = new Map<DcpMessage, DcpMessage[]>();
+  for (const context of foContexts) {
+    virtualByOuterMessage.set(
+      context.outerMessage,
+      context.collection.messages.filter((message) => !isProtectedResult(message, state))
+    );
+  }
+  const eligibleMessages: DcpMessage[] = [];
+  for (const message of messages) {
+    if (!isProtectedResult(message, state)) eligibleMessages.push(message);
+    eligibleMessages.push(...(virtualByOuterMessage.get(message) ?? []));
+  }
+  return eligibleMessages;
+}
+
+function replacementIdsForError(
+  failed: DcpMessage,
+  messages: DcpMessage[],
+  state: DcpState
+): string[] {
+  const failedId = failed.toolCallId ?? "";
+  const failedRecord = state.toolCalls.get(failedId);
+  const failedIndex = messages.indexOf(failed);
+  if (!failedRecord || failedIndex < 0) return [];
+  const failedResultKey = JSON.stringify([failedRecord.inputFingerprint, true, failed.content]);
+  const replacements: string[] = [];
+  for (let index = failedIndex + 1; index < messages.length; index++) {
+    const message = messages[index];
+    if (message.role !== "toolResult" || !message.toolCallId) continue;
+    const record = state.toolCalls.get(message.toolCallId);
+    if (!record || record.inputFingerprint !== failedRecord.inputFingerprint) continue;
+    const isDuplicateError =
+      message.isError === true &&
+      hasOnlyTextContent(message) &&
+      JSON.stringify([record.inputFingerprint, true, message.content]) === failedResultKey;
+    if (!message.isError || isDuplicateError) replacements.push(message.toolCallId);
+  }
+  return replacements;
+}
+
+function hasRetainedErrorReplacement(
+  failed: DcpMessage,
+  messages: DcpMessage[],
+  state: DcpState,
+  selectedIds: ReadonlySet<string>
+): boolean {
+  return replacementIdsForError(failed, messages, state).some((id) => !selectedIds.has(id));
+}
+
+function liftUnsafePersistedErrors(messages: DcpMessage[], state: DcpState): void {
+  for (const message of messages) {
+    if (message.role !== "toolResult" || !message.isError || !message.toolCallId) continue;
+    if (!state.prunedToolIds.has(message.toolCallId)) continue;
+    if (hasRetainedErrorReplacement(message, messages, state, state.prunedToolIds)) continue;
+    state.prunedToolIds.delete(message.toolCallId);
+    state.prunedToolActions.delete(message.toolCallId);
+    state.pendingSave = true;
+  }
+}
+
+function requiredPersistedErrorReplacementIds(
+  messages: DcpMessage[],
+  state: DcpState
+): Set<string> {
+  const required = new Set<string>();
+  for (const message of messages) {
+    if (message.role !== "toolResult" || !message.isError || !message.toolCallId) continue;
+    if (!state.prunedToolIds.has(message.toolCallId)) continue;
+    for (const id of replacementIdsForError(message, messages, state)) {
+      if (!state.prunedToolIds.has(id)) required.add(id);
+    }
+  }
+  return required;
+}
+
 /**
- * Gate and commit heuristic output rewrites (dedup + error purge + custom strategies) for this pass.
+ * Gate and commit exact duplicate output removals for this pass.
  * Mutates state.prunedToolIds / totalPruneCount / pendingSave.
  *
- * Two opt-in net-savings gates decide whether the prefix-cache break is worth
+ * Two net-savings gates decide whether the prefix-cache break is worth
  * it (mirroring Anthropic's `clear_at_least`):
  *  - per-item (`minPruneItemSavedTokens`): drop candidates that don't
  *    individually clear the bar (e.g. tiny 20-token outputs).
  *  - batch (`minPruneBatchSavedTokens`): refuse to rewrite old context unless
  *    the whole flush nets at least this many tokens.
  *
- * Both default to `0` (gates off → every eligible candidate commits, identical
- * to the legacy unconditional behavior). Both are bypassed when the live
+ * Defaults are 100 tokens per item and 10000 per batch; zero disables a gate.
+ * Both are bypassed when the live
  * effective context is in the red zone: under pressure we reclaim space and
  * ignore cache efficiency.
  */
 function commitHeuristicPruning(
-  messages: any[],
+  eligibleMessages: DcpMessage[],
   state: DcpState,
-  config: DcpConfig
+  config: DcpConfig,
+  bridge: FoRefBridgeV1 | undefined,
+  foContexts: FoRefPruningContext[]
 ): HeuristicPruneDecision | null {
-  const dedup = collectDeduplicationCandidates(messages, state, config);
-  const errors = collectErrorPurgeCandidates(messages, state, config);
-  const custom = collectCustomStrategyCandidates(messages, state, config);
-  const collected = [...dedup, ...errors, ...custom];
-  if (collected.length === 0) return null;
+  liftUnsafePersistedErrors(eligibleMessages, state);
+  // Deprecated purge/custom settings cannot create new actions. Historical
+  // actions still render and retain their conservative restoration checks.
+  const candidates = collectDeduplicationCandidates(eligibleMessages, state, config);
+  if (candidates.length === 0) return null;
 
-  // Dedupe by toolCallId (a duplicated error result can appear in both lists);
-  // first occurrence wins, preserving dedup-before-error-purge precedence.
-  const candidates: PruneCandidate[] = [];
-  const seen = new Set<string>();
-  for (const candidate of collected) {
-    if (seen.has(candidate.toolCallId)) continue;
-    seen.add(candidate.toolCallId);
-    candidates.push(candidate);
+  const foContextByCompositeId = new Map<string, FoRefPruningContext>();
+  for (const context of foContexts) {
+    for (const id of context.collection.liveCompositeIds) foContextByCompositeId.set(id, context);
   }
+  const requiredReplacementIds = requiredPersistedErrorReplacementIds(eligibleMessages, state);
+  const measurableCandidates = candidates.filter((candidate) => {
+    if (requiredReplacementIds.has(candidate.toolCallId)) return false;
+    const context = foContextByCompositeId.get(candidate.toolCallId);
+    if (!context) return true;
+    if (!bridge) return false;
+    const projected = projectFoContext(
+      context,
+      bridge,
+      activePrunedActions(state),
+      new Map([[candidate.toolCallId, candidate.renderAction]])
+    );
+    if (
+      projected.status !== "projected" ||
+      !projected.appliedCompositeIds.includes(candidate.toolCallId)
+    )
+      return false;
+    candidate.netSaved =
+      estimateTokens(projected.baselineText) - estimateTokens(projected.projectedText);
+    return candidate.netSaved > 0;
+  });
 
   const redZone = isHeuristicPruneRedZone(state, config);
   const minItem = Math.max(0, Math.floor(config.strategies.minPruneItemSavedTokens ?? 0));
   const minBatch = Math.max(0, Math.floor(config.strategies.minPruneBatchSavedTokens ?? 0));
   const cadenceBucket = bucketedTurn(state.currentTurn, config);
-  const customClearedCandidates = custom.filter(
-    (candidate) => candidate.renderAction.action === "clear"
-  ).length;
-  const customReducedCandidates = custom.filter(
-    (candidate) => candidate.renderAction.action === "reduce"
-  ).length;
-
-  // Per-item gate (opt-in, bypassed in the red zone).
+  // Per-item gate (bypassed in the red zone).
   const kept =
     minItem > 0 && !redZone
-      ? candidates.filter((candidate) => candidate.netSaved >= minItem)
-      : candidates;
-  const batchSavedTokens = kept.reduce((sum, candidate) => sum + candidate.netSaved, 0);
+      ? measurableCandidates.filter((candidate) => candidate.netSaved >= minItem)
+      : measurableCandidates;
+  let batchSavedTokens = kept
+    .filter((candidate) => !foContextByCompositeId.has(candidate.toolCallId))
+    .reduce((sum, candidate) => sum + candidate.netSaved, 0);
+  if (bridge) {
+    for (const context of foContexts) {
+      const proposed = new Map<string, PrunedToolAction>();
+      for (const candidate of kept) {
+        if (foContextByCompositeId.get(candidate.toolCallId) === context)
+          proposed.set(candidate.toolCallId, candidate.renderAction);
+      }
+      if (proposed.size === 0) continue;
+      const projected = projectFoContext(context, bridge, activePrunedActions(state), proposed);
+      if (projected.status !== "projected") continue;
+      batchSavedTokens +=
+        estimateTokens(projected.baselineText) - estimateTokens(projected.projectedText);
+    }
+  }
   const decision: HeuristicPruneDecision = {
-    dedupCandidates: dedup.length,
-    errorCandidates: errors.length,
-    customCandidates: custom.length,
-    customClearedCandidates,
-    customReducedCandidates,
-    uniqueCandidates: candidates.length,
+    dedupCandidates: candidates.length,
+    errorCandidates: 0,
+    customCandidates: 0,
+    customClearedCandidates: 0,
+    customReducedCandidates: 0,
+    uniqueCandidates: measurableCandidates.length,
     keptAfterItemGate: kept.length,
-    droppedByItemGate: candidates.length - kept.length,
+    droppedByItemGate: measurableCandidates.length - kept.length,
     batchSavedTokens,
     committed: 0,
     committedByStrategy: { dedup: 0, error: 0, custom: 0 },
@@ -622,13 +735,13 @@ function commitHeuristicPruning(
     cadenceBucket,
     minItem,
     minBatch,
-    customRuleCount: config.strategies.customStrategies.rules.length,
+    customRuleCount: 0,
     heldByBatchGate: false,
     redZone,
   };
   if (kept.length === 0) return decision;
 
-  // Batch gate (opt-in, bypassed in the red zone): hold the entire flush until
+  // Batch gate (bypassed in the red zone): hold the entire flush until
   // a later pass when the accumulated net savings justify a single cache break.
   if (minBatch > 0 && !redZone) {
     if (batchSavedTokens < minBatch) {
@@ -643,7 +756,6 @@ function commitHeuristicPruning(
     state.prunedToolIds.add(candidate.toolCallId);
     state.prunedToolActions.set(candidate.toolCallId, candidate.renderAction);
     state.totalPruneCount++;
-    state.tokensPruned += Math.max(0, candidate.netSaved);
     state.pendingSave = true;
     decision.committed++;
     decision.committedByStrategy[candidate.strategy]++;
@@ -660,6 +772,7 @@ function commitHeuristicPruning(
 
   if (oldestCommittedTurn !== null) {
     decision.oldestMutatedDepth = Math.max(0, state.currentTurn - oldestCommittedTurn);
+    state.tokensPruned += Math.max(0, batchSavedTokens);
   }
 
   return decision;
@@ -669,18 +782,32 @@ function commitHeuristicPruning(
  * Apply explicit tool output pruning from state.prunedToolIds.
  * Replaces content of matching toolResult/bashExecution messages in place.
  */
-function applyToolOutputPruning(messages: any[], state: DcpState): void {
+function applyToolOutputPruning(
+  messages: any[],
+  state: DcpState,
+  evidenceMessages: DcpMessage[]
+): void {
   for (const msg of messages) {
     if (msg.role !== "toolResult" && msg.role !== "bashExecution") continue;
     if (!state.prunedToolIds.has(msg.toolCallId)) continue;
+    if (
+      isProtectedResult(msg, state) ||
+      (msg.isError &&
+        !hasRetainedErrorReplacement(msg, evidenceMessages, state, state.prunedToolIds))
+    ) {
+      // Old sessions may carry whole-container or unresolved-error selections.
+      // Lift unsafe selections automatically; canonical history was never deleted.
+      state.prunedToolIds.delete(msg.toolCallId);
+      state.prunedToolActions.delete(msg.toolCallId);
+      state.pendingSave = true;
+      continue;
+    }
 
     const action = state.prunedToolActions.get(msg.toolCallId) ?? clearRenderAction();
     const text =
       action.action === "reduce" && !msg.isError
-        ? buildReducedText(extractToolResultText(msg), action)
-        : msg.isError
-          ? ERROR_TOMBSTONE_TEXT
-          : OUTPUT_TOMBSTONE_TEXT;
+        ? buildReducedText(extractToolResultText(msg), action, msg.toolCallId)
+        : tombstoneText(msg.toolCallId, msg.isError === true);
 
     msg.content = [
       {
@@ -696,7 +823,12 @@ function applyToolOutputPruning(messages: any[], state: DcpState): void {
  * materialization. Runs after tombstone rendering so still-present ids are
  * applied before stale ids folded away by compression/native compaction are GC'd.
  */
-function gcPrunedToolIds(messages: any[], state: DcpState): void {
+function gcPrunedToolIds(
+  messages: any[],
+  state: DcpState,
+  liveCompositeIds: ReadonlySet<string>,
+  foBridgeAvailable: boolean
+): void {
   if (state.prunedToolIds.size === 0) return;
 
   const liveToolCallIds = new Set<string>();
@@ -708,7 +840,12 @@ function gcPrunedToolIds(messages: any[], state: DcpState): void {
   }
 
   for (const toolCallId of state.prunedToolIds) {
-    if (liveToolCallIds.has(toolCallId)) continue;
+    if (
+      liveToolCallIds.has(toolCallId) ||
+      liveCompositeIds.has(toolCallId) ||
+      (!foBridgeAvailable && toolCallId.startsWith("fo-ref:v1:"))
+    )
+      continue;
     state.prunedToolIds.delete(toolCallId);
     state.prunedToolActions.delete(toolCallId);
     state.pendingSave = true;
@@ -833,6 +970,8 @@ export interface FinalizeMaterializedMessagesOptions {
   messageOwnerKeys?: readonly string[];
   /** Stable source keys, index-aligned with messages. */
   messageSourceKeys?: readonly string[];
+  /** Optional fo bridge injected by the application layer. */
+  foRefBridge?: FoRefBridgeV1;
 }
 
 /**
@@ -882,25 +1021,20 @@ export function finalizeMaterializedMessages(
   stripGeneratedDcpHallucinations(msgs);
   state.currentTurn = countLogicalTurns(options.turnMessages ?? msgs);
   repairOrphanedToolPairs(msgs);
-  state.lastHeuristicPruneDecision = commitHeuristicPruning(msgs, state, config);
-  applyToolOutputPruning(msgs, state);
-  gcPrunedToolIds(msgs, state);
+  const foContexts = collectFoRefPruningContexts(msgs, state, options.foRefBridge);
+  const heuristicMessages = buildOrderedHeuristicMessages(msgs, state, foContexts);
+  state.lastHeuristicPruneDecision = commitHeuristicPruning(
+    heuristicMessages,
+    state,
+    config,
+    options.foRefBridge,
+    foContexts
+  );
+  applyToolOutputPruning(msgs, state, heuristicMessages);
+  const liveCompositeIds = applyFoRefOutputPruning(state, options.foRefBridge, foContexts);
+  gcPrunedToolIds(msgs, state, liveCompositeIds, options.foRefBridge !== undefined);
   injectMessageIds(msgs, state);
 
-  if (state.heading) {
-    const source = buildTranscriptSnapshot(options.turnMessages ?? messages);
-    const turns = source.spans.filter((span) =>
-      ["user", "assistant", "toolResult", "bashExecution"].includes(span.role)
-    );
-    const protectedTurns = Math.max(0, Math.floor(config.compress.protectRecentTurns));
-    const tailKeys = new Set(
-      protectedTurns > 0 ? turns.slice(-protectedTurns).flatMap((span) => span.sourceKeys) : []
-    );
-    const tailIndex = msgs.findIndex((message) =>
-      tailKeys.has((message as any)[INTERNAL_SOURCE_KEY])
-    );
-    msgs.splice(tailIndex < 0 ? msgs.length : tailIndex, 0, renderHeadingMessage(state.heading));
-  }
   return msgs;
 }
 
@@ -908,7 +1042,12 @@ export function finalizeMaterializedMessages(
  * Main transform: applies all pruning and returns modified message array.
  * Called from the `context` event handler.
  */
-export function applyPruning(messages: DcpMessage[], state: DcpState, config: DcpConfig): any[] {
+export function applyPruning(
+  messages: DcpMessage[],
+  state: DcpState,
+  config: DcpConfig,
+  options: Pick<FinalizeMaterializedMessagesOptions, "foRefBridge"> = {}
+): any[] {
   // Deep-clone each message and its content to prevent mutations from
   // affecting the original objects across context events.
   messages = messages.filter((message) => !(message as any)?.[INTERNAL_HEADING]);
@@ -932,15 +1071,6 @@ export function applyPruning(messages: DcpMessage[], state: DcpState, config: Dc
     return clone;
   });
 
-  // Native compaction also stores direction; render only the current standalone heading.
-  if (state.heading) {
-    for (const message of msgs) {
-      if (message.role === "compactionSummary" && typeof message.summary === "string") {
-        message.summary = stripHeadingPrefix(message.summary);
-      }
-    }
-  }
-
   // 0. Strip generated DCP/protocol hallucinations before they can affect metadata.
   stripGeneratedDcpHallucinations(msgs);
 
@@ -952,7 +1082,10 @@ export function applyPruning(messages: DcpMessage[], state: DcpState, config: Dc
   // 2. Apply active compression blocks
   applyCompressionBlocks(msgs, state, config);
 
-  return finalizeMaterializedMessages(msgs, state, config, { turnMessages: messages });
+  return finalizeMaterializedMessages(msgs, state, config, {
+    turnMessages: messages,
+    ...options,
+  });
 }
 
 /**

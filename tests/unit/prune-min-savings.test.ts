@@ -6,7 +6,7 @@ import type { DcpState, ToolRecord } from "../../src/types/state.js";
 // ---------------------------------------------------------------------------
 // strategies.minPruneItemSavedTokens / minPruneBatchSavedTokens
 //
-// Net-savings gate (Anthropic clear_at_least analogue): a dedup/error tombstone
+// Net-savings gate (Anthropic clear_at_least analogue): a dedup tombstone
 // is only worth a prefix-cache break if it saves enough tokens. Per-item drops
 // tiny outputs; batch holds the whole flush until it clears the bar. Both are
 // bypassed when the live effective context (prior pass) is in the red zone.
@@ -20,12 +20,22 @@ function recordTurn(state: DcpState, callId: string, opts: Partial<ToolRecord>) 
     toolCallId: callId,
     toolName: opts.toolName ?? "read",
     inputArgs: opts.inputArgs ?? {},
-    inputFingerprint: opts.inputFingerprint ?? `${opts.toolName ?? "read"}::{}`,
+    inputFingerprint: opts.inputFingerprint ?? `${opts.toolName ?? "read"}::${callId}`,
     isError: opts.isError ?? false,
     turnIndex: opts.turnIndex ?? 0,
     timestamp: opts.timestamp ?? 1000,
     tokenEstimate: opts.tokenEstimate ?? 5,
   });
+  // Exact repeated errors isolate dedup savings gates; age never proves resolution.
+  if (opts.isError) {
+    const previous = state.toolCalls.get(callId)!;
+    state.toolCalls.set(`${callId}-retry`, {
+      ...previous,
+      toolCallId: `${callId}-retry`,
+      isError: true,
+      turnIndex: previous.turnIndex + 1,
+    });
+  }
 }
 
 function errorPair(id: string, baseTs: number): any[] {
@@ -42,6 +52,19 @@ function errorPair(id: string, baseTs: number): any[] {
       isError: true,
       content: [{ type: "text", text: "boom" }],
       timestamp: baseTs + 1,
+    },
+    {
+      role: "assistant",
+      content: [{ type: "toolCall", id: `${id}-retry`, name: "read", arguments: {} }],
+      timestamp: baseTs + 2,
+    },
+    {
+      role: "toolResult",
+      toolCallId: `${id}-retry`,
+      toolName: "read",
+      isError: true,
+      content: [{ type: "text", text: "boom" }],
+      timestamp: baseTs + 3,
     },
   ];
 }
@@ -67,7 +90,7 @@ function duplicateReadMessages(): any[] {
       toolCallId: "old",
       toolName: "read",
       isError: false,
-      content: [{ type: "text", text: "old output" }],
+      content: [{ type: "text", text: "same output" }],
       timestamp: 300_001,
     },
     {
@@ -80,7 +103,7 @@ function duplicateReadMessages(): any[] {
       toolCallId: "new",
       toolName: "read",
       isError: false,
-      content: [{ type: "text", text: "new output" }],
+      content: [{ type: "text", text: "same output" }],
       timestamp: 300_003,
     },
   ];
@@ -97,7 +120,7 @@ function makeMinSavingsConfig(opts: {
   cfg.strategies.pruneCadenceTurns = 1;
   cfg.strategies.purgeErrors.enabled = opts.purge ?? true;
   cfg.strategies.purgeErrors.turns = opts.turns ?? 4;
-  cfg.strategies.deduplication.enabled = opts.dedup ?? false;
+  cfg.strategies.deduplication.enabled = opts.dedup ?? true;
   cfg.strategies.minPruneItemSavedTokens = opts.minItem ?? 0;
   cfg.strategies.minPruneBatchSavedTokens = opts.minBatch ?? 0;
   return cfg;
@@ -128,18 +151,17 @@ describe("min-savings gate — batch threshold", () => {
     expect(state.prunedToolIds.has("err")).toBe(true);
   });
 
-  test("two small candidates that individually miss but jointly clear the batch all flush", () => {
-    // Each error: tokenEstimate=60 → netSaved=47. Batch = 94 ≥ 80.
+  test("two candidates that individually miss but jointly clear the batch all flush", () => {
     const messages = [
       ...padStandalone(3),
       ...errorPair("err_a", 60_000),
       ...errorPair("err_b", 61_000),
     ];
     const state = makeState();
-    recordTurn(state, "err_a", { turnIndex: 0, isError: true, tokenEstimate: 60 });
-    recordTurn(state, "err_b", { turnIndex: 0, isError: true, tokenEstimate: 60 });
+    recordTurn(state, "err_a", { turnIndex: 0, isError: true, tokenEstimate: 100 });
+    recordTurn(state, "err_b", { turnIndex: 0, isError: true, tokenEstimate: 100 });
 
-    const cfg = makeMinSavingsConfig({ minBatch: 80 });
+    const cfg = makeMinSavingsConfig({ minBatch: 100 });
     applyPruning(messages, state, cfg);
 
     expect(state.prunedToolIds.has("err_a")).toBe(true);
@@ -212,7 +234,7 @@ describe("min-savings gate — red-zone bypass", () => {
   });
 });
 
-describe("min-savings gate — defaults preserve legacy behavior", () => {
+describe("min-savings gate — zero thresholds on exact duplicate errors", () => {
   test("with both thresholds 0, even a net-negative tiny output is pruned (gate off)", () => {
     // tokenEstimate=5 → netSaved = 5 - 13 = -8, but gates are off by default.
     const messages = [...padStandalone(4), ...errorPair("err", 90_000)];

@@ -1,6 +1,6 @@
 import type { DcpHeading, DcpState } from "../../types/state.js";
 import type { DcpMessage } from "../../types/message.js";
-import { buildTranscriptSnapshot, INTERNAL_HEADING } from "../transcript/index.js";
+import { INTERNAL_HEADING } from "../transcript/index.js";
 
 export type HeadingInput = Pick<DcpHeading, "goal" | "now" | "next" | "constraints">;
 export const MAX_HEADING_CHARS = 1000;
@@ -62,48 +62,4 @@ export function renderHeadingMessage(heading: DcpHeading): DcpMessage {
 /** Remove the heading envelope baked into a previous native compaction. */
 export function stripHeadingPrefix(summary: string): string {
   return summary.replace(/^<heading revised-after="[^"\n]*">[\s\S]*?\n<\/heading>\s*/, "");
-}
-
-/** Count logical work since the heading's last visible boundary, not message IDs. */
-export function renderHeadingReminder(
-  state: DcpState,
-  messages: DcpMessage[],
-  history: DcpMessage[] = messages
-): string {
-  const heading = state.heading;
-  if (!heading)
-    return state.compressionBlocks.filter((block) => block.active).length >= 2
-      ? "No heading. Write one: goal, now, next."
-      : "";
-  let snapshot = buildTranscriptSnapshot(messages);
-  let spans = snapshot.spans.filter((span) =>
-    ["user", "assistant", "toolResult", "bashExecution"].includes(span.role)
-  );
-  const key = state.messageAliases.byRef.get(heading.revisedAfterId);
-  let index = key ? spans.findIndex((span) => span.sourceKeys.includes(key)) : -1;
-  // v5 restores do not retain visible aliases. Resolve the latest visible source
-  // at revision time when the original reference no longer resolves in this buffer.
-  const referenced = snapshot.sourceItems.find((item) => item.key === key);
-  if (
-    index < 0 ||
-    (referenced?.timestamp !== null &&
-      referenced?.timestamp !== undefined &&
-      referenced.timestamp > heading.revisedAt)
-  ) {
-    snapshot = buildTranscriptSnapshot(history);
-    spans = snapshot.spans.filter((span) =>
-      ["user", "assistant", "toolResult", "bashExecution"].includes(span.role)
-    );
-    const boundary = snapshot.sourceItems
-      .filter(
-        (item) =>
-          ["user", "toolResult", "bashExecution"].includes(item.role) &&
-          item.timestamp !== null &&
-          item.timestamp <= heading.revisedAt
-      )
-      .at(-1);
-    if (boundary) index = spans.findIndex((span) => span.sourceKeys.includes(boundary.key));
-  }
-  const age = Math.max(0, spans.length - index - 1);
-  return `Heading revised after ${heading.revisedAfterId} (${age} turns ago) — replace it if it no longer matches where the work is.`;
 }

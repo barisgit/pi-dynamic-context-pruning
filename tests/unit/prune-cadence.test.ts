@@ -7,7 +7,7 @@ import type { DcpState, ToolRecord } from "../../src/types/state.js";
 // strategies.pruneCadenceTurns — bucketed tombstone emission
 //
 // These tests verify the stateless modulo-bucket gate used by
-// applyDeduplication and applyErrorPurging. Eligibility is computed against
+// exact deduplication; deprecated error purging stays disabled. Eligibility is computed against
 // `floor(currentTurn / cadence) * cadence` so the rendered prefix stays
 // cache-stable inside a bucket.
 // ---------------------------------------------------------------------------
@@ -34,6 +34,25 @@ function errorMsg(callId: string, ts: number, toolName = "read") {
     content: [{ type: "text", text: "boom" }],
     timestamp: ts,
   };
+}
+
+function successfulRetry(state: DcpState, id: string, ts: number): any[] {
+  recordTurn(state, `${id}-retry`, { turnIndex: 1 });
+  return [
+    {
+      role: "assistant",
+      content: [{ type: "toolCall", id: `${id}-retry`, name: "read", arguments: {} }],
+      timestamp: ts,
+    },
+    {
+      role: "toolResult",
+      toolCallId: `${id}-retry`,
+      toolName: "read",
+      isError: false,
+      content: [{ type: "text", text: "success" }],
+      timestamp: ts + 1,
+    },
+  ];
 }
 
 function makeUserAssistantTurns(count: number): any[] {
@@ -68,8 +87,8 @@ function makeCadenceConfig(
   return cfg;
 }
 
-describe("strategies.pruneCadenceTurns — purgeErrors bucketing", () => {
-  test("cadence=1 behaves like legacy per-turn age check", () => {
+describe("strategies.pruneCadenceTurns — retired purgeErrors", () => {
+  test("cadence=1 cannot reactivate resolved-error purging", () => {
     const messages: any[] = [
       ...makeUserAssistantTurns(5), // 10 standalone turns → currentTurn = 10
       errorMsg("err_old", 9500),
@@ -83,30 +102,26 @@ describe("strategies.pruneCadenceTurns — purgeErrors bucketing", () => {
 
     const state = makeState();
     recordTurn(state, "err_old", { turnIndex: 0, isError: true });
+    messages.push(...successfulRetry(state, "err_old", 9600));
     const cfg = makeCadenceConfig(1, { purge: true, turns: 4 });
 
     applyPruning(messages, state, cfg);
-    expect(state.prunedToolIds.has("err_old")).toBe(true);
+    expect(state.prunedToolIds.has("err_old")).toBe(false);
   });
 
-  test("cadence=5 holds tombstones inside the open bucket and releases them at the next boundary", () => {
+  test("cadence=5 cannot reactivate purging at any boundary", () => {
     // purgeErrors.turns = 4, err recorded at turnIndex=0.
-    // Eligibility: bucketedTurn(currentTurn,5) - 0 >= 4.
+    // Deprecated age policy is ignored at every bucket.
     //
-    // The transcript always contains the error pair, which itself counts as
-    // one logical tool-exchange turn. We vary the number of leading
-    // standalone visible messages so currentTurn = standaloneTurns + 1.
-    //
-    //   standalone=0 → currentTurn=1 → bucket=0 → 0<4 → NOT eligible
-    //   standalone=3 → currentTurn=4 → bucket=0 → 0<4 → NOT eligible
-    //   standalone=4 → currentTurn=5 → bucket=5 → 5≥4 → eligible
-    //   standalone=8 → currentTurn=9 → bucket=5 → still eligible (same bucket)
+    // Error and successful retry contribute two tool-exchange turns.
+    // currentTurn = standaloneTurns + 2. Age eligibility still changes only
+    // at bucket boundaries in the retired collector; now all keep the error.
 
     for (const [standaloneTurns, expected] of [
       [0, false],
+      [2, false],
       [3, false],
-      [4, true],
-      [8, true],
+      [7, false],
     ] as const) {
       // makeUserAssistantTurns(n) produces 2n standalone messages → 2n turns
       const pairs = Math.ceil(standaloneTurns / 2);
@@ -124,6 +139,7 @@ describe("strategies.pruneCadenceTurns — purgeErrors bucketing", () => {
       ];
       const state = makeState();
       recordTurn(state, "err", { turnIndex: 0, isError: true });
+      messages.push(...successfulRetry(state, "err", 50_002));
       const cfg = makeCadenceConfig(5, { purge: true, turns: 4 });
       applyPruning(messages, state, cfg);
       expect(state.prunedToolIds.has("err")).toBe(expected);
@@ -171,7 +187,7 @@ describe("strategies.pruneCadenceTurns — deduplication bucketing", () => {
         toolCallId: "dup_old",
         toolName: "read",
         isError: false,
-        content: [{ type: "text", text: "old" }],
+        content: [{ type: "text", text: "same output" }],
         timestamp: 100_001,
       },
       {
@@ -184,7 +200,7 @@ describe("strategies.pruneCadenceTurns — deduplication bucketing", () => {
         toolCallId: "dup_new",
         toolName: "read",
         isError: false,
-        content: [{ type: "text", text: "new" }],
+        content: [{ type: "text", text: "same output" }],
         timestamp: 100_003,
       },
     ];
@@ -219,7 +235,7 @@ describe("strategies.pruneCadenceTurns — deduplication bucketing", () => {
         toolCallId: "dup_old",
         toolName: "read",
         isError: false,
-        content: [{ type: "text", text: "old" }],
+        content: [{ type: "text", text: "same output" }],
         timestamp: 200_001,
       },
       {
@@ -232,7 +248,7 @@ describe("strategies.pruneCadenceTurns — deduplication bucketing", () => {
         toolCallId: "dup_new",
         toolName: "read",
         isError: false,
-        content: [{ type: "text", text: "new" }],
+        content: [{ type: "text", text: "same output" }],
         timestamp: 200_003,
       },
     ];

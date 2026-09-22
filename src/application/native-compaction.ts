@@ -1,4 +1,7 @@
-import { renderHeading, stripHeadingPrefix } from "../domain/compression/heading.js";
+import {
+  generateCheckpointHandoff,
+  type CheckpointHandoffGenerator,
+} from "./checkpoint-handoff.js";
 import type {
   CompactionResult,
   ExtensionAPI,
@@ -8,7 +11,7 @@ import type {
 } from "@mariozechner/pi-coding-agent";
 import type { DcpConfig } from "../types/config.js";
 import type { CompressionBlock, DcpState } from "../types/state.js";
-import { renderBlockRecord, renderCompressedBlockText } from "../domain/compression/materialize.js";
+import { renderCompressedBlockText } from "../domain/compression/materialize.js";
 import { estimateTokens } from "../domain/tokens/estimate.js";
 import { buildTranscriptSnapshot } from "../domain/transcript/index.js";
 import type { DcpMessage } from "../types/message.js";
@@ -16,10 +19,9 @@ import { appendDebugLog, buildSessionDebugPayload } from "../infrastructure/debu
 import { saveState } from "./session-handler.js";
 import { updateDcpStatus } from "./status.js";
 
+import { selectRetainedCompressionBlockDetails } from "../domain/pruning/index.js";
+
 const DCP_NATIVE_COMPACTION_DETAILS_SOURCE = "dcp-native-compaction";
-const MAX_RAW_EXCERPT_MESSAGES = 80;
-const MAX_RAW_EXCERPT_CHARS = 600;
-const MAX_RAW_EXCERPT_TOTAL_CHARS = 20_000;
 
 export type DcpNativeCompactionReason = "command" | "auto" | "host";
 
@@ -63,16 +65,13 @@ interface BuildDcpNativeCompactionResultArgs {
     fileOps?: unknown;
   };
   request: DcpNativeCompactionRequest;
-}
-
-interface RawExcerptResult {
-  lines: string[];
-  uncoveredCount: number;
-  renderedCount: number;
-  truncatedCount: number;
+  handoff?: string;
 }
 
 const pendingRequests = new WeakMap<DcpState, DcpNativeCompactionRequest>();
+// Host-generated checkpoints have host details; retain commit bookkeeping only
+// for the in-flight fallback, without changing the persisted checkpoint schema.
+const pendingFallbackDetails = new WeakMap<DcpState, DcpNativeCompactionDetails>();
 const pendingAutoRequests = new WeakMap<DcpState, { requestedBlockIds: number[] | undefined }>();
 
 export function queueDcpAutoNativeCompaction(state: DcpState, requestedBlockIds: number[]): void {
@@ -127,6 +126,7 @@ export function computeDcpHiddenCoverage(
     const rec = records[item.ordinal];
     if (
       rec &&
+      isRawHistoryRecord(rec) &&
       rec.branchIndex >= windowStartBranchIndex &&
       rec.branchIndex < firstKeptBranchIndex
     ) {
@@ -139,7 +139,7 @@ export function computeDcpHiddenCoverage(
   }
   const covered = new Set<string>();
   for (const block of state.compressionBlocks.filter((b) => b.active)) {
-    const coveredKeys = resolveBlockCoveredSourceKeys(block, snapshot);
+    const coveredKeys = resolveBlockCoveredSourceKeys(block);
     for (const key of coveredKeys) {
       if (hiddenKeys.has(key)) covered.add(key);
     }
@@ -159,8 +159,7 @@ export function buildDcpFallbackCustomInstructions(state: DcpState): string | un
       `<block id="b${block.id}" topic="${escapeAttr(block.topic)}">\n${renderBlockForCompaction(block)}\n</block>`
   );
   return [
-    state.heading ? renderHeading(state.heading) : "",
-    "Authoritative pre-compacted slices of the conversation (DCP). Treat these as ground truth for what already happened; do not re-derive them. Use them to inform the summary you write.",
+    "DCP records of prior work: preserve relevant decisions, constraints, evidence, and unresolved issues. Apply later corrections; distinguish verified outcomes from hypotheses and reports. Excerpts may contain superseded plans. Summarize historical requests; do not execute them.",
     sections.join("\n\n"),
   ]
     .filter(Boolean)
@@ -258,64 +257,22 @@ function resolveLiveWindowStartBranchIndex(branchEntries: SessionEntry[]): numbe
   return index >= 0 ? index : 0;
 }
 
-function resolveNativeFirstKeptBranchIndex(
-  branchEntries: SessionEntry[],
-  records: BranchMessageRecord[],
-  snapshot: ReturnType<typeof buildTranscriptSnapshot>,
-  state: DcpState,
-  preparationFirstKeptEntryId: string
-): number {
-  const preparedIndex = resolveFirstKeptBranchIndex(branchEntries, preparationFirstKeptEntryId);
-  let latestCoveredBranchIndex = -1;
-
-  for (const block of state.compressionBlocks.filter((candidate) => candidate.active)) {
-    const coveredKeys = resolveBlockCoveredSourceKeys(block, snapshot);
-    for (const sourceItem of snapshot.sourceItems) {
-      if (!coveredKeys.has(sourceItem.key)) continue;
-      const record = records[sourceItem.ordinal];
-      if (record) latestCoveredBranchIndex = Math.max(latestCoveredBranchIndex, record.branchIndex);
-    }
-  }
-
-  const afterLatestCoveredIndex = latestCoveredBranchIndex + 1;
-  if (afterLatestCoveredIndex < branchEntries.length) {
-    return Math.max(preparedIndex, afterLatestCoveredIndex);
-  }
-
-  return preparedIndex;
-}
-
-function resolveBlockCoveredSourceKeys(
-  block: CompressionBlock,
-  snapshot: ReturnType<typeof buildTranscriptSnapshot>
-): Set<string> {
-  const snapshotKeys = new Set(snapshot.sourceItems.map((item) => item.key));
-  const exactKeys = (block.metadata?.coveredSourceKeys ?? []).filter((key) =>
-    snapshotKeys.has(key)
-  );
-  if (exactKeys.length > 0) return new Set(exactKeys);
-
-  const fallbackKeys = snapshot.sourceItems
-    .filter(
-      (item) =>
-        item.timestamp !== null &&
-        item.timestamp >= block.startTimestamp &&
-        item.timestamp <= block.endTimestamp
-    )
-    .map((item) => item.key);
-  return new Set(fallbackKeys);
+/** Only exact source keys certify that raw content may be omitted at a checkpoint. */
+function resolveBlockCoveredSourceKeys(block: CompressionBlock): Set<string> {
+  // Legacy timestamp ranges can include unrelated same-timestamp messages.
+  // Preserve those authored summaries, but carry their source as uncovered raw.
+  return new Set(block.metadata?.coveredSourceKeys ?? []);
 }
 
 function resolveRepresentedBlocks(
   state: DcpState,
-  snapshot: ReturnType<typeof buildTranscriptSnapshot>,
   hiddenSourceKeys: Set<string>
 ): { blocks: CompressionBlock[]; coveredSourceKeys: Set<string> } {
   const coveredSourceKeys = new Set<string>();
   const blocks: CompressionBlock[] = [];
 
   for (const block of state.compressionBlocks.filter((candidate) => candidate.active)) {
-    const blockKeys = resolveBlockCoveredSourceKeys(block, snapshot);
+    const blockKeys = resolveBlockCoveredSourceKeys(block);
     if (blockKeys.size === 0) continue;
 
     const fullyHidden = Array.from(blockKeys).every((key) => hiddenSourceKeys.has(key));
@@ -329,95 +286,13 @@ function resolveRepresentedBlocks(
   return { blocks, coveredSourceKeys };
 }
 
-function stringifyJson(value: unknown): string {
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return String(value);
-  }
-}
-
-function truncateText(text: string, maxChars: number): string {
-  const normalized = text.replace(/\s+/g, " ").trim();
-  if (normalized.length <= maxChars) return normalized;
-  return `${normalized.slice(0, Math.max(0, maxChars - 1)).trimEnd()}…`;
-}
-
-function contentToText(content: unknown): string {
-  if (typeof content === "string") return content;
-  if (!Array.isArray(content)) return "";
-
-  const parts: string[] = [];
-  for (const part of content) {
-    if (!part || typeof part !== "object") continue;
-    const block = part as any;
-    if (block.type === "text" && typeof block.text === "string") {
-      parts.push(block.text);
-    } else if (block.type === "thinking" && typeof block.text === "string") {
-      parts.push(`[thinking] ${block.text}`);
-    } else if (block.type === "toolCall") {
-      parts.push(
-        `[toolCall ${block.name ?? "unknown"}${block.id ? ` ${block.id}` : ""} ${truncateText(
-          stringifyJson(block.arguments ?? {}),
-          240
-        )}]`
-      );
-    } else if (block.type === "image") {
-      parts.push("[image]");
-    } else if (typeof block.type === "string") {
-      parts.push(`[${block.type}]`);
-    }
-  }
-
-  return parts.join(" ");
-}
-
-function formatMessageLabel(record: BranchMessageRecord): string {
-  const role = (record.message as any).role ?? "message";
-  const entryId = record.entry.id ? ` ${record.entry.id}` : "";
-  return `${role}${entryId}`;
-}
-
-function buildRawExcerpts(
-  records: BranchMessageRecord[],
-  snapshot: ReturnType<typeof buildTranscriptSnapshot>,
-  windowStartBranchIndex: number,
-  firstKeptBranchIndex: number,
-  coveredSourceKeys: Set<string>
-): RawExcerptResult {
-  const lines: string[] = [];
-  let totalChars = 0;
-  let uncoveredCount = 0;
-  let renderedCount = 0;
-  let truncatedCount = 0;
-
-  for (const sourceItem of snapshot.sourceItems) {
-    const record = records[sourceItem.ordinal];
-    if (!record || record.branchIndex >= firstKeptBranchIndex) continue;
-    if (record.branchIndex < windowStartBranchIndex) continue;
-    if (coveredSourceKeys.has(sourceItem.key)) continue;
-
-    uncoveredCount++;
-    const text = truncateText(
-      contentToText((record.message as any).content),
-      MAX_RAW_EXCERPT_CHARS
-    );
-    const line = `- ${formatMessageLabel(record)}: ${text || "(no text content)"}`;
-
-    if (
-      renderedCount >= MAX_RAW_EXCERPT_MESSAGES ||
-      totalChars + line.length > MAX_RAW_EXCERPT_TOTAL_CHARS
-    ) {
-      truncatedCount++;
-      continue;
-    }
-
-    lines.push(line);
-    totalChars += line.length;
-    renderedCount++;
-  }
-
-  return { lines, uncoveredCount, renderedCount, truncatedCount };
+// Keep compaction entries in the source snapshot to preserve canonical ordinals,
+// but prior summaries inform the fresh handoff, never accumulate as raw gaps.
+function isRawHistoryRecord(record: BranchMessageRecord): boolean {
+  return (
+    record.entry.type !== "compaction" &&
+    !(record.message.role === "bashExecution" && record.message.excludeFromContext)
+  );
 }
 
 function addSetValues(target: Set<string>, values: Iterable<string> | undefined): void {
@@ -457,124 +332,17 @@ function collectFileLists(
   };
 }
 
+// Live blocks use Record headers for local chronology. Those boundary refs are
+// not actionable after compaction; also remove headers expanded from older bN blocks.
+function stripRecordHeaders(text: string): string {
+  return text.replace(
+    /^Record (?:m\d+|b\d+)–(?:m\d+|b\d+) \(ended \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z\)\n\n/gm,
+    ""
+  );
+}
+
 function renderBlockForCompaction(block: CompressionBlock): string {
-  return renderCompressedBlockText({
-    ...block,
-    detailLevel: "full",
-  }).trim();
-}
-
-const DCP_ENVELOPE_OPEN = '<dcp-summary version="1">';
-const DCP_ENVELOPE_CLOSE = "</dcp-summary>";
-const DCP_ENVELOPE_REGEX = /<dcp-summary version="1">[\s\S]*?<\/dcp-summary>/g;
-
-function renderSectionFull(block: CompressionBlock): string {
-  return `<section topic="${escapeAttr(block.topic)}">\n${renderBlockForCompaction(block)}\n</section>`;
-}
-
-function renderSectionCompact(block: CompressionBlock): string {
-  const body = renderBlockRecord(block) || "(no summary)";
-  return `<section topic="${escapeAttr(block.topic)}" tier="compact">\n<agent-summary>\n${body}\n</agent-summary>\n</section>`;
-}
-
-function firstSentence(text: string): string {
-  const trimmed = text.replace(/\s+/g, " ").trim();
-  if (!trimmed) return "";
-  const match = trimmed.match(/^.{0,200}?[.!?](?:\s|$)/);
-  if (match) return match[0].trim();
-  return trimmed.slice(0, 200);
-}
-
-function renderArchivedRollup(blocks: CompressionBlock[]): string {
-  if (blocks.length === 0) return "";
-  const lines = blocks.map((block) => {
-    const topic = block.topic.replace(/\s+/g, " ").trim();
-    const lead = firstSentence(block.summary ?? "");
-    return lead ? `- ${topic} — ${lead}` : `- ${topic}`;
-  });
-  return `<archived-sections>\n${lines.join("\n")}\n</archived-sections>`;
-}
-
-interface TieredSummary {
-  full: CompressionBlock[];
-  compact: CompressionBlock[];
-  archived: CompressionBlock[];
-}
-
-function splitTiers(
-  blocks: CompressionBlock[],
-  fullCount: number,
-  compactCount: number
-): TieredSummary {
-  const total = blocks.length;
-  const fullStart = Math.max(0, total - fullCount);
-  const compactStart = Math.max(0, fullStart - compactCount);
-  return {
-    archived: blocks.slice(0, compactStart),
-    compact: blocks.slice(compactStart, fullStart),
-    full: blocks.slice(fullStart),
-  };
-}
-
-function renderTieredSummary(tiers: TieredSummary): string {
-  const parts: string[] = [];
-  if (tiers.archived.length > 0) parts.push(renderArchivedRollup(tiers.archived));
-  for (const block of tiers.compact) parts.push(renderSectionCompact(block));
-  for (const block of tiers.full) parts.push(renderSectionFull(block));
-  return parts.join("\n\n");
-}
-
-function demoteOnce(tiers: TieredSummary): boolean {
-  // Demote oldest full -> compact, oldest compact -> archived, oldest archived -> dropped.
-  if (tiers.full.length > 0) {
-    const oldest = tiers.full.shift();
-    if (oldest) tiers.compact.push(oldest);
-    // keep compact sorted asc by createdAt
-    tiers.compact.sort((a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0));
-    return true;
-  }
-  if (tiers.compact.length > 0) {
-    const oldest = tiers.compact.shift();
-    if (oldest) tiers.archived.push(oldest);
-    tiers.archived.sort((a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0));
-    return true;
-  }
-  if (tiers.archived.length > 0) {
-    tiers.archived.shift();
-    return true;
-  }
-  return false;
-}
-
-function renderWithBudget(
-  blocks: CompressionBlock[],
-  fullCount: number,
-  compactCount: number,
-  maxTokens: number
-): string {
-  const tiers = splitTiers(blocks, fullCount, compactCount);
-  let rendered = renderTieredSummary(tiers);
-  if (maxTokens <= 0) return rendered;
-  while (estimateTokens(rendered) > maxTokens && demoteOnce(tiers)) {
-    rendered = renderTieredSummary(tiers);
-  }
-  return rendered;
-}
-
-function stripDcpEnvelope(previous: string): string {
-  return previous.replace(DCP_ENVELOPE_REGEX, "").trim();
-}
-
-function truncateByTokens(text: string, maxTokens: number): string {
-  if (maxTokens <= 0) return text;
-  const total = estimateTokens(text);
-  if (total <= maxTokens) return text;
-  // Head-keep by character ratio (gpt-tokenizer doesn't expose slicing here).
-  const ratio = maxTokens / total;
-  const sliceLen = Math.max(0, Math.floor(text.length * ratio));
-  const head = text.slice(0, sliceLen).trimEnd();
-  const dropped = total - estimateTokens(head);
-  return `${head}\n[truncated ~${dropped} tokens of previous summary]`;
+  return stripRecordHeaders(renderCompressedBlockText({ ...block, detailLevel: "full" })).trim();
 }
 
 export function buildDcpNativeCompactionResult({
@@ -583,17 +351,15 @@ export function buildDcpNativeCompactionResult({
   branchEntries,
   preparation,
   request,
+  handoff,
 }: BuildDcpNativeCompactionResultArgs): CompactionResult<DcpNativeCompactionDetails> {
   const records = buildBranchMessageRecords(branchEntries);
   const snapshot = buildTranscriptSnapshot(records.map((record) => record.message));
-  const firstKeptBranchIndex = resolveNativeFirstKeptBranchIndex(
-    branchEntries,
-    records,
-    snapshot,
-    state,
-    preparation.firstKeptEntryId
+  const firstKeptBranchIndex = branchEntries.findIndex(
+    (entry) => entry.id === preparation.firstKeptEntryId
   );
-  const firstKeptEntryId = branchEntries[firstKeptBranchIndex]?.id ?? preparation.firstKeptEntryId;
+  if (firstKeptBranchIndex < 0) throw new Error("Unknown compaction boundary; history retained.");
+  const firstKeptEntryId = preparation.firstKeptEntryId;
   // Window the hidden set at the live render-window start, consistent with the
   // coverage gate: only messages newly hidden by THIS compaction count, not
   // already-compacted history still resident on disk.
@@ -604,6 +370,7 @@ export function buildDcpNativeCompactionResult({
         const branchIndex = records[item.ordinal]?.branchIndex;
         return (
           branchIndex !== undefined &&
+          isRawHistoryRecord(records[item.ordinal]) &&
           branchIndex >= windowStartBranchIndex &&
           branchIndex < firstKeptBranchIndex
         );
@@ -611,54 +378,44 @@ export function buildDcpNativeCompactionResult({
       .map((item) => item.key)
   );
   const hiddenMessageCount = hiddenSourceKeys.size;
-  const represented = resolveRepresentedBlocks(state, snapshot, hiddenSourceKeys);
-  const rawExcerpts = buildRawExcerpts(
-    records,
-    snapshot,
-    windowStartBranchIndex,
-    firstKeptBranchIndex,
-    represented.coveredSourceKeys
-  );
-  // Render ALL DCP blocks (active + previously deactivated) tiered by recency.
-  const allBlocks = [...state.compressionBlocks].sort(
-    (a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0)
-  );
-  const { readFiles, modifiedFiles } = collectFileLists(allBlocks, preparation.fileOps);
+  const represented = resolveRepresentedBlocks(state, hiddenSourceKeys);
+  const { readFiles, modifiedFiles } = collectFileLists(represented.blocks, preparation.fileOps);
   const representedBlockIds = represented.blocks.map((block) => block.id);
   const requestedBlockIds = request.requestedBlockIds ?? [];
-  const headingText = state.heading ? renderHeading(state.heading) : "";
-  const headingTokens = estimateTokens(headingText);
-  const blockBudget =
-    _config.nativeCompaction.maxSummaryTokens > 0
-      ? Math.max(1, _config.nativeCompaction.maxSummaryTokens - headingTokens)
-      : _config.nativeCompaction.maxSummaryTokens;
-  const summaryParts: string[] = headingText ? [headingText] : [];
-
-  // Strip any prior DCP envelope from previousSummary so we don't nest. Keep
-  // anything outside the envelope (LLM-fallback prose, user notes). Cap residue
-  // by tokens to keep it bounded.
-  const previousRaw = preparation.previousSummary?.trim() ?? "";
-  if (previousRaw.length > 0) {
-    const residue = stripHeadingPrefix(stripDcpEnvelope(previousRaw));
-    if (residue.length > 0) {
-      const capped = truncateByTokens(residue, _config.nativeCompaction.maxPreviousSummaryTokens);
-      if (capped.length > 0) summaryParts.push(capped);
-    }
+  const tiers = selectRetainedCompressionBlockDetails(
+    state.compressionBlocks,
+    _config.compress.renderFullBlockCount,
+    _config.compress.renderCompactBlockCount
+  );
+  // Newest first for admission; render admitted records chronologically.
+  const retained = [...tiers.keys()].map((id) => state.compressionBlocks.find((b) => b.id === id)!);
+  const render = (metadata: boolean): string =>
+    [
+      handoff ? `<current-orientation>\n${handoff}\n</current-orientation>` : "",
+      ...[...retained].reverse().map(
+        (block) =>
+          `<section topic="${escapeAttr(block.topic)}">\n${stripRecordHeaders(
+            renderCompressedBlockText({
+              ...block,
+              detailLevel: metadata ? tiers.get(block.id) : "compact",
+            })
+          ).trim()}\n</section>`
+      ),
+    ]
+      .filter(Boolean)
+      .join("\n\n");
+  // Prior summaries informed the fresh handoff; never append them recursively.
+  // Uncovered source (including tool evidence) is intentionally not raw-carried.
+  let summary = render(true);
+  const budget = _config.nativeCompaction.maxSummaryTokens;
+  if (budget > 0 && estimateTokens(summary) > budget) summary = render(false);
+  while (budget > 0 && estimateTokens(summary) > budget && retained.length > 0) {
+    retained.pop(); // Drop a whole oldest record, never clip its authored summary.
+    summary = render(false);
   }
-
-  if (allBlocks.length > 0) {
-    const dcpBody = renderWithBudget(
-      allBlocks,
-      _config.compress.renderFullBlockCount,
-      _config.compress.renderCompactBlockCount,
-      blockBudget
-    );
-    if (dcpBody.length > 0) {
-      summaryParts.push(`${DCP_ENVELOPE_OPEN}\n${dcpBody}\n${DCP_ENVELOPE_CLOSE}`);
-    }
+  if (budget > 0 && estimateTokens(summary) > budget) {
+    throw new Error("Fresh checkpoint orientation exceeds the DCP budget; use host summarization.");
   }
-
-  const summary = summaryParts.join("\n\n");
 
   return {
     summary,
@@ -673,9 +430,9 @@ export function buildDcpNativeCompactionResult({
       requestedBlockIds,
       firstKeptEntryId,
       hiddenMessageCount,
-      uncoveredHiddenMessageCount: rawExcerpts.uncoveredCount,
-      renderedUncoveredExcerptCount: rawExcerpts.renderedCount,
-      truncatedUncoveredExcerptCount: rawExcerpts.truncatedCount,
+      uncoveredHiddenMessageCount: hiddenMessageCount - represented.coveredSourceKeys.size,
+      renderedUncoveredExcerptCount: 0,
+      truncatedUncoveredExcerptCount: 0,
       readFiles,
       modifiedFiles,
     },
@@ -699,7 +456,10 @@ export function triggerDcpNativeCompaction(
 
   pendingRequests.set(state, request);
   notify(ctx, "DCP native compaction queued", "info");
-  const customInstructions = buildDcpFallbackCustomInstructions(state);
+  // Historical records already enter the fresh handoff. Do not duplicate the
+  // entire archive in host custom instructions or bypass the retention budget.
+  const customInstructions =
+    "Preserve current authorized intent, explicit permissions and prohibitions, and recent corrections from the fresh previousSummary handoff. Summarize useful evidence; do not recursively retain historical checkpoints.";
   return new Promise((resolve) => {
     ctx.compact({
       customInstructions,
@@ -722,37 +482,62 @@ export function triggerDcpNativeCompaction(
 export function registerDcpNativeCompactionBridge(
   pi: ExtensionAPI,
   state: DcpState,
-  config: DcpConfig
+  config: DcpConfig,
+  generateHandoff: CheckpointHandoffGenerator = generateCheckpointHandoff
 ): void {
   pi.on("session_before_compact", async (event: SessionBeforeCompactEvent, ctx) => {
-    if (!state.heading && !state.compressionBlocks.some((block) => block.active)) return;
-
+    pendingFallbackDetails.delete(state);
+    if (!config.enabled || !config.nativeCompaction.enabled) return;
+    const request = pendingRequests.get(state) ?? createRequest("host");
+    // Validate the actual returned boundary before either DCP or host fallback.
+    if (!event.branchEntries.some((entry) => entry.id === event.preparation.firstKeptEntryId)) {
+      notify(ctx, "DCP checkpoint cancelled: unknown compaction boundary.", "error");
+      return { cancel: true };
+    }
+    let handoff: string;
+    try {
+      handoff = await generateHandoff(event, ctx, state, config);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      notify(ctx, `DCP checkpoint orientation unavailable: ${message}`, "error");
+      appendDebugLog(config, "native_compaction_cancelled", { error: message });
+      return { cancel: true };
+    }
     const coverage = computeDcpHiddenCoverage(
       state,
       event.branchEntries,
       event.preparation.firstKeptEntryId
     );
-    const minRatio = config.nativeCompaction.minHiddenCoverageRatio ?? 0;
-    if (coverage.ratio < minRatio) {
-      appendDebugLog(config, "native_compaction_skipped_low_coverage", {
-        ...buildSessionDebugPayload(ctx.sessionManager),
-        coverageRatio: coverage.ratio,
-        minHiddenCoverageRatio: minRatio,
-        hiddenMessageCount: coverage.hiddenMessageCount,
-        coveredHiddenCount: coverage.coveredHiddenCount,
+    const fallback = (): undefined => {
+      // Pi consumes this shared preparation object, not mutations to event.customInstructions.
+      // Replace rather than append: the fresh tail-informed orientation supersedes prior checkpoints.
+      event.preparation.previousSummary = `Current authorized intent and constraints (apply later corrections; preserve explicit permissions):\n${handoff}`;
+      const prepared = buildDcpNativeCompactionResult({
+        state,
+        config,
+        branchEntries: event.branchEntries,
+        preparation: event.preparation,
+        request,
       });
-      return;
+      pendingFallbackDetails.set(state, prepared.details!);
+      appendDebugLog(config, "native_compaction_host_fallback", { coverageRatio: coverage.ratio });
+      return undefined;
+    };
+    if (coverage.ratio < config.nativeCompaction.minHiddenCoverageRatio) return fallback();
+    let result: CompactionResult<DcpNativeCompactionDetails>;
+    try {
+      result = buildDcpNativeCompactionResult({
+        state,
+        config,
+        branchEntries: event.branchEntries,
+        preparation: event.preparation,
+        request,
+        handoff,
+      });
+    } catch (error) {
+      appendDebugLog(config, "native_compaction_budget_fallback", { error: String(error) });
+      return fallback();
     }
-
-    const request = pendingRequests.get(state) ?? createRequest("host");
-
-    const result = buildDcpNativeCompactionResult({
-      state,
-      config,
-      branchEntries: event.branchEntries,
-      preparation: event.preparation,
-      request,
-    });
 
     appendDebugLog(config, "native_compaction_prepared", {
       ...buildSessionDebugPayload(ctx.sessionManager),
@@ -768,12 +553,20 @@ export function registerDcpNativeCompactionBridge(
   });
 
   pi.on("session_compact", async (event, ctx) => {
-    const details = event.compactionEntry.details;
-    if (!isDcpNativeCompactionDetails(details)) return;
+    const fallback = pendingFallbackDetails.get(state);
+    pendingFallbackDetails.delete(state);
+    const details = isDcpNativeCompactionDetails(event.compactionEntry.details)
+      ? event.compactionEntry.details
+      : fallback?.firstKeptEntryId === event.compactionEntry.firstKeptEntryId
+        ? fallback
+        : undefined;
+    if (!details) return;
 
     const representedBlockIds = new Set(details.representedBlockIds);
-    // Native compaction permanently bakes represented blocks' coverage into
-    // the rebuilt transcript. Move their estimated savings into the lifetime
+    // The checkpoint consumes these source ranges, whether their record was
+    // retained or intentionally omitted by the budget/aging policy. Retire all
+    // fully hidden blocks, not only the rendered subset, to prevent revival.
+    // Move their estimated savings into the lifetime
     // counter BEFORE deactivating them, so the footer total does not appear
     // to regress immediately after a compaction.
     let realizedDelta = 0;
@@ -849,7 +642,7 @@ export function registerDcpNativeCompactionBridge(
       setTimeout(() => {
         try {
           pi.sendUserMessage(
-            "[dcp-auto-compaction] Session was just compacted to free context. Continue with the task you were working on, using the compaction summary and active DCP blocks as ground truth for prior work."
+            "[dcp-auto-compaction] Continue the authorized task from the summary and active DCP blocks. Follow newer user directions and corrections; do not repeat completed work or revive superseded plans."
           );
           appendDebugLog(config, "native_compaction_auto_resume_sent", {
             ...buildSessionDebugPayload(ctx.sessionManager),

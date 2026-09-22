@@ -36,22 +36,14 @@ const DEFAULT_CONFIG: DcpConfig = {
     maxSummaryTokens: 20000,
   },
   strategies: {
+    jev: { enabled: false },
     pruneCadenceTurns: 1,
     minPruneItemSavedTokens: 25,
     minPruneBatchSavedTokens: 100,
+    candidates: { minAgeTurns: 15, minResultTokens: 300, protectedTools: [] },
     deduplication: {
       enabled: true,
       protectedTools: [],
-    },
-    purgeErrors: {
-      enabled: true,
-      turns: 4,
-      protectedTools: [],
-    },
-    customStrategies: {
-      enabled: true,
-      defaults: { minResultTokens: 300, minAgeTurns: 10 },
-      rules: [{ tools: ["read", "bash", "grep"], action: "clear" }],
     },
   },
   protectedFilePatterns: [],
@@ -101,27 +93,16 @@ const DEFAULT_CONFIG_FILE_CONTENT = `{
   //   // prefix-cache invalidations. 1 = current per-turn behavior; values like
   //   // 5 or 10 group additions so a cache break happens at most every N turns.
   //   "pruneCadenceTurns": 1,
-  //   // Minimum net tokens saved before a dedup/error tombstone is allowed to
+  //   // Minimum net tokens saved before a dedup tombstone is allowed to
   //   // break the prefix cache. Per-item skips tiny outputs; batch refuses to
   //   // rewrite old context unless the whole flush clears the bar. 0 = off;
-  //   // shipped defaults 25 / 100 drop net-negative and trivial tombstones.
+  //   // shipped defaults 100 / 10000 drop net-negative and trivial tombstones.
   //   // Both gates are bypassed when effective context enters the red zone
   //   // (compress.maxContextPercent / maxContextTokens).
   //   "minPruneItemSavedTokens": 25,
   //   "minPruneBatchSavedTokens": 100,
   //   "deduplication": { "enabled": true, "protectedTools": [] },
-  //   "purgeErrors": { "enabled": true, "turns": 4, "protectedTools": [] },
-  //   // Ordered safety allowlist for old large successful results. Runs every
-  //   // cadence (not pressure-gated), governed by minAgeTurns, protected recent
-  //   // tail, cadence, and per-item/batch savings gates. rules REPLACES across
-  //   // config layers; tools and string args match case-insensitive * globs.
-  //   "customStrategies": {
-  //     "enabled": true,
-  //     "defaults": { "minResultTokens": 300, "minAgeTurns": 10 },
-  //     "rules": [
-  //       { "tools": ["read", "bash", "grep"], "action": "clear" }
-  //     ]
-  //   }
+  //   "candidates": { "minAgeTurns": 15, "minResultTokens": 300, "protectedTools": [] }
   // },
   // "protectedFilePatterns": [],
   // "pruneNotification": "detailed"
@@ -138,12 +119,9 @@ const LEGACY_GLOBAL_CONFIG_PATH = path.join(os.homedir(), ".config", "pi", "dcp.
 /**
  * Array config keys that REPLACE rather than union-merge on override.
  *
- * Most arrays (e.g. `protectedTools`, `protectedFilePatterns`) are protect-lists
- * where union is safe: a later layer can only ADD protection. custom strategy
- * `rules` are the opposite — a safety allowlist of outputs that may be cleared
- * or reduced — so a user/project layer must be able to NARROW it (the
- * conservative direction). Union-merging it would make narrowing impossible
- * (defaults would always leak back in), so it replaces instead.
+ * Protection arrays union across layers. Retain replacement semantics for
+ * deprecated custom `rules` while decoding historical configuration; these
+ * rules no longer authorize runtime removals.
  */
 const REPLACE_MERGE_ARRAY_KEYS = new Set(["rules"]);
 
@@ -268,80 +246,28 @@ function assertNonNegativeNumber(value: unknown, pathLabel: string): void {
   }
 }
 
-function validateCustomStrategies(config: DcpConfig): void {
-  const custom = config.strategies.customStrategies;
-  if (!custom || typeof custom !== "object") {
-    throw new Error("Invalid DCP config: strategies.customStrategies is required");
+function validateCandidates(config: DcpConfig): void {
+  const candidates = config.strategies.candidates;
+  if (!candidates || typeof candidates !== "object") {
+    throw new Error("Invalid DCP config: strategies.candidates is required");
   }
-  assertNonNegativeNumber(
-    custom.defaults.minResultTokens,
-    "strategies.customStrategies.defaults.minResultTokens"
-  );
-  assertNonNegativeNumber(
-    custom.defaults.minAgeTurns,
-    "strategies.customStrategies.defaults.minAgeTurns"
-  );
-  if (!Array.isArray(custom.rules)) {
-    throw new Error("Invalid DCP config: strategies.customStrategies.rules must be an array");
+  assertNonNegativeNumber(candidates.minAgeTurns, "strategies.candidates.minAgeTurns");
+  assertNonNegativeNumber(candidates.minResultTokens, "strategies.candidates.minResultTokens");
+  if (
+    !Array.isArray(candidates.protectedTools) ||
+    candidates.protectedTools.some((name) => typeof name !== "string" || name.length === 0)
+  ) {
+    throw new Error(
+      "Invalid DCP config: strategies.candidates.protectedTools must be a string array"
+    );
   }
-
-  custom.rules.forEach((rule, index) => {
-    const label = `strategies.customStrategies.rules[${index}]`;
-    if (!Array.isArray(rule.tools) || rule.tools.length === 0) {
-      throw new Error(`Invalid DCP config: ${label}.tools must be a non-empty array`);
-    }
-    for (const [toolIndex, pattern] of rule.tools.entries()) {
-      if (typeof pattern !== "string" || pattern.length === 0) {
-        throw new Error(
-          `Invalid DCP config: ${label}.tools[${toolIndex}] must be a non-empty string`
-        );
-      }
-    }
-    if (rule.action !== "clear" && rule.action !== "reduce") {
-      throw new Error(`Invalid DCP config: ${label}.action must be "clear" or "reduce"`);
-    }
-    if (rule.args !== undefined) {
-      if (rule.args === null || typeof rule.args !== "object" || Array.isArray(rule.args)) {
-        throw new Error(`Invalid DCP config: ${label}.args must be an object`);
-      }
-      for (const [field, patterns] of Object.entries(rule.args)) {
-        if (field.length === 0) {
-          throw new Error(`Invalid DCP config: ${label}.args field names must be non-empty`);
-        }
-        const list = Array.isArray(patterns) ? patterns : [patterns];
-        if (
-          list.length === 0 ||
-          list.some((pattern) => typeof pattern !== "string" || pattern.length === 0)
-        ) {
-          throw new Error(
-            `Invalid DCP config: ${label}.args.${field} must be a non-empty string or string array`
-          );
-        }
-      }
-    }
-    if (rule.minResultTokens !== undefined) {
-      assertNonNegativeNumber(rule.minResultTokens, `${label}.minResultTokens`);
-    }
-    if (rule.minAgeTurns !== undefined) {
-      assertNonNegativeNumber(rule.minAgeTurns, `${label}.minAgeTurns`);
-    }
-    if (rule.action === "reduce") {
-      if (!rule.keep || typeof rule.keep !== "object") {
-        throw new Error(`Invalid DCP config: ${label}.keep is required for reduce`);
-      }
-      const head = rule.keep.headLines ?? 0;
-      const tail = rule.keep.tailLines ?? 0;
-      assertNonNegativeNumber(head, `${label}.keep.headLines`);
-      assertNonNegativeNumber(tail, `${label}.keep.tailLines`);
-      if (Math.floor(head) <= 0 && Math.floor(tail) <= 0) {
-        throw new Error(`Invalid DCP config: ${label}.keep must keep at least one line`);
-      }
-    }
-  });
 }
 
 function validateConfig(config: DcpConfig): void {
-  validateCustomStrategies(config);
+  if (typeof config.strategies.jev?.enabled !== "boolean") {
+    throw new Error("Invalid DCP config: strategies.jev.enabled must be boolean");
+  }
+  validateCandidates(config);
 }
 
 // ---------------------------------------------------------------------------

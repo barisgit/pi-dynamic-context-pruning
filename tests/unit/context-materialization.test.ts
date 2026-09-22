@@ -141,7 +141,7 @@ describe("context materialization routing", () => {
     expect(state.toolCalls.has("read-1")).toBe(true);
     expect(state.toolCalls.has("read-2")).toBe(true);
     expect(state.prunedToolIds.has("read-1")).toBe(true);
-    expect(textOf(firstResult)).toContain("[Output removed to save context");
+    expect(textOf(firstResult)).toContain('dcp_recover({id:"read-1"})');
   });
 
   test("rebuilds string-form tool arguments without collapsing distinct fingerprints", () => {

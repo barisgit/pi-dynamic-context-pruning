@@ -74,8 +74,6 @@ function renderModifiedFiles(metadata: CompressionBlockMetadata | undefined): st
 const MAX_CONVERSATION_LINES = 48;
 const MAX_MODIFIED_FILE_LINES = 80;
 const MAX_CONVERSATION_LINE_CHARS = 800;
-const MAX_COMPACT_SUMMARY_CHARS = 640;
-const MAX_MINIMAL_SUMMARY_CHARS = 240;
 
 export function cloneMessage(message: any): any {
   const clone = { ...message };
@@ -130,19 +128,9 @@ export function renderCompressedBlockText(block: CompressionBlockRenderData): st
   const parts = [`[Compressed section: ${block.topic}]`, ``];
 
   if (detailLevel === "minimal") {
-    parts.push(
-      renderBlockRecord({
-        ...block,
-        summary: truncateText(
-          normalizeInlineWhitespace(block.summary.trim()),
-          MAX_MINIMAL_SUMMARY_CHARS
-        ),
-      })
-    );
+    parts.push(summary);
   } else if (detailLevel === "compact") {
-    parts.push(
-      `<agent-summary>\n${truncateText(summary, MAX_COMPACT_SUMMARY_CHARS)}\n</agent-summary>`
-    );
+    parts.push(`<agent-summary>\n${summary}\n</agent-summary>`);
   } else {
     parts.push(`<agent-summary>\n${summary}\n</agent-summary>`);
     if (conversation.length > 0) {

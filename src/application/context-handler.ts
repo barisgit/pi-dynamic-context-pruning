@@ -15,11 +15,13 @@ import {
   buildCompressionPlanningHints,
   renderCompressionPlanningHints,
 } from "../domain/compression/tooling.js";
-import { renderHeadingReminder } from "../domain/compression/heading.js";
 import { buildLiveOwnerKeys, INTERNAL_HEADING } from "../domain/transcript/index.js";
 import { appendDebugLog, buildSessionDebugPayload } from "../infrastructure/debug-log.js";
 import { updateDcpStatus } from "./status.js";
 import { hydrateMissingToolRecords } from "./tool-recording.js";
+import { getFoRefBridge } from "./recover-tool.js";
+import type { FoRefBridgeV1 } from "../domain/pruning/fo-ref-adapter.js";
+import { JevShadowScheduler, type JevShadowDependencies } from "./jev-shadow.js";
 
 function cloneRenderedMessages(messages: DcpMessage[]): DcpMessage[] {
   return messages.map((message) => {
@@ -166,27 +168,58 @@ interface ContextMaterializationResult {
 export function materializeContextMessages(
   messages: DcpMessage[],
   state: DcpState,
-  config: DcpConfig
+  config: DcpConfig,
+  foRefBridge?: FoRefBridgeV1
 ): ContextMaterializationResult {
   hydrateMissingToolRecords(messages, state);
   const liveOwnerKeys = buildLiveOwnerKeys(messages, state.compressionBlocks);
   return {
-    messages: applyPruning(messages, state, config),
+    messages: applyPruning(messages, state, config, { foRefBridge }),
     liveOwnerKeys,
     mode: "v1",
   };
 }
 
 /** Register the context pass handler that applies pruning and DCP nudges. */
-export function registerContextHandler(pi: ExtensionAPI, state: DcpState, config: DcpConfig): void {
+export function registerContextHandler(
+  pi: ExtensionAPI,
+  state: DcpState,
+  config: DcpConfig,
+  jevDependencies?: JevShadowDependencies
+): void {
+  const jev = new JevShadowScheduler(jevDependencies);
+  pi.on("session_start", async () => {
+    jev.reset();
+  });
+  pi.on("session_tree", async () => {
+    jev.reset();
+  });
+  pi.on("session_shutdown", async () => {
+    jev.reset();
+  });
   pi.on("context", async (event, ctx) => {
     const materializedContext = materializeContextMessages(
       event.messages as DcpMessage[],
       state,
-      config
+      config,
+      getFoRefBridge()
     );
     const liveOwnerKeys = materializedContext.liveOwnerKeys;
     const prunedMessages = materializedContext.messages;
+    try {
+      if (config.strategies.jev?.enabled) {
+        jev.observe(
+          prunedMessages,
+          state,
+          config,
+          ctx.sessionManager.getSessionId(),
+          getFoRefBridge(),
+          ctx.modelRegistry
+        );
+      }
+    } catch {
+      /* Shadow failures must never prevent deterministic rendering. */
+    }
     const usage = ctx.getContextUsage();
     const dcpEstimatedTokens = prunedMessages.reduce(
       (sum, message) => sum + estimateMessageTokens(message),
@@ -220,19 +253,7 @@ export function registerContextHandler(pi: ExtensionAPI, state: DcpState, config
         );
         const planningHintText = renderCompressionPlanningHints(planningHints);
         const injectedNudgeText = buildCompactReminderText(
-          [
-            planningHintText,
-            renderHeadingReminder(
-              state,
-              event.messages,
-              ctx.sessionManager
-                .getBranch?.()
-                .filter((entry: any) => entry.type === "message")
-                .map((entry: any) => entry.message) ?? event.messages
-            ),
-          ]
-            .filter(Boolean)
-            .join("\n"),
+          planningHintText,
           nudgeType,
           config,
           contextPercent,

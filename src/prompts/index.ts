@@ -1,48 +1,23 @@
 // ---------------------------------------------------------------------------
 // Dynamic Context Pruning (DCP) — PI extension prompts
 // ---------------------------------------------------------------------------
-// All prompt text is exported as plain strings so the extension index can
-// reference them by name without executing any logic here.
-// ---------------------------------------------------------------------------
+// Plain strings shared by the system prompt and compress tool registration.
 
-/**
- * Appended to the existing system prompt when DCP is enabled (automatic mode).
- */
+/** Appended to the host system prompt when DCP is enabled. */
 export const SYSTEM_PROMPT = `
-You operate in a context-constrained environment. Compress proactively — it is essential to your performance.
+Use \`compress\` proactively at settled work boundaries, not only when context is full. Compress reminder-listed stretches whose raw evidence is no longer needed; keep live work and the protected hot tail raw. Compression is housekeeping, not a reason to stop the task.
 
-\`compress\` replaces older messages with \`bN\` summaries you author. Summaries stay citable; a deterministic footer preserves bounded conversation excerpts, aggregate effect counts, and modified-file paths. It does not preserve individual commands or their outcomes. Compression sharpens retrieval for the live task; carrying closed work raw degrades it. Treat compression as steady housekeeping while you work, not an interrupt.
+Block summaries are historical records. Preserve relevant intent, restrictions, corrections, and unresolved work at the close of each stretch. Later user corrections and evidence supersede earlier claims, including those quoted in conversation excerpts.
 
-DCP metadata tags are injected metadata. Do not output them.
-
-WHEN TO COMPRESS
-Compress every reminder-listed stretch whose work is closed. Leave still-live work raw.
-
-Use focused ranges and batch independent ones. Preserve consequential commands, verification outcomes, and delegated findings in past-tense summaries. The heading is the only place present intent lives; blocks are past record.
+The automatic footer keeps bounded conversation excerpts, effect counts, and modified-file paths—not individual commands or results. Put consequential evidence in the summary. Do not copy DCP metadata into prose.
 `.trim();
 
-/**
- * Used as the \`description\` field when registering the \`compress\` tool.
- *
- * Tool signature:
- *   {
- *     topic?: string           // optional default 3-5 word label
- *     heading?: { goal: string; now: string; next: string; constraints?: string }
- *     ranges?: Array<{
- *       startId: string        // m0001-style non-assistant message ref or bN
- *       endId:   string        // m0001-style non-assistant message ref or bN
- *       summary: string        // past-tense record; (bN) placeholders
- *       topic?: string         // per-block label; falls back to top-level topic
- *     }>
- *   }
- */
-export const COMPRESS_RANGE_DESCRIPTION = `Collapse conversation ranges into dense \`bN\` summaries.
+/** Description used by the compress tool; the schema carries field-level constraints. */
+export const COMPRESS_RANGE_DESCRIPTION = `Replace selected conversation ranges with \`bN\` summaries.
 
-Use visible transcript IDs as boundaries: \`mNNNN\` for user/tool-result messages and \`bN\` for compressed blocks. DCP includes complete assistant/tool groups automatically. Use existing, ordered IDs; keep ranges independent and non-overlapping; avoid the protected hot tail named by the current reminder.
+Ranges: use existing, ordered \`mNNNN\` user/tool-result IDs or \`bN\` blocks. DCP includes complete assistant/tool groups automatically. Keep ranges coherent, independent, non-overlapping, and outside the protected hot tail.
 
-summary: Write a past-tense record of what the stretch settled: decisions, artifacts or commits, verified facts, consequential commands, verification outcomes, and delegated findings. Not goals, not current state, not next steps; those go in heading.
+Summary: write a past-tense record for an agent that cannot see the replaced messages. Preserve what continuation needs: user scope and permission boundaries, decisions and rationale, changes, exact technical references, consequential commands/results, and unresolved issues at the stretch's close. Distinguish verified facts from hypotheses, child reports from integrated acceptance, and failed/skipped checks from passes. State corrections explicitly. Preserve restrictions precisely; quote when paraphrasing could change their scope. Use readable prose with enough detail to avoid repeating work—not a progress diary, glued shorthand, or just 'see report'.
 
-heading (optional): Replace present direction in full: goal is the authorized outcome (in a charter session, write 'Objective: .charters/<id>/charter.md'); now is what is done versus the remaining gap as of this call; next is one step and why; optional constraints are user rules still in force. Maximum 1000 characters across these fields; over-budget input is rejected, never truncated. A heading-only call may omit ranges.
-
-If a range contains prior \`bN\` blocks, include each as \`(bN)\` exactly once in summary and include no others. These placeholders expand to the full block, so their surrounding prose must remain grammatical. For a plain reference, write \`compressed bN\` instead.
+Nested blocks: include each covered \`bN\` as \`(bN)\` exactly once and no others. Placeholders expand to the full stored record; do not duplicate it. Keep surrounding prose grammatical and qualify superseded conclusions. For a plain reference, write \`compressed bN\`.
 `;

@@ -15,7 +15,7 @@ export interface DcpConfig {
     iterationNudgeThreshold: number; // nudge after N tool calls since last user msg (default: 15)
     protectRecentTurns: number; // protect the hot tail beginning at the Nth-most-recent logical turn/tool batch
     renderFullBlockCount: number; // newest N compressed blocks render in full detail
-    renderCompactBlockCount: number; // next N older compressed blocks render in compact form; the rest become minimal
+    renderCompactBlockCount: number; // next N older blocks retain whole summary only; older blocks are omitted
     nudgeForce: "strong" | "soft";
     protectedTools: string[]; // these tool outputs always protected from pruning
     protectUserMessages: boolean;
@@ -25,21 +25,16 @@ export interface DcpConfig {
     autoTriggerMessageCount: number;
     autoTriggerForceMessageCount?: number;
     minActiveBlockCount: number;
-    /**
-     * Minimum fraction (0-1) of hidden branch messages (before firstKeptEntryId)
-     * that must fall inside active DCP block ranges for DCP to override pi's
-     * default LLM compactor. Below this, DCP returns undefined from
-     * session_before_compact so pi falls back to its own LLM summary. The
-     * fallback is still seeded with active DCP block summaries via
-     * customInstructions.
-     */
+    /** Minimum exact coverage at the actual cut for DCP replacement; lower coverage uses host summarization. */
     minHiddenCoverageRatio: number;
-    /** Cap for non-DCP residue carried from preparation.previousSummary. */
+    /** Legacy compatibility knob; fresh handoff replaces recursive previous-summary carry. */
     maxPreviousSummaryTokens: number;
-    /** Hard cap for the total DCP-rendered native compaction summary. */
+    /** Retained-memory budget: strip optional metadata, drop oldest whole records, then use host fallback. */
     maxSummaryTokens: number;
   };
   strategies: {
+    /** Opt-in audit-only Jev judgments; never changes rendered context. */
+    jev?: { enabled: boolean };
     /**
      * Batch tombstone additions onto turn boundaries that are multiples of N.
      *
@@ -52,7 +47,7 @@ export interface DcpConfig {
      */
     pruneCadenceTurns: number;
     /**
-     * Minimum net tokens a single dedup/error tombstone must save before it is
+     * Minimum net tokens a single dedup tombstone must save before it is
      * allowed to break the prefix cache. `netSaved = toolResultTokens -
      * tombstoneTokens`. Candidates below this are kept fully rendered. `0`
      * disables the per-item gate (legacy behavior). Shipped default `25` drops
@@ -70,19 +65,23 @@ export interface DcpConfig {
      * `compress.maxContextTokens`).
      */
     minPruneBatchSavedTokens: number;
+    /** Shared candidate eligibility for semantic review; not an omission certificate. */
+    candidates: { minAgeTurns: number; minResultTokens: number; protectedTools: string[] };
     deduplication: {
       enabled: boolean;
       protectedTools: string[];
     };
-    purgeErrors: {
+    /** @deprecated Decoded for compatibility only; never collects removals. */
+    purgeErrors?: {
       enabled: boolean;
-      turns: number; // prune error inputs after N logical turns (default: 4)
+      turns: number; // historical setting; ignored
       protectedTools: string[];
     };
-    customStrategies: {
+    /** @deprecated Decoded for compatibility only; never collects removals. */
+    customStrategies?: {
       enabled: boolean;
       defaults: CustomStrategyDefaults;
-      /** Ordered safety allowlist. First matching rule wins; unmatched tools are untouched. */
+      /** Historical rules; ignored by the runtime. */
       rules: CustomStrategyRule[];
     };
   };
@@ -90,6 +89,7 @@ export interface DcpConfig {
   pruneNotification: "off" | "minimal" | "detailed";
 }
 
+/** @deprecated Historical configuration shape; no runtime policy. */
 export interface CustomStrategyDefaults {
   /** Skip successful results smaller than this to avoid net-negative rewrites. */
   minResultTokens: number;
@@ -105,6 +105,7 @@ export interface CustomStrategyKeep {
   tailLines?: number;
 }
 
+/** @deprecated Historical configuration shape; no runtime policy. */
 export interface CustomStrategyRule {
   /** Tool-name patterns; case-insensitive `*` globs, anchored after expansion. */
   tools: string[];

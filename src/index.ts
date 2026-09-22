@@ -6,6 +6,7 @@ import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { registerCommands } from "./application/commands/dcp.js";
 import { registerCompressTool } from "./application/compress-tool/registration.js";
 import { registerContextHandler } from "./application/context-handler.js";
+import { registerRecoverTool } from "./application/recover-tool.js";
 import { registerDcpNativeCompactionBridge } from "./application/native-compaction.js";
 import { registerProviderHandler } from "./application/provider-handler.js";
 import { initializeSessionState, registerSessionHandlers } from "./application/session-handler.js";
@@ -34,6 +35,7 @@ export default function (pi: ExtensionAPI): void {
   initializeSessionState(state, config);
 
   registerCompressTool(pi, state, config);
+  registerRecoverTool(pi);
   registerCommands(pi, state, config);
   registerSessionHandlers(pi, state, config);
   registerDcpNativeCompactionBridge(pi, state, config);
