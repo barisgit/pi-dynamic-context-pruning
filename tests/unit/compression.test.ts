@@ -1290,10 +1290,10 @@ describe("DCP compression.test", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Test 23b — BOUNDARY VALIDATION REJECTS STALE IDS AND SELF-BLOCK RANGES
+  // Test 23b — BOUNDARY VALIDATION REJECTS STALE IDS
   // ---------------------------------------------------------------------------
-  test("Test 23b — BOUNDARY VALIDATION REJECTS STALE IDS AND SELF-BLOCK RANGES", () => {
-    console.log("TEST 23b: boundary validation rejects stale ids and self-block ranges");
+  test("Test 23b — BOUNDARY VALIDATION REJECTS STALE IDS", () => {
+    console.log("TEST 23b: boundary validation rejects stale ids");
 
     const state = makeState([
       {
@@ -1333,11 +1333,7 @@ describe("DCP compression.test", () => {
       /Unknown message ID: m10001/,
       "FAIL — stale wide message refs should reject"
     );
-    assert.throws(
-      () => validateCompressionRangeBoundaryIds("b3", "b3", state),
-      /contains only compressed block b3/,
-      "FAIL — bN..bN self-compression should reject"
-    );
+    validateCompressionRangeBoundaryIds("b3", "b3", state);
     validateCompressionRangeBoundaryIds("m0001", "b3", state);
     validateCompressionRangeBoundaryIds("m10000", "b3", state);
     state.messageIdSnapshot.delete("m10000");

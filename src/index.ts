@@ -2,7 +2,7 @@
 // Dynamic Context Pruning (DCP) — PI extension entry point
 // ---------------------------------------------------------------------------
 
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { registerCommands } from "./application/commands/dcp.js";
 import { registerCompressTool } from "./application/compress-tool/registration.js";
 import { registerContextHandler } from "./application/context-handler.js";

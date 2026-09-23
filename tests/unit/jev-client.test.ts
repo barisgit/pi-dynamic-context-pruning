@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   buildJevRequest,
   classifyArtifactWithJev,
@@ -67,14 +70,14 @@ describe("Jev client", () => {
     });
   });
 
-  test("marks low-confidence and malformed responses distinctly", () => {
+  test("marks low-drop-probability and malformed responses distinctly", () => {
     expect(
       parseJevResponse({
         answers: {
           retention: {
             type: "choice",
             choice: "drop",
-            confidence: 0.59,
+            confidence: 0.95,
             probabilities: { keep: 0.41, drop: 0.59 },
           },
         },
@@ -82,8 +85,36 @@ describe("Jev client", () => {
     ).toMatchObject({
       decision: "keep",
       rawChoice: "drop",
-      confidence: 0.59,
-      failure: { kind: "low_confidence" },
+      failure: { kind: "low_drop_probability" },
+    });
+    expect(
+      parseJevResponse({
+        answers: {
+          retention: {
+            type: "choice",
+            choice: "drop",
+            confidence: 0.2,
+            probabilities: { keep: 0.4, drop: 0.6 },
+          },
+        },
+      })
+    ).toMatchObject({ decision: "drop", rawChoice: "drop" });
+    expect(
+      parseJevResponse({
+        answers: {
+          retention: {
+            type: "choice",
+            choice: "drop",
+            confidence: 0.95,
+            probabilities: { keep: 0.41, drop: 0.59 },
+          },
+        },
+      })
+    ).toMatchObject({
+      decision: "keep",
+      rawChoice: "drop",
+      confidence: 0.95,
+      failure: { kind: "low_drop_probability" },
     });
 
     expect(parseJevResponse({ answers: {} })).toEqual({
@@ -111,14 +142,14 @@ describe("Jev client", () => {
     ).toMatchObject({ decision: "keep", failure: { kind: "malformed_response" } });
   });
 
-  test("only low-confidence drops fail, including custom threshold boundaries", () => {
-    const response = (choice: string, confidence: number) => ({
+  test("only low-drop-probability choices fail, including custom threshold boundaries", () => {
+    const response = (choice: string, dropProbability: number) => ({
       answers: {
         retention: {
           type: "choice",
           choice,
-          confidence,
-          probabilities: { keep: 0.3, drop: 0.7 },
+          confidence: 0.2,
+          probabilities: { keep: 1 - dropProbability, drop: dropProbability },
         },
       },
     });
@@ -127,7 +158,7 @@ describe("Jev client", () => {
     expect(parseJevResponse(response("drop", 0.7), 0.8)).toMatchObject({
       decision: "keep",
       rawChoice: "drop",
-      failure: { kind: "low_confidence" },
+      failure: { kind: "low_drop_probability" },
     });
   });
 
@@ -172,6 +203,32 @@ describe("Jev client", () => {
       Authorization: "Bearer secret-test-key",
       "Content-Type": "application/json",
     });
+  });
+
+  test("standalone transport resolves credentials through the pinned Pi registry", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "dcp-jev-sdk-"));
+    try {
+      await writeFile(
+        join(dir, "auth.json"),
+        JSON.stringify({ openrouter: { type: "api_key", key: "fixture-key" } })
+      );
+      let authorization: string | undefined;
+      const request = createPiOpenRouterJevRequest({
+        authPath: join(dir, "auth.json"),
+        modelsPath: join(dir, "models.json"),
+        fetchImpl: async (_input, init) => {
+          authorization = (init?.headers as Record<string, string>)?.Authorization;
+          return new Response(JSON.stringify({ answers: {} }), { status: 200 });
+        },
+      });
+
+      await request(
+        buildJevRequest({ candidateId: "a", taskContext: "task", artifact: "artifact" })
+      );
+      expect(authorization).toBe("Bearer fixture-key");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 
   test("aborts a request at the bounded timeout without a live network call", async () => {

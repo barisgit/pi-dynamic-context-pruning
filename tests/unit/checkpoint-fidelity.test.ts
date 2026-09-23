@@ -444,7 +444,7 @@ describe("checkpoint fidelity", () => {
         { branchEntries: f.entries, signal } as any,
         {
           model,
-          modelRegistry: { getApiKeyAndHeaders: async () => ({ ok: true, apiKey: "fake" }) },
+          modelRegistry: {},
         } as any,
         f.state,
         f.config

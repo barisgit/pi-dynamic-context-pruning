@@ -81,7 +81,7 @@ On `session_start` / `session_tree`, `restoreStateFromBranch()` uses the single 
 
 ### Layer Rules
 
-- **Domain** (`src/domain/`) — pure business logic. Must not import `@mariozechner/pi-coding-agent`, filesystem utilities, config loading, debug logging, or application handlers.
+- **Domain** (`src/domain/`) — pure business logic. Must not import `@earendil-works/pi-coding-agent`, filesystem utilities, config loading, debug logging, or application handlers.
 - **Application** (`src/application/`) — adapts pi/provider payloads, wires hooks, delegates pure decisions to domain.
 - **Infrastructure** (`src/infrastructure/`) — owns side effects: config files, persisted-state, JSONL debug logging.
 
@@ -168,5 +168,5 @@ agent_end / session_shutdown
 ## Integration
 
 - **Consumed by**: pi coding agent (via ExtensionAPI)
-- **Depends on**: `@mariozechner/pi-coding-agent`, `@mariozechner/pi-tui`, `@sinclair/typebox`, `jsonc-parser`, `gpt-tokenizer`
+- **Depends on**: `@earendil-works/pi-coding-agent`, `@earendil-works/pi-tui`, `@earendil-works/pi-ai`, `jsonc-parser`, `gpt-tokenizer`
 - **Exports**: Default extension function from `src/index.ts`

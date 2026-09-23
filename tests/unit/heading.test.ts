@@ -12,7 +12,6 @@ import { registerCompressTool } from "../../src/application/compress-tool/regist
 import { registerContextHandler } from "../../src/application/context-handler.js";
 import {
   buildDcpNativeCompactionResult,
-  buildDcpFallbackCustomInstructions,
   registerDcpNativeCompactionBridge,
 } from "../../src/application/native-compaction.js";
 import {
@@ -231,7 +230,6 @@ describe("mutable heading", () => {
     const summary = buildDcpNativeCompactionResult(args).summary;
     expect(summary.startsWith("<current-orientation>")).toBe(true);
     expect(summary).not.toContain(renderHeading(heading));
-    expect(buildDcpFallbackCustomInstructions(h.state)).not.toContain("<heading");
     h.config.nativeCompaction.maxSummaryTokens = 1;
     expect(() => buildDcpNativeCompactionResult(args)).toThrow("use host summarization");
     const handlers = new Map<string, any>();
@@ -248,6 +246,7 @@ describe("mutable heading", () => {
       )
     ).toBeUndefined();
     expect((args.preparation as any).previousSummary).toContain("fresh");
+    expect((args.preparation as any).previousSummary).not.toContain(renderHeading(heading));
     expect(h.state.heading).toEqual(heading);
     expect(h.state.compressionBlocks[0].active).toBe(true);
   });

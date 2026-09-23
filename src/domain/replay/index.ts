@@ -275,10 +275,10 @@ function findCompressInvocation(
   return null;
 }
 
-function resolveEffectiveTopic(range: CompressRange, defaultTopic?: string): string | null {
+function resolveEffectiveTopic(range: CompressRange, defaultTopic?: string): string {
   const topic = range.topic ?? defaultTopic;
   const trimmed = topic?.trim();
-  return trimmed && trimmed.length > 0 ? trimmed : null;
+  return trimmed && trimmed.length > 0 ? trimmed : "Compressed history";
 }
 
 function applyCompressInvocation(
@@ -309,12 +309,6 @@ function applyCompressInvocation(
   for (const range of invocation.ranges) {
     const { startId, endId, summary } = range;
     const blockTopic = resolveEffectiveTopic(range, invocation.topic);
-    if (!blockTopic) {
-      // Live path throws; replay skips this range silently to remain
-      // soft-tolerant of weird historical data.
-      continue;
-    }
-
     try {
       validateCompressionRangeBoundaryIds(startId, endId, state);
     } catch {

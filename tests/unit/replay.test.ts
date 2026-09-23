@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { replayDcpState } from "../../src/domain/replay/index.js";
 import { makeConfig } from "../helpers/dcp-test-utils.js";
+import { renderCompressedBlockText } from "../../src/domain/compression/materialize.js";
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -89,6 +90,89 @@ describe("DCP replay engine", () => {
   const LONG_BODY =
     "This is a verbose message body that exists purely so that token estimation " +
     "yields a meaningfully large number. ".repeat(20);
+
+  test("historical placeholders expand on replay, while a later bN self-range is distilled", () => {
+    const branch = makeBranch([
+      makeUser(LONG_BODY, 1000),
+      makeUser(LONG_BODY, 2000),
+      makeUser(LONG_BODY, 3000),
+      makeAssistantToolCall(
+        "c1",
+        "compress",
+        {
+          topic: "First",
+          ranges: [{ startId: "m0001", endId: "m0001", summary: "ORIGINAL_DETAIL" }],
+        },
+        4000
+      ),
+      makeToolResult("c1", "compress", "ok", 5000),
+      makeAssistantToolCall(
+        "c2",
+        "compress",
+        {
+          topic: "Legacy",
+          ranges: [{ startId: "b1", endId: "m0002", summary: "Previous: (b1); next work" }],
+        },
+        6000
+      ),
+      makeToolResult("c2", "compress", "ok", 7000),
+      makeAssistantToolCall(
+        "c3",
+        "compress",
+        {
+          topic: "Revised",
+          ranges: [
+            { startId: "b2", endId: "b2", summary: "Correction supersedes earlier detail." },
+          ],
+        },
+        8000
+      ),
+      makeToolResult("c3", "compress", "ok", 9000),
+    ]);
+    const state = replayDcpState(branch, makeConfig());
+    expect(state.compressionBlocks[1]?.summary).toContain("ORIGINAL_DETAIL");
+    expect(state.compressionBlocks[2]?.summary).toBe("Correction supersedes earlier detail.");
+    expect(state.compressionBlocks.map((block) => block.active)).toEqual([false, false, true]);
+    expect(state.compressionBlocks[2]?.metadata?.supersededBlockIds).toEqual([2]);
+    expect(state.compressionBlocks[2]?.metadata?.coveredSourceKeys).toEqual(
+      state.compressionBlocks[1]?.metadata?.coveredSourceKeys
+    );
+    expect(renderCompressedBlockText(state.compressionBlocks[2]!)).not.toContain("ORIGINAL_DETAIL");
+  });
+
+  test("replays an untitled block and its later self-consolidation with the live topic fallback", () => {
+    const state = replayDcpState(
+      makeBranch([
+        makeUser(LONG_BODY, 1000),
+        makeUser("kept tail", 2000),
+        makeAssistantToolCall(
+          "c1",
+          "compress",
+          {
+            ranges: [{ startId: "m0001", endId: "m0001", summary: "First version" }],
+          },
+          3000
+        ),
+        makeToolResult("c1", "compress", "ok", 4000),
+        makeAssistantToolCall(
+          "c2",
+          "compress",
+          {
+            ranges: [{ startId: "b1", endId: "b1", summary: "Revised version" }],
+          },
+          5000
+        ),
+        makeToolResult("c2", "compress", "ok", 6000),
+      ]),
+      makeConfig()
+    );
+    expect(state.compressionBlocks.map((block) => block.topic)).toEqual([
+      "Compressed history",
+      "Compressed history",
+    ]);
+    expect(state.compressionBlocks.map((block) => block.active)).toEqual([false, true]);
+    expect(state.compressionBlocks[1]?.summary).toBe("Revised version");
+  });
 
   // -------------------------------------------------------------------------
   // Test R1 — Single successful compress reconstructs a CompressionBlock

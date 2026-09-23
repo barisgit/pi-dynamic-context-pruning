@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Added explicitly opt-in live Jev removals (`strategies.jev.apply: true`) through existing protection, projection, net-savings and recovery paths, including exposed fo Refs. Existing enabled configurations remain shadow-only without this flag. Pending judgments are never loaded as prune commands from old audit rows.
+- Replaced the DROP confidence-margin gate with explicit `P(drop) >= 0.60`; confidence remains telemetry, not a safety guarantee. Errors remain protected from live Jev in this initial policy.
+
+- Added genuine agent-authored consolidation of one or several existing compression blocks. Mandatory verbatim reinsertion is removed; explicit quotations remain validated and historical replay stays compatible. Exact coverage, protected tails and canonical originals are preserved.
+- Removed unused native fallback instructions and forwarding modules; actual host fallback still receives the fresh handoff through its existing preparation field.
+
 - Simplified Jev to keep/drop decisions, recent public dialogue, all eligible outputs with bounded parallelism, and reevaluation every configured cadence. Audit suppresses same-cadence duplicates rather than caching relevance indefinitely.
 - Retired deterministic error purging and custom age-only clear/head-tail rules. Shared candidate age/size/protection settings replace those rules; exact-result deduplication and existing savings gates remain. Historical saved actions/configuration stay readable without re-enabling retired collectors.
 

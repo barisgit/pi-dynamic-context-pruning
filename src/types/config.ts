@@ -33,24 +33,21 @@ export interface DcpConfig {
     maxSummaryTokens: number;
   };
   strategies: {
-    /** Opt-in audit-only Jev judgments; never changes rendered context. */
-    jev?: { enabled: boolean };
+    /** Observation remains the default; apply explicitly enables recoverable live removals. */
+    jev?: { enabled: boolean; apply?: boolean };
     /**
-     * Batch tombstone additions onto turn boundaries that are multiples of N.
-     *
-     * `prunedToolIds` is treated as a pure function of `floor(currentTurn / N) * N`,
-     * so within a bucket no new tombstones appear and the rendered prefix stays
-     * cache-stable. `1` (default) preserves current per-turn behavior.
-     *
-     * Stateless on purpose: nothing is persisted between sessions, so reloads
-     * cannot trigger a spurious flush.
+     * Bucket eligibility and Jev review onto logical-turn multiples of N.
+     * Deterministic dedup additions occur only at bucket boundaries; an accepted
+     * asynchronous Jev DROP may commit on the next context pass within that bucket
+     * after current eligibility and savings gates are rechecked. No pending Jev
+     * judgment is restored from the private audit ledger.
      */
     pruneCadenceTurns: number;
     /**
-     * Minimum net tokens a single dedup tombstone must save before it is
+     * Minimum net tokens a single candidate tombstone must save before it is
      * allowed to break the prefix cache. `netSaved = toolResultTokens -
      * tombstoneTokens`. Candidates below this are kept fully rendered. `0`
-     * disables the per-item gate (legacy behavior). Shipped default `25` drops
+     * disables the per-item gate (legacy behavior). The default per-item gate drops
      * net-negative and trivially-small tombstones that bust cache for no gain.
      */
     minPruneItemSavedTokens: number;
@@ -59,7 +56,7 @@ export interface DcpConfig {
      * before any of it is committed in a given context pass. Mirrors
      * Anthropic's `clear_at_least`: don't rewrite old context unless the whole
      * flush is worth the single prefix-cache break. `0` disables the batch gate
-     * (legacy behavior). Shipped default `100` holds trivial flushes until they
+     * (legacy behavior). The default batch gate holds trivial flushes until they
      * accumulate a worthwhile saving. Bypassed when the live effective context
      * is in the red zone (see `compress.maxContextPercent` /
      * `compress.maxContextTokens`).

@@ -3,15 +3,12 @@ import { estimateTokens } from "../domain/tokens/estimate.js";
 
 // Reserve at least 8K of Jev's 32K window for provider/tokenizer differences and response.
 export const JEV_MAX_REQUEST_ESTIMATED_TOKENS = 24000;
-import { getAgentDir } from "@mariozechner/pi-coding-agent";
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import type { DcpConfig } from "../types/config.js";
 import type { DcpState } from "../types/state.js";
 import type { DcpMessage } from "../types/message.js";
 import type { FoRefBridgeV1 } from "../domain/pruning/fo-ref-adapter.js";
-import {
-  collectJevShadowCandidates,
-  snapshotJevTaskContext,
-} from "../domain/pruning/jev-candidates.js";
+import { collectJevCandidates, snapshotJevTaskContext } from "../domain/pruning/jev-candidates.js";
 import {
   buildJevRequest,
   parseJevResponse,
@@ -24,7 +21,7 @@ import {
   type JevLedgerRecord,
 } from "../infrastructure/jev-ledger.js";
 
-export interface JevShadowDependencies {
+export interface JevDependencies {
   request?: JevRequestFn;
   read?: typeof readJevLedger;
   append?: typeof appendJevLedger;
@@ -47,20 +44,88 @@ function safeUsage(usage: Record<string, unknown> | undefined): Record<string, n
 }
 const hash = (text: string): string => createHash("sha256").update(text).digest("hex");
 
-/** Audit-only observer with immutable cadence snapshots and four bounded workers. */
-export class JevShadowScheduler {
+/** Cadence observer; explicit live mode queues accepted drops for the next context pass. */
+export class JevScheduler {
   private epoch = 0;
   private session = "";
   private opportunity = "";
   private inflight = false;
-  constructor(private readonly dependencies: JevShadowDependencies = {}) {}
+  private ready = new Map<string, string>();
+  constructor(private readonly dependencies: JevDependencies = {}) {}
 
   /** Only lifecycle boundaries invalidate writes, not incoming dialogue. */
   reset(): void {
     this.epoch++;
     this.session = "";
     this.opportunity = "";
+    this.ready.clear();
     // Pending transports retain their slots across lifecycle changes.
+  }
+
+  /** Only in-memory judgments made in this live session may be applied. Old audit rows never grant permission. */
+  pending(
+    sessionId: string,
+    config: DcpConfig,
+    incomingTurn?: number
+  ): ReadonlyMap<string, string> {
+    if (
+      !config.enabled ||
+      !config.strategies.jev?.enabled ||
+      config.strategies.jev.apply !== true ||
+      this.session !== sessionId
+    )
+      return new Map();
+    if (
+      incomingTurn !== undefined &&
+      this.opportunity !== this.opportunityFor(incomingTurn, config)
+    )
+      this.ready.clear();
+    return new Map(this.ready);
+  }
+
+  /** Report actual commits separately from proposals; do not label a held gate as applied. */
+  committed(sessionId: string, ids: readonly string[]): void {
+    if (this.session !== sessionId) return;
+    for (const id of ids) {
+      const artifact = this.ready.get(id);
+      if (artifact === undefined) continue;
+      this.ready.delete(id);
+      const dir = this.dependencies.agentDir ?? getAgentDir();
+      void (this.dependencies.append ?? appendJevLedger)(dir, sessionId, {
+        version: 1,
+        kind: "jev-apply",
+        policy: "keep-drop-pdrop-v2",
+        sessionId,
+        candidateId: id,
+        outcome: "applied",
+        contentHash: hash(artifact),
+        timestamp: new Date().toISOString(),
+      }).catch(() => {});
+    }
+  }
+
+  /** Invalidate changed, hidden, or newly protected artifacts while retaining held-gate work. */
+  retainEligible(
+    messages: DcpMessage[],
+    state: DcpState,
+    config: DcpConfig,
+    bridge?: FoRefBridgeV1 | null
+  ): void {
+    if (!this.ready.size) return;
+    const current = new Map(
+      collectJevCandidates(messages, state, config, bridge).map((candidate) => [
+        candidate.id,
+        candidate.artifact,
+      ])
+    );
+    for (const [id, artifact] of this.ready) {
+      if (current.get(id) !== artifact) this.ready.delete(id);
+    }
+  }
+
+  private opportunityFor(currentTurn: number, config: DcpConfig): string {
+    const cadence = Math.max(1, config.strategies.pruneCadenceTurns);
+    return `${cadence}:${Math.floor(currentTurn / cadence) * cadence}`;
   }
 
   observe(
@@ -69,23 +134,28 @@ export class JevShadowScheduler {
     config: DcpConfig,
     sessionId: string,
     bridge?: FoRefBridgeV1 | null,
-    modelRegistry?: unknown
+    modelRegistry?: unknown,
+    candidateMessages: DcpMessage[] = messages
   ): void {
     if (!config.enabled || !config.strategies.jev?.enabled || !sessionId) return;
     if (this.session !== sessionId) {
       this.reset();
       this.session = sessionId;
     }
+    const apply = config.strategies.jev.apply === true;
     const cadence = Math.max(1, config.strategies.pruneCadenceTurns);
     const bucket = Math.floor(state.currentTurn / cadence) * cadence;
-    const opportunity = `${cadence}:${bucket}`;
+    const opportunity = this.opportunityFor(state.currentTurn, config);
     if (this.inflight || this.opportunity === opportunity) return;
+    // Starting a new cadence invalidates held permissions before ledger I/O,
+    // request, timeout, or oversized-request exits can leave them executable.
+    this.ready.clear();
     this.opportunity = opportunity;
     // Async continuations never read mutable transcript/state.
     const context = snapshotJevTaskContext(messages);
     const skipped: Record<string, number> = {};
     const candidates = structuredClone(
-      collectJevShadowCandidates(messages, state, config, bridge, (reason) => {
+      collectJevCandidates(candidateMessages, state, config, bridge, (reason) => {
         skipped[reason] = (skipped[reason] ?? 0) + 1;
       })
     );
@@ -96,6 +166,8 @@ export class JevShadowScheduler {
       const dir = this.dependencies.agentDir ?? getAgentDir();
       const rows = await (this.dependencies.read ?? readJevLedger)(dir, sessionId);
       if (!current()) return;
+      // Ledger kind "jev-shadow" is a persisted record format name, kept for existing
+      // ledgers; it covers judgments in both shadow and live modes.
       // Old rows without explicit cadence provenance cannot suppress judgments.
       const prior = rows.filter(
         (r) =>
@@ -103,7 +175,7 @@ export class JevShadowScheduler {
           r.sessionId === sessionId &&
           r.cadence === cadence &&
           r.bucket === bucket &&
-          r.policy === "keep-drop-v1"
+          r.policy === "keep-drop-pdrop-v2"
       );
       const taskContext =
         (prior.find((r) => typeof r.taskContext === "string")?.taskContext as string | undefined) ??
@@ -118,7 +190,7 @@ export class JevShadowScheduler {
         await save({
           version: 1,
           kind: "jev-shadow",
-          policy: "keep-drop-v1",
+          policy: "keep-drop-pdrop-v2",
           sessionId,
           cadence,
           bucket,
@@ -147,7 +219,8 @@ export class JevShadowScheduler {
           const base = {
             version: 1 as const,
             kind: "jev-shadow",
-            policy: "keep-drop-v1",
+            policy: "keep-drop-pdrop-v2",
+            mode: apply ? "apply" : "shadow",
             sessionId,
             cadence,
             bucket,
@@ -203,6 +276,11 @@ export class JevShadowScheduler {
               );
             });
             const result = parseJevResponse(await Promise.race([pending, timeout]));
+            // A new KEEP or rejected DROP supersedes any held prior DROP immediately,
+            // even if writing its audit record is slow or fails.
+            if (current() && apply && (result.decision !== "drop" || candidate.isError)) {
+              this.ready.delete(candidate.id);
+            }
             await save({
               ...audit,
               decision: result.decision,
@@ -216,16 +294,28 @@ export class JevShadowScheduler {
                   : result.failure
                     ? "gate-rejected"
                     : result.decision === "drop"
-                      ? "proposed"
+                      ? apply && candidate.isError
+                        ? "gate-rejected"
+                        : "proposed"
                       : "retained",
-              reason: result.failure?.kind,
+              reason:
+                result.failure?.kind ??
+                (apply && candidate.isError && result.decision === "drop"
+                  ? "error-retained"
+                  : undefined),
               latencyMs: Date.now() - started,
               cost:
                 typeof result.cost === "number" && Number.isFinite(result.cost)
                   ? result.cost
                   : null,
             });
+            if (current() && apply && result.decision === "drop" && !candidate.isError) {
+              this.ready.set(candidate.id, candidate.artifact);
+            }
           } catch {
+            // Transport, timeout, parse/audit exceptions must not leave an older
+            // proposal executable after this cadence failed closed.
+            if (current() && apply) this.ready.delete(candidate.id);
             await save({
               ...audit,
               decision: "keep",

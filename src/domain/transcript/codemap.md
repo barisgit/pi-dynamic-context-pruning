@@ -34,6 +34,6 @@ Consumers: `resolveCompressionBlockCoveredSourceKeys`, `countLogicalTurns`, `res
 
 - **Replay** (`src/domain/replay/`): offline reconstruction from transcript + `compress` tool calls using these keys
 - **Pruning** (`src/domain/pruning/`): uses `buildLiveOwnerKeys` + covered-ordinal logic
-- **Nudge** (`src/domain/nudge/`): uses `resolveLogicalTurnTailStartTimestamp`
+- **Nudge** (`src/domain/pruning/`): uses `resolveLogicalTurnTailStartTimestamp`
 - **Provider filter** (`src/domain/provider/`): uses canonical owner keys from this module
 - **Persist** (`src/infrastructure/`): v5 persists exact coverage keys for direct restore; v3 remains the scalar-only empty-session marker

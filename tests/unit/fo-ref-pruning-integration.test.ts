@@ -3,6 +3,11 @@ import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { applyPruning, makeConfig, makeState } from "../helpers/dcp-test-utils.js";
 import { hydrateMissingToolRecords } from "../../src/application/tool-recording.js";
+import { JevScheduler } from "../../src/application/jev-review.js";
+import {
+  serializePersistedState,
+  restorePersistedState,
+} from "../../src/infrastructure/persistence.js";
 import { estimateTokens } from "../../src/domain/tokens/estimate.js";
 import type { DcpMessage } from "../../src/types/message.js";
 
@@ -209,6 +214,106 @@ describe("production fo Ref pruning integration", () => {
       });
       expect(outer.details).toBe(envelope);
       expect(envelope).toEqual(canonicalAfterStrip);
+    }
+  );
+
+  realFoTest(
+    "live Jev applies repeated exposed Ref only when actual projected savings clears the gate",
+    async () => {
+      const { bridge, makeRef, projectModelText } = await loadRealFo();
+      const original = "several distinct words of evidence ".repeat(180);
+      const shared = makeRef("read", original, {
+        cwd: "/repo",
+        input: "same.txt",
+        timelineId: "inner-live",
+      });
+      const envelope: any = {
+        kind: "sandbox.result",
+        version: 1,
+        script: { hash: "live" },
+        emissions: [{ kind: "ref", ref: shared }],
+        final: shared,
+        timeline: [
+          {
+            id: "inner-live",
+            kind: "tool",
+            toolName: "read",
+            args: { path: "same.txt" },
+            result: { content: [{ type: "text", text: original }], isError: false },
+          },
+        ],
+        trace: [],
+        budgets: { timedOut: false, calls: 1, visibleBytesTruncated: false },
+      };
+      const outerText = projectModelText(envelope, 100_000, 100_000).text;
+      const collected = bridge.collect({ outerToolCallId: "outer-run", details: envelope });
+      if (collected.status !== "supported") throw new Error("expected supported bridge");
+      const candidate = collected.candidates[0];
+      const marker = `[Output removed by DCP; original retained: dcp_recover({id:${JSON.stringify(candidate.compositeId)}})]`;
+      const direct = bridge.project({
+        outerToolCallId: "outer-run",
+        details: envelope,
+        originalModelText: outerText,
+        decisions: { [candidate.localId]: marker },
+        maxVisibleBytes: Buffer.byteLength(outerText),
+        maxVisibleEventBytes: Buffer.byteLength(outerText),
+      });
+      if (direct.status !== "projected") throw new Error("expected direct projection");
+      const actual = estimateTokens(outerText) - estimateTokens(direct.modelText);
+      const messages = transcript(outerText, envelope);
+      const state = makeState();
+      hydrateMissingToolRecords(messages, state);
+      const config = configureRefClearing();
+      config.strategies.candidates.minAgeTurns = 0;
+      config.strategies.candidates.minResultTokens = 1;
+      config.strategies.jev = { enabled: true, apply: true };
+      config.strategies.minPruneBatchSavedTokens = 0;
+      applyPruning(messages, state, config, { foRefBridge: bridge });
+      const scheduler = new JevScheduler({
+        read: async () => [],
+        append: async () => {},
+        request: async () => ({
+          answers: {
+            retention: {
+              type: "choice",
+              choice: "drop",
+              confidence: 0.2,
+              probabilities: { keep: 0.3, drop: 0.7 },
+            },
+          },
+        }),
+      });
+      scheduler.observe(messages, state, config, "fo-live", bridge);
+      await new Promise((resolve) => setTimeout(resolve, 15));
+      const drops = scheduler.pending("fo-live", config);
+      expect(drops.get(candidate.compositeId)).toBe(original);
+      config.strategies.minPruneItemSavedTokens = actual + 1;
+      applyPruning(messages, state, config, { foRefBridge: bridge, jevDrops: drops });
+      expect(state.prunedToolIds.has(candidate.compositeId)).toBe(false);
+      config.strategies.minPruneItemSavedTokens = actual;
+      const rendered = applyPruning(messages, state, config, {
+        foRefBridge: bridge,
+        jevDrops: drops,
+      });
+      expect(state.prunedToolIds.has(candidate.compositeId)).toBe(true);
+      expect(state.lastHeuristicPruneDecision?.batchSavedTokens).toBe(actual);
+      expect((rendered[1].content as any[])[0].text).toContain(marker);
+      const resumed = makeState();
+      restorePersistedState(serializePersistedState(state), resumed);
+      expect(resumed.prunedToolIds.has(candidate.compositeId)).toBe(true);
+      expect(resumed.prunedToolActions.get(candidate.compositeId)).toEqual({ action: "clear" });
+      hydrateMissingToolRecords(messages, resumed);
+      const resumedText = (
+        applyPruning(messages, resumed, config, { foRefBridge: bridge })[1].content as any[]
+      )[0].text;
+      expect(resumedText).toContain(marker);
+      expect(
+        bridge.recover({
+          outerToolCallId: "outer-run",
+          details: envelope,
+          localId: candidate.localId,
+        }).ref.value
+      ).toBe(original);
     }
   );
 

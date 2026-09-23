@@ -1,15 +1,16 @@
-import { AuthStorage, ModelRegistry } from "@mariozechner/pi-coding-agent";
+import { ModelRegistry, ModelRuntime } from "@earendil-works/pi-coding-agent";
 
 export const JEV_MODEL = "typesafe/jev-1.13";
 export const JEV_DECISIONS_URL = "https://openrouter.ai/api/alpha/decisions";
-export const DEFAULT_MIN_CONFIDENCE = 0.6;
+/** Experimental, uncalibrated acceptance threshold on reported drop probability. */
+export const DEFAULT_MIN_DROP_PROBABILITY = 0.6;
 export const DEFAULT_JEV_TIMEOUT_MS = 15_000;
 
 const MAX_JEV_TIMEOUT_MS = 60_000;
 const DECISIONS = ["keep", "drop"] as const;
 
 export type JevDecision = (typeof DECISIONS)[number];
-export type JevFailureKind = "low_confidence" | "malformed_response" | "transport";
+export type JevFailureKind = "low_drop_probability" | "malformed_response" | "transport";
 
 export interface JevClassificationInput {
   candidateId: string;
@@ -137,7 +138,7 @@ function auditFields(
 /** Parse a choice response while retaining raw decision evidence and explicit failure state. */
 export function parseJevResponse(
   response: unknown,
-  minConfidence = DEFAULT_MIN_CONFIDENCE
+  minDropProbability = DEFAULT_MIN_DROP_PROBABILITY
 ): JevClassificationResult {
   const malformed = (): JevClassificationResult => ({
     decision: "keep",
@@ -164,7 +165,7 @@ export function parseJevResponse(
 
   const rawChoice = choice as JevDecision;
   const audit = auditFields(response);
-  if (rawChoice === "drop" && confidence < minConfidence) {
+  if (rawChoice === "drop" && probabilities.drop < minDropProbability) {
     return {
       decision: "keep",
       rawChoice,
@@ -172,8 +173,8 @@ export function parseJevResponse(
       probabilities,
       ...audit,
       failure: {
-        kind: "low_confidence",
-        message: `Jev confidence ${confidence} was below threshold ${minConfidence}`,
+        kind: "low_drop_probability",
+        message: `Jev drop probability ${probabilities.drop} was below threshold ${minDropProbability}`,
       },
     };
   }
@@ -184,10 +185,10 @@ export function parseJevResponse(
 export async function classifyArtifactWithJev(
   input: JevClassificationInput,
   request: JevRequestFn,
-  minConfidence = DEFAULT_MIN_CONFIDENCE
+  minDropProbability = DEFAULT_MIN_DROP_PROBABILITY
 ): Promise<JevClassificationResult> {
   try {
-    return parseJevResponse(await request(buildJevRequest(input)), minConfidence);
+    return parseJevResponse(await request(buildJevRequest(input)), minDropProbability);
   } catch (error) {
     return {
       decision: "keep",
@@ -215,10 +216,11 @@ function boundedTimeout(timeoutMs: number | undefined): number {
 export function createPiOpenRouterJevRequest(
   options: PiOpenRouterTransportOptions = {}
 ): JevRequestFn {
-  const registry =
-    options.modelRegistry ??
-    ModelRegistry.create(AuthStorage.create(options.authPath), options.modelsPath);
-  const apiKey = registry.getApiKeyForProvider("openrouter");
+  const apiKey = options.modelRegistry
+    ? options.modelRegistry.getApiKeyForProvider("openrouter")
+    : ModelRuntime.create({ authPath: options.authPath, modelsPath: options.modelsPath }).then(
+        (runtime) => new ModelRegistry(runtime).getApiKeyForProvider("openrouter")
+      );
   const fetchImpl: JevFetch = options.fetchImpl ?? fetch;
   const timeoutMs = boundedTimeout(options.timeoutMs);
   return async (request) => {

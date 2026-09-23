@@ -109,7 +109,7 @@ This repo is post **direct-restore**: persistence restores coverage-bearing bloc
 - New `compress` calls still create legacy `CompressionBlock`s with timestamp boundaries for fallback.
 - New blocks also persist exact canonical metadata and source-key anchors when possible.
 - Successful `compress` blocks also persist `compressCallId` so provider-payload filtering can recognize when a rendered block already represents that tool call.
-- Fully covered older exact-coverage blocks are **superseded**.
+- Fully covered older exact-coverage blocks are **superseded**. Agent-authored consolidation may rewrite one block (`bN..bN`) or several, without copying old summaries. New calls validate optional explicit `(bN)` inclusions against fully superseded active blocks, at most once; historical replay keeps its tolerant placeholder expansion. Exact coverage and saved originals remain the authority, not the generated Record label.
 - Partial ambiguous overlap still rejects conservatively.
 - Timestamp-only legacy overlap remains conservative and still rejects.
 - Protected-tail rejections and injected nudges now surface planning hints: hot-tail start, protected visible IDs, protected active block IDs, and the largest safe visible candidate ranges.
@@ -117,7 +117,7 @@ This repo is post **direct-restore**: persistence restores coverage-bearing bloc
 - Blocks store one historical `summary`, plus original `startId`/`endId` for a time-fixed Record header using `endTimestamp` in ordinary context. Summaries record constraints/corrections, rationale, evidence, and unresolved issues at the stretch's close. Later user corrections supersede historical excerpts and plans.
 - `renderFullBlockCount` / `renderCompactBlockCount` are the existing configurable tier counts (defaults: newest 4 full, next 8 summary-only). Full includes the entire authored summary, conversation excerpts, aggregate effects, and modified-file paths. Summary-only keeps the entire authored summary and omits conversation/effects/modified-files. Older blocks render no model-visible block, but still hide exactly covered raw messages and retain canonical history. Rank the canonical block log including inactive entries before selecting active records, so retiring newer blocks cannot revive omitted older blocks after append or restore. This is count-based admission only: add no new timing, cadence, or retention knobs.
 - Native rendering omits generated Record headers (including expanded nested headers) and generated tier/version labels; structured coverage/boundaries remain.
-- `src/application/checkpoint-handoff.ts` generates a fresh orientation only at native compaction, using a dedicated working-model completion over current effective context **including the retained recent tail**. It rebuilds current context, materializes on cloned state, avoids Pi's tool-result-clipping summary serializer, and never enters a recursive main-agent turn. Prefer host `modelRegistry.complete`; the older host completion/auth path remains compatible. Injectable generator/completion seams support tests.
+- `src/application/checkpoint-handoff.ts` generates a fresh orientation only at native compaction, using a dedicated working-model completion over current effective context **including the retained recent tail**. It rebuilds current context, materializes on cloned state, avoids Pi's tool-result-clipping summary serializer, and never enters a recursive main-agent turn. Use the host `modelRegistry.complete` for provider/auth routing; the former direct pi-ai `complete` fallback is not exported by the 0.87.1 SDK. Injectable generator/completion seams support tests.
 - At `session_before_compact`, compute `minHiddenCoverageRatio` against the actual hidden range at the host's unchanged `firstKeptEntryId`; never move the cut to improve coverage. Exact `coveredSourceKeys` are the only omission certificate. Timestamp intervals remain fallback placement/legacy data and must not certify coverage.
 - At sufficient coverage, the native checkpoint is budgeted retained blocks plus a fresh current-intent/constraints handoff from effective context, including the recent tail and later corrections. It may discard uncovered hidden raw tool evidence from model text while canonical session history stays intact. Do not recursively carry `preparation.previousSummary`; the fresh handoff replaces accumulated summary state.
 - Budget reduction order is optional block metadata first, then whole oldest retained records. Never clip an authored summary. Low actual coverage or a fresh handoff that remains oversized after record dropping falls back to the host summarizer by replacing `event.preparation.previousSummary` with the fresh handoff. Do not seed this fallback through `event.customInstructions` and do not append old summaries. In-flight fallback details retain commit bookkeeping: retire all fully hidden exact blocks (including age/budget omissions), reset nudge watermarks, and resume authorized auto-compaction only after a real commit; persist no new schema fields.
@@ -165,21 +165,21 @@ This logical-turn model is used by:
 
 - Exact-result deduplication is the only automatic heuristic removal: require matching request fingerprint, complete visible content and error status, and retain the newer copy. Same arguments alone do not prove redundancy.
 - Deterministic error purging and custom age-only clear/head-tail collectors are retired. Deprecated configuration cannot reactivate them. Preserve decoding/rendering of historical saved actions where needed for resume and exact recovery; do not silently reset existing state.
-- `strategies.pruneCadenceTurns` controls cadence; never hardcode the user's25. Duplicate removals use bucketed eligibility and existing per-item/batch net-savings gates, including projection/recovery-marker costs and live red-zone semantics. These gates do not turn Jev shadow proposals into applied removals.
+- `strategies.pruneCadenceTurns` controls cadence; never hardcode the user's25. Duplicate removals use bucketed eligibility and existing per-item/batch net-savings gates, including projection/recovery-marker costs and live red-zone semantics. Shadow proposals never apply. Explicit live proposals use the same actual net-savings gate and can commit on the next context pass after the asynchronous response, without waiting another cadence.
 - Tool-result pruning replaces visible output, not the whole assistant/tool pair. Canonical originals stay untouched. Persisted unsafe image/composite/error selections retain their existing conservative restoration checks.
 - Outer `run`, `subagent`, `workflow`, images and unsupported output are not generic logs. Exposed inner fo Refs use the optional versioned bridge for precise enumeration/projection/recovery. Private, derived, ambiguous and independently emitted error/image channels are not guessed or flattened.
 - Composite `fo-ref:v1` IDs must survive resume and GC while their originals remain live. All exposed copies receive a consistent projection. Missing/unsupported bridges fail closed without affecting ordinary Pi.
 
-### Jev shadow observer
+### Jev review and explicit live application
 
-- Optional `strategies.jev.enabled` defaults false. Never mutate pruning selections, canonical envelopes or model-visible text based on a shadow judgment. Exact duplicate pruning remains independent.
+- Optional `strategies.jev.enabled` defaults false; existing enabled configurations remain shadow unless `strategies.jev.apply === true`. Shadow judgments never mutate pruning selections or model text. Live proposals feed the existing commit/projection/savings path, including fo Refs, only after current identity/content/eligibility checks. Canonical originals never change. Exact duplicate pruning remains independent.
 - One complete tool output per request, with tool name/arguments/error flag and bounded recent PUBLIC user/assistant dialogue. Exclude tool payloads, thinking and private metadata from dialogue. Existing summaries are older background, not authoritative current direction. No separate semantic task detector, supersession tracker or handoff field.
-- Keep/drop choice schema; low-confidence drops and API/parse failures retain. No strong_keep, TTL, automatic summarizer or boolean conversion.
+- Keep/drop choice schema; require raw DROP and `P(drop) >= 0.60` for acceptance. Confidence remains telemetry, not a chosen-option probability or calibrated accuracy. API/parse failures retain. The probability policy is `keep-drop-pdrop-v2`; do not mix it with historical confidence-gated evidence. No strong_keep, TTL, automatic summarizer or boolean conversion.
 - Do not screen already eligible public requests for credential-like patterns in output, dialogue, tool names, or arguments. Selected public data may contain sensitive text; preserve private/unexposed/image/protected-tool boundaries and token budgets. Transport credentials and raw transport errors must never enter the audit ledger.
 - Review all eligible outputs with bounded parallelism each CONFIGURED cadence. Shared candidate age/size/protection rules apply; eligible errors may be reviewed, never assumed resolved by age. KEEP is reevaluated next cadence. The private ledger is for audit and same-cadence duplicate suppression/resume, not cross-cadence relevance reuse.
 - Snapshot one batch per cadence. Do not cancel it on every ordinary dialogue update and starve autonomous work. Session/branch resets prevent cross-session state/audit writes; records identify the actual snapshot and cadence. Background failures must never block context rendering.
 - Runtime imports `src/infrastructure/jev-client.ts`; evaluation scripts re-export that client, never the reverse. Infrastructure owns private append-only audit files under the agent directory `dcp/jev/<session-id>.jsonl`, outside transcripts. Save actual sent context/instructions and artifact identity/hash, not large duplicated artifacts, auth material or raw transport errors. Audit skipped oversized inputs instead of silently disappearing.
-- No native-compaction, authored-retention or persisted session-schema changes belong to this observer. Model confidence is not proof of safe omission.
+- Live application initially protects error outputs rather than bypassing historical error-replacement safety. Revalidate late proposals after lifecycle/content changes; never load old ledger judgments as prune commands. Record application separately from proposal/held decisions. Applied selections use existing session persistence; no schema change or extra pruning engine. Model probabilities are not proof of safe omission.
 
 ### 6. Debug logging
 
@@ -199,12 +199,11 @@ This logical-turn model is used by:
 | `src/domain/refs/`                      | Visible ref parsing/formatting/allocation and DCP metadata stripping                                          |
 | `src/domain/compression/`               | Compression range helpers, materialization, exact metadata, planning, supersession helpers                    |
 | `src/domain/pruning/`                   | Active runtime pruning path: block application, repair, dedup, Jev eligibility, nudge injection, ID injection |
-| `src/domain/nudge/`                     | Nudge decision helpers re-exported from pruning/domain behavior                                               |
 | `src/domain/provider/`                  | Provider-payload stale artifact filtering using canonical owner keys                                          |
 | `src/application/`                      | Pi hook/tool/command orchestration and host payload adaptation                                                |
 | `src/application/checkpoint-handoff.ts` | Dedicated working-model orientation from full effective context at compaction                                 |
 | `src/application/recover-tool.ts`       | Canonical saved-output recovery and optional fo bridge discovery                                              |
-| `src/application/compress-tool/`        | `compress` registration plus validation/artifact helper exports                                               |
+| `src/application/compress-tool/`        | `compress` registration; validation/artifact helpers live in domain/compression/tooling                       |
 | `src/application/commands/dcp.ts`       | `/dcp` slash command registration                                                                             |
 | `src/infrastructure/`                   | JSONC config loading, debug logging, persisted-state migration/serialization                                  |
 | `src/prompts/`                          | System prompt additions, compress tool contract text, nudge text                                              |
@@ -214,7 +213,7 @@ This logical-turn model is used by:
 
 ### Layer rules
 
-- Domain modules must not import `@mariozechner/pi-coding-agent`, filesystem utilities, config loading, debug logging, or application handlers.
+- Domain modules must not import `@earendil-works/pi-coding-agent`, filesystem utilities, config loading, debug logging, or application handlers.
 - Application modules adapt pi/provider payloads and delegate pure decisions to domain modules.
 - Infrastructure modules own side effects such as config files, persisted-state migration, and JSONL debug logging.
 
@@ -371,13 +370,13 @@ Do not silently swallow programming mistakes.
 
 ## Dependencies
 
-| Package                         | Role                                                       |
-| ------------------------------- | ---------------------------------------------------------- |
-| `jsonc-parser`                  | Parse JSONC config files                                   |
-| `gpt-tokenizer`                 | OpenAI-style token estimates with chars/4 fallback wrapper |
-| `@mariozechner/pi-coding-agent` | Peer — `ExtensionAPI`, event types                         |
-| `@mariozechner/pi-tui`          | Peer — UI types                                            |
-| `@sinclair/typebox`             | Peer — tool input schemas                                  |
+| Package                           | Role                                                       |
+| --------------------------------- | ---------------------------------------------------------- |
+| `jsonc-parser`                    | Parse JSONC config files                                   |
+| `gpt-tokenizer`                   | OpenAI-style token estimates with chars/4 fallback wrapper |
+| `@earendil-works/pi-coding-agent` | Peer — `ExtensionAPI`, event types                         |
+| `@earendil-works/pi-tui`          | Peer — UI types                                            |
+| `@earendil-works/pi-ai`           | Peer — tool input schemas and model types                  |
 
 ---
 

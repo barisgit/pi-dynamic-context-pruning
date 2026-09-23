@@ -6,7 +6,7 @@ Maintains useful working context in long Pi sessions through authored historical
 
 - **Compress tool** — replaces settled conversation ranges with agent-authored historical summaries; retains the newest records in progressively leaner model-visible tiers while canonical history remains intact
 - **Deduplication** — replaces older results only when the request, visible content, and error status match a retained newer result
-- **Jev shadow review** — optional keep/drop judgments for eligible outputs every configured pruning cadence, recorded for audit without applying removals
+- **Jev review** — optional keep/drop judgments for eligible outputs every configured pruning cadence; shadow mode only records them, explicit live mode applies accepted recoverable drops
 - **Context nudges** — injects compression reminders into the context at configurable thresholds: soft housekeeping notices, strong emergency warnings, and iteration reminders after long tool-call chains
 - **Session persistence via direct restore** — compression blocks and pruning state survive session restarts. Active blocks are persisted with exact coverage/anchor metadata and restored directly; replay is kept only for offline vacuum/verification scripts.
 - **Native pi compaction bridge** — builds a budgeted checkpoint from retained DCP records plus a fresh, tail-informed orientation, with coverage-gated host fallback
@@ -167,7 +167,7 @@ The live `compress` schema requires a nonempty `ranges` array of `{startId, endI
 3. On every `context` event, splices out the raw messages in that range and prefers source-key placement for anchored blocks, with timestamp fallback for legacy blocks
 4. Renders the newest `renderFullBlockCount` blocks with the whole authored summary plus bounded conversation excerpts, aggregate effect counts, and modified-file paths
 5. Renders the next `renderCompactBlockCount` blocks with the whole authored summary only; older blocks emit no model-visible block while their covered raw messages stay hidden
-6. Keeps every block's canonical history and coverage in session state so it survives restarts
+6. Persists active summaries and exact coverage for resume; prior authored records remain in append-only saved history even after their latest state entries are retired/slimmed
 
 When a new compression exactly covers an older exact-coverage block, DCP now supersedes the older block instead of accumulating both summaries. Ambiguous partial overlap still rejects conservatively.
 
@@ -179,7 +179,7 @@ The full deterministic record deliberately does not render individual tool calls
 
 A `summary` is local memory of the selected stretch, written for a continuing agent that cannot see the replaced messages. Preserve user scope, constraints and corrections; settled decisions and rationale; consequential changes, exact technical references and verification evidence; and what remained unresolved at the stretch's close. Distinguish observed facts from hypotheses, child reports from integrated acceptance, and failed/skipped checks from passes. Prefer useful detail and readable prose to minimum length or glued shorthand. Routine progress narration is not a substitute for the outcome; report paths are not a substitute for critical facts.
 
-Include each covered `(bN)` placeholder exactly once in the summary; DCP expands the prior record, so do not duplicate it. Qualify superseded conclusions explicitly. Record direction and next actions as they stood at the stretch's close when needed for continuation; later user corrections take precedence. A fresh current orientation is generated only at compaction, not continuously maintained in every block. Recording a blocker or unknown at the end of an otherwise settled investigation is valid; ongoing work whose raw evidence is still needed should stay uncompressed.
+Existing blocks can be genuinely consolidated: use `b1` through `b3` to replace several settled records, or `b1` as both boundaries to rewrite just that block. Write the distilled replacement directly; old summaries are not automatically copied into it. Preserve still-relevant restrictions, corrections, evidence and unresolved work. An optional `(bN)` explicitly inserts a fully covered active record verbatim, at most once; unknown, inactive, repeated or out-of-range placeholders reject the whole call. Historical placeholder replay and already stored summaries remain compatible. Qualify superseded conclusions explicitly. Record direction and next actions as they stood at the stretch's close when needed for continuation; later user corrections take precedence. A fresh current orientation is generated only at compaction, not continuously maintained in every block. Recording a blocker or unknown at the end of an otherwise settled investigation is valid; ongoing work whose raw evidence is still needed should stay uncompressed.
 
 Ordinary live blocks with selected boundary IDs render `Record m0003–m0016 (ended <endId ISO timestamp>)` above their summary. Native compaction record rendering omits generated Record headers, including headers expanded from nested blocks; generated section tier/version labels are not needed in model-facing text. Boundary IDs, timestamps, and coverage remain structured bookkeeping. The default model-visible tiers are the newest 4 full records, the next 8 whole-summary-only records, and no rendered block for anything older. `renderFullBlockCount` and `renderCompactBlockCount` configure those existing counts; they do not add a new timer, cadence, or retention knob. An omitted old block still hides its covered raw range, and its canonical authored summary and coverage remain intact in state. Age positions are ranked across the canonical block log, including retired entries: committing a checkpoint cannot promote forgotten older blocks back into view.
 
@@ -230,7 +230,7 @@ Unknown tool names are not automatically treated as disposable. Eligible public 
 
 Outer `run`, `subagent`, and `workflow` results are not treated as generic raw logs. Images and unsupported/nontext results remain protected. Unknown derived outputs, private inner results, mixed authored conclusions, and independent error notices must not be flattened away.
 
-With the optional version-aware fo exposed-Ref bridge, DCP applies exact-result deduplication and shared protection/cadence/savings gates, and offers eligible inner outputs to Jev shadow review to identifiable **exposed** inner results. Fo owns canonical Ref enumeration, text projection, and recovery; DCP owns retention selection. No bridge is required for normal Pi. Missing or unsupported bridges leave containers intact rather than guessing from their displayed text.
+With the optional version-aware fo exposed-Ref bridge, DCP applies exact-result deduplication and shared protection/cadence/savings gates, and offers identifiable **exposed** inner results to Jev review. Explicit live mode can remove those results through the same precise projection. Fo owns canonical Ref enumeration, text projection, and recovery; DCP owns retention selection. No bridge is required for normal Pi. Missing or unsupported bridges leave containers intact rather than guessing from their displayed text.
 
 Use the exact ID in a pruning marker:
 
@@ -242,15 +242,15 @@ Recovery reads the saved original on the current branch; it does not rerun a too
 
 ### Prefix-cache considerations
 
-Compression, exact duplicate replacement, block aging and provider-payload filtering can change old context. Existing `strategies.pruneCadenceTurns`, `minPruneItemSavedTokens` and `minPruneBatchSavedTokens` still govern deterministic duplicate removals. Cadence counts DCP logical turns, including autonomous tool batches, not just user chat turns. Actual token savings include recovery-marker/projection cost; a candidate must not be mistaken for a committed removal.
+Compression, exact duplicate replacement, block aging and provider-payload filtering can change old context. Existing `strategies.pruneCadenceTurns` controls review opportunities; `minPruneItemSavedTokens` and `minPruneBatchSavedTokens` govern exact duplicate and accepted live Jev removals. Cadence counts DCP logical turns, including autonomous tool batches, not just user chat turns. Actual token savings include recovery-marker/projection cost; a candidate must not be mistaken for a committed removal.
 
-Jev shadow review changes no model-visible content and creates no pruning-related prefix-cache break. Repeated judgments live in the external audit ledger. A future application policy would still need the existing savings gates; it is not part of shadow mode.
+Jev in shadow mode changes no model-visible content. In explicitly enabled live mode, accepted asynchronous DROP proposals can commit on the next context pass, after rechecking current eligibility and actual projected net savings. This does not require another cadence to pass. A proposal held below the batch gate is not an applied removal; review and application are distinct.
 
 Native checkpoint timing, block-aging counts and red-zone behavior are unchanged by this simplification.
 
-## Optional Jev shadow review
+## Optional Jev review and live pruning
 
-Jev remains disabled by default. Enable observation with `"strategies": { "jev": { "enabled": true } }` and reload the extension. This sends selected public tool output and recent public conversation through your existing Pi OpenRouter credential to `typesafe/jev-1.13`. Do not enable it where that provider must not receive project data.
+Jev remains disabled by default. Enable observation with `"strategies": { "jev": { "enabled": true } }`. To apply accepted drops, explicitly use `"strategies": { "jev": { "enabled": true, "apply": true } }`, then reload. Existing enabled configurations without `apply: true` remain shadow-only. This sends selected public tool output and recent public conversation through your existing Pi OpenRouter credential to `typesafe/jev-1.13`. Do not enable it where that provider must not receive project data.
 
 ### One output per request, each cadence
 
@@ -274,9 +274,9 @@ The Decisions API question has two choices:
 }
 ```
 
-This is illustrative; the client supplies the full instructions. Low-confidence drops, failures and malformed replies retain the output. No `strong_keep`, retention expiry, automatic summarizer or extra model is involved.
+This is illustrative; the client supplies the full instructions. A DROP is accepted only when Jev chooses `drop` and `probabilities.drop >= 0.60`. This is an experimental policy threshold, not calibrated accuracy. The separate provider `confidence` is retained as telemetry, not used as a probability gate. Lower probabilities, failures and malformed replies retain the output. No `strong_keep`, retention expiry or automatic summarizer is involved.
 
-**Still shadow-only:** even a confident `drop` is merely recorded. Jev never mutates `prunedToolIds`, canonical envelopes or model-visible text. Exact-result deduplication remains active; retired age-based rules no longer automatically clear or clip unrelated results. Network/ledger failures do not block context rendering.
+**Shadow:** accepted drops are recorded only. **Live:** freshly accepted proposals are revalidated against the current session, candidate identity, exact output and protections, then fed through the existing pruning commit and projection path. Ordinary outputs and exposed fo Refs receive exact-recovery markers; canonical originals are never changed. Error outputs remain protected from live Jev rather than weakening existing error-retention safeguards. Exact dedup stays independent. Network work is nonblocking; failures do not authorize removal.
 
 ### Private audit and resume
 
@@ -284,9 +284,9 @@ This is illustrative; the client supplies the full instructions. Low-confidence 
 ~/.pi/agent/dcp/jev/<session-id>.jsonl
 ```
 
-A custom Pi agent directory relocates this subtree. It stays out of session folders and model-visible messages. Records identify the candidate and content, cadence, exact sent conversation/instructions, model/prompt identity, raw and confidence-gated judgment, usage/cost/latency when available, and proposal/retention/failure/skip outcomes. Large original outputs remain in canonical session history rather than being duplicated into the ledger. Transport credentials and raw transport failures are not audit data; recorded public conversation is not credential-screened and can still be sensitive, so files are private.
+A custom Pi agent directory relocates this subtree. It stays out of session folders and model-visible messages. Records identify the candidate and content, cadence, exact sent conversation/instructions, model/prompt identity, raw and probability-gated judgment, usage/cost/latency when available, and proposal/retention/failure/skip outcomes. Large original outputs remain in canonical session history rather than being duplicated into the ledger. Transport credentials and raw transport failures are not audit data; recorded public conversation is not credential-screened and can still be sensitive, so files are private.
 
-The ledger is an audit and same-cadence retry guard—not permanent `keep` memory or demonstrated pruning safety. Historical audit rows remain readable, but do not prevent reevaluation in a later cadence.
+The ledger is an audit and same-cadence retry guard—not permanent `keep` memory or demonstrated pruning safety. Probability-gated records use policy `keep-drop-pdrop-v2` to distinguish older confidence-gated evidence. Application has a separate `applied` audit outcome; a proposal alone is not savings. Historical rows remain readable, but never become prune commands. Pending unapplied judgments are not restored from the ledger; committed pruning selections resume through the existing session state. Later cadences can reevaluate retained outputs.
 
 ## Session persistence (direct restore)
 
@@ -340,6 +340,8 @@ bun run ci           # typecheck + lint + tests
 ```
 
 Pi loads the extension TypeScript directly from `./src/index.ts` — there is no build step for normal development. For normal installs, that extension code runs inside pi's **Node.js** process even though this repo uses **Bun** for local test/dev commands.
+
+The dev Pi SDK (`@earendil-works/pi-ai`, `pi-agent-core`, `pi-coding-agent`, and `pi-tui`) is pinned to **0.87.1** so local checks exercise the target APIs. Pi supplies the imported packages at runtime through broad peers; 0.87.1 is the verified host version (older hosts without `ModelRuntime`/registry completion are not supported by this migration).
 
 ### Source layout
 

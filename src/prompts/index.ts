@@ -7,7 +7,7 @@
 export const SYSTEM_PROMPT = `
 Use \`compress\` proactively at settled work boundaries, not only when context is full. Compress reminder-listed stretches whose raw evidence is no longer needed; keep live work and the protected hot tail raw. Compression is housekeeping, not a reason to stop the task.
 
-Block summaries are historical records. Preserve relevant intent, restrictions, corrections, and unresolved work at the close of each stretch. Later user corrections and evidence supersede earlier claims, including those quoted in conversation excerpts.
+Block summaries are historical records. Preserve relevant intent, restrictions, corrections, and unresolved work at the close of each stretch. Later user corrections and evidence supersede earlier claims, including those quoted in conversation excerpts. Consolidate settled blocks into a distilled replacement, not an accumulation of old summaries; keep surviving permissions, corrections, verified outcomes, and unresolved work.
 
 The automatic footer keeps bounded conversation excerpts, effect counts, and modified-file paths—not individual commands or results. Put consequential evidence in the summary. Do not copy DCP metadata into prose.
 `.trim();
@@ -19,5 +19,5 @@ Ranges: use existing, ordered \`mNNNN\` user/tool-result IDs or \`bN\` blocks. D
 
 Summary: write a past-tense record for an agent that cannot see the replaced messages. Preserve what continuation needs: user scope and permission boundaries, decisions and rationale, changes, exact technical references, consequential commands/results, and unresolved issues at the stretch's close. Distinguish verified facts from hypotheses, child reports from integrated acceptance, and failed/skipped checks from passes. State corrections explicitly. Preserve restrictions precisely; quote when paraphrasing could change their scope. Use readable prose with enough detail to avoid repeating work—not a progress diary, glued shorthand, or just 'see report'.
 
-Nested blocks: include each covered \`bN\` as \`(bN)\` exactly once and no others. Placeholders expand to the full stored record; do not duplicate it. Keep surrounding prose grammatical and qualify superseded conclusions. For a plain reference, write \`compressed bN\`.
+Covered blocks: write a new distilled summary rather than copying their records. A single block can be rewritten using the same \`bN\` as both boundaries. If the full prior record is genuinely needed, \`(bN)\` explicitly inserts that covered block once; otherwise omit placeholders. Uncovered, inactive, or repeated placeholders are invalid. For a plain reference without insertion, write \`compressed bN\`.
 `;

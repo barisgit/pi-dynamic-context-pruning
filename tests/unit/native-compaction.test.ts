@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
 import {
-  buildDcpFallbackCustomInstructions,
   buildDcpNativeCompactionResult,
   computeDcpHiddenCoverage,
   hasPendingDcpAutoNativeCompaction,
@@ -944,35 +943,6 @@ describe("DCP native pi compaction bridge", () => {
     // Exact keys minted in another ordinal space cannot certify coverage.
     // Without the lower bound this would have counted ~13 lineage items at
     // ratio ~0.23, below the default minHiddenCoverageRatio (pi summarizer).
-  });
-
-  test("buildDcpFallbackCustomInstructions emits qualified historical block sections", () => {
-    const messages: any[] = [
-      { role: "user", content: [{ type: "text", text: "x" }], timestamp: 1000 },
-    ];
-    const artifacts = buildCompressionArtifactsForRange(messages, makeState(), 1000, 1000);
-    const block: CompressionBlock = {
-      id: 9,
-      topic: "Seed slice",
-      summary: "Important seed summary text.",
-      startTimestamp: 1000,
-      endTimestamp: 1000,
-      anchorTimestamp: 1001,
-      startSourceKey: artifacts.metadata.coveredSourceKeys[0],
-      endSourceKey: artifacts.metadata.coveredSourceKeys.at(-1),
-      anchorSourceKey: artifacts.metadata.coveredSourceKeys[0],
-      active: true,
-      summaryTokenEstimate: 10,
-      savedTokenEstimate: 20,
-      createdAt: 40,
-      metadata: artifacts.metadata,
-    };
-    const state = makeState([block]);
-    const text = buildDcpFallbackCustomInstructions(state);
-    expect(text).toBeDefined();
-    expect(text).toContain("DCP records of prior work");
-    expect(text).toContain('<block id="b9" topic="Seed slice">'); // customInstructions still uses block id for LLM seed clarity
-    expect(text).toContain("Important seed summary text.");
   });
 
   test("retains newest four full and next eight compact through the shared tier contract", () => {

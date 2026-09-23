@@ -16,14 +16,14 @@ export { fs, os, path };
 export {
   buildCompressionArtifactsForRange,
   buildCompressionPlanningHints,
-  registerCompressTool,
   renderCompressionPlanningHints,
   resolveAnchorSourceKey,
   resolveAnchorTimestamp,
   resolveProtectedTailStartTimestamp,
   resolveSupersededBlockIdsForRange,
   validateCompressionRangeBoundaryIds,
-} from "../../src/application/compress-tool/index.js";
+} from "../../src/domain/compression/tooling.js";
+export { registerCompressTool } from "../../src/application/compress-tool/registration.js";
 export { buildSessionDebugPayload } from "../../src/infrastructure/debug-log.js";
 export {
   getNudgeDecisionReason,

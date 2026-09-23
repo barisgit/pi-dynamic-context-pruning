@@ -1,13 +1,14 @@
 import { projectCheckpointMessage } from "./checkpoint-content.js";
 import { randomUUID } from "node:crypto";
 import { renderHeading } from "../domain/compression/heading.js";
-import { complete, type ImageContent, type TextContent } from "@mariozechner/pi-ai";
+import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
 import {
   buildSessionContext,
   convertToLlm,
   type ExtensionContext,
+  type ModelRegistry,
   type SessionBeforeCompactEvent,
-} from "@mariozechner/pi-coding-agent";
+} from "@earendil-works/pi-coding-agent";
 import { applyPruning } from "../domain/pruning/index.js";
 import type { DcpState } from "../types/state.js";
 import type { DcpConfig } from "../types/config.js";
@@ -22,17 +23,12 @@ export type CheckpointHandoffGenerator = (
 
 /** Dedicated working-model completion; never enters the agent loop or mutates live state. */
 export function createCheckpointHandoffGenerator(
-  completion?: typeof complete
+  completion?: ModelRegistry["complete"]
 ): CheckpointHandoffGenerator {
   return async (event, ctx, state, config) => {
     if (!ctx.model) throw new Error("No working model available for checkpoint orientation.");
-    // Current Pi routes completion through its registry (custom providers/OAuth included).
-    // Retain the documented legacy pi-ai path for older hosts without this method.
-    const registry = ctx.modelRegistry as typeof ctx.modelRegistry & { complete?: typeof complete };
-    const invoke = completion ?? registry.complete?.bind(registry) ?? complete;
-    const auth =
-      !completion && registry.complete ? undefined : await registry.getApiKeyAndHeaders(ctx.model);
-    if (auth && !auth.ok) throw new Error(auth.error);
+    // Registry completion retains the working provider and its request-time auth.
+    const invoke = completion ?? ctx.modelRegistry.complete.bind(ctx.modelRegistry);
     // Rebuild NOW, not from the last context event: the latest assistant/tool tail
     // may have arrived since that event. Isolate all materialization bookkeeping.
     const current = buildSessionContext(event.branchEntries).messages;
@@ -71,7 +67,6 @@ export function createCheckpointHandoffGenerator(
         messages: [{ role: "user", content, timestamp: Date.now() }],
       },
       {
-        ...(auth?.ok ? { apiKey: auth.apiKey, headers: auth.headers } : {}),
         signal: event.signal,
         maxTokens:
           config.nativeCompaction.maxSummaryTokens > 0

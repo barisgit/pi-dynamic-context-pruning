@@ -1,4 +1,4 @@
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { DcpConfig } from "../types/config.js";
 import type { CompressionBlock, DcpState } from "../types/state.js";
 import { createState, resetState } from "../state.js";

@@ -2,7 +2,7 @@
 
 ## Responsibility
 
-The `domain/` layer contains pure business logic for Dynamic Context Pruning (DCP). These modules have **no imports** from `@mariozechner/pi-coding-agent`, infrastructure (config loading, debug logging, persistence), or application handlers. They receive plain data (messages, state, config) and return plain data.
+The `domain/` layer contains pure business logic for Dynamic Context Pruning (DCP). These modules have **no imports** from `@earendil-works/pi-coding-agent`, infrastructure (config loading, debug logging, persistence), or application handlers. They receive plain data (messages, state, config) and return plain data.
 
 This isolation ensures the core pruning/compression semantics are testable, deterministic, and portable across runtime environments.
 
@@ -65,8 +65,7 @@ Consumed by: `application/compress-tool/registration.ts`, `application/context-h
 
 - `applyCompressionBlocks` — splice in synthetic block messages, compute net token savings
 - `repairOrphanedToolPairs` — safety net: remove orphaned tool results, strip orphaned tool calls
-- `applyDeduplication` — bucket-gated tombstoning of duplicate tool outputs
-- `applyErrorPurging` — bucket-gated tombstoning of old error outputs
+- `commitHeuristicPruning` — shared net-savings gates for exact duplicate and accepted live Jev removals; no age-only error purge
 - `injectMessageIds` — assign stable `mXXXX` refs to non-assistant messages only; assistant role is skipped entirely (no allocation, no snapshot, no content tag) to preserve last-turn prefix cache
 - `getNudgeType` — nudge firing logic (debounced by logical turns)
 
@@ -170,7 +169,7 @@ Roles `compaction`, `branch_summary`, `custom_message` are transparent in planni
 application/ (orchestration)
   └─> domain/pruning      applyPruning()          — main runtime path
   └─> domain/compression  buildCompressionArtifacts*() — compress tool
-  └─> domain/nudge        getNudgeType()          — nudge decision
+  └─> domain/pruning        getNudgeType()          — nudge decision
   └─> domain/provider     filterProviderPayloadInput() — hidden artifact filtering
   └─> domain/replay       replayDcpState()        — offline verification/vacuum only
 

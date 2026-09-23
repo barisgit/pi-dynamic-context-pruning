@@ -21,8 +21,6 @@ Thin wrapper around `src/domain/compression/tooling.js`. Exports everything re-e
 
 - **`index.ts`** — re-exports `artifacts`, `registration`, and `validation`.
 - **`registration.ts`** — calls `pi.registerTool` for the `compress` tool. Full `execute` callback: validates boundaries via domain tooling, resolves timestamps/source-keys, enforces protected-tail (with emergency override), builds `CompressionBlock` objects with coverage metadata, deactivates superseded blocks (including earlier blocks planned in the same multi-range call), sets `pendingSave`, updates compress/nudge watermarks, estimates creation savings, runs `decideNativeCompactionAutoTrigger()` (passthrough roles excluded from LLM message counts), and returns post-compress planning hints in the tool response.
-- **`validation.ts`** — re-exports from `domain/compression/tooling.js`. Contains `validateCompressionRangeBoundaryIds` and related helpers.
-- **`artifacts.ts`** — re-exports from `domain/compression/tooling.js`. Contains `buildCompressionArtifactsForRange`, `buildCompressionPlanningHints`, `expandBlockPlaceholders`, `renderCompressionPlanningHints`.
 
 ### `context-handler.ts`
 
@@ -172,12 +170,12 @@ Native compaction auto-trigger queues a request via `queueDcpAutoNativeCompactio
 | `src/application/tool-recording.ts`             | `src/state.ts`                          | calls     | `createInputFingerprint`                                                                 |
 | `src/application/tool-recording.ts`             | `src/domain/tokens/estimate.ts`         | calls     | `estimateTokens`                                                                         |
 | `src/application/status.ts`                     | `src/types/state.ts`                    | imports   | `DcpState` type                                                                          |
-| `src/application/context-handler.ts`            | `@mariozechner/pi-coding-agent`         | pi API    | registers `context` hook, emits `REMINDER_UPSERT_EVENT`                                  |
-| `src/application/provider-handler.ts`           | `@mariozechner/pi-coding-agent`         | pi API    | registers `before_provider_request` hook                                                 |
-| `src/application/session-handler.ts`            | `@mariozechner/pi-coding-agent`         | pi API    | registers `session_start/tree/shutdown/agent_end` hooks                                  |
-| `src/application/system-prompt-handler.ts`      | `@mariozechner/pi-coding-agent`         | pi API    | registers `before_agent_start` hook                                                      |
-| `src/application/native-compaction.ts`          | `@mariozechner/pi-coding-agent`         | pi API    | registers `session_before_compact/session_compact/turn_end` hooks                        |
+| `src/application/context-handler.ts`            | `@earendil-works/pi-coding-agent`       | pi API    | registers `context` hook, emits `REMINDER_UPSERT_EVENT`                                  |
+| `src/application/provider-handler.ts`           | `@earendil-works/pi-coding-agent`       | pi API    | registers `before_provider_request` hook                                                 |
+| `src/application/session-handler.ts`            | `@earendil-works/pi-coding-agent`       | pi API    | registers `session_start/tree/shutdown/agent_end` hooks                                  |
+| `src/application/system-prompt-handler.ts`      | `@earendil-works/pi-coding-agent`       | pi API    | registers `before_agent_start` hook                                                      |
+| `src/application/native-compaction.ts`          | `@earendil-works/pi-coding-agent`       | pi API    | registers `session_before_compact/session_compact/turn_end` hooks                        |
 | `src/application/native-compaction.ts`          | `ExtensionContext`                      | pi API    | calls `ctx.compact()`                                                                    |
-| `src/application/compress-tool/registration.ts` | `@mariozechner/pi-coding-agent`         | pi API    | calls `pi.registerTool()`                                                                |
-| `src/application/commands/dcp.ts`               | `@mariozechner/pi-coding-agent`         | pi API    | calls `pi.registerCommand()`                                                             |
-| `src/application/tool-recording.ts`             | `@mariozechner/pi-coding-agent`         | pi API    | registers `tool_call/tool_result` hooks                                                  |
+| `src/application/compress-tool/registration.ts` | `@earendil-works/pi-coding-agent`       | pi API    | calls `pi.registerTool()`                                                                |
+| `src/application/commands/dcp.ts`               | `@earendil-works/pi-coding-agent`       | pi API    | calls `pi.registerCommand()`                                                             |
+| `src/application/tool-recording.ts`             | `@earendil-works/pi-coding-agent`       | pi API    | registers `tool_call/tool_result` hooks                                                  |

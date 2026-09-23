@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { estimateTokens } from "../../src/domain/tokens/estimate.js";
-import { JevShadowScheduler } from "../../src/application/jev-shadow.js";
+import { JevScheduler } from "../../src/application/jev-review.js";
 import {
-  collectJevShadowCandidates,
+  collectJevCandidates,
   snapshotJevTaskContext,
 } from "../../src/domain/pruning/jev-candidates.js";
 import { makeConfig, makeState } from "../helpers/dcp-test-utils.js";
@@ -50,7 +50,7 @@ const response = {
   },
 };
 
-describe("Jev shadow", () => {
+describe("Jev review", () => {
   test("KEEP is reevaluated next cadence, not on repeated render or resume", async () => {
     const f = fixture();
     const records: JevLedgerRecord[] = [];
@@ -74,12 +74,12 @@ describe("Jev shadow", () => {
         };
       },
     };
-    const scheduler = new JevShadowScheduler(deps);
+    const scheduler = new JevScheduler(deps);
     scheduler.observe(f.messages, f.state, f.config, "s");
     await flush();
     expect(records[0]).toMatchObject({ decision: "keep", outcome: "retained", bucket: 14 });
     scheduler.observe(f.messages, f.state, f.config, "s");
-    new JevShadowScheduler(deps).observe(f.messages, f.state, f.config, "s");
+    new JevScheduler(deps).observe(f.messages, f.state, f.config, "s");
     await flush();
     expect(calls).toBe(1);
     f.state.currentTurn = 21;
@@ -94,7 +94,7 @@ describe("Jev shadow", () => {
     const records: JevLedgerRecord[] = [];
     const sent: string[] = [];
     let resolve!: (value: unknown) => void;
-    const scheduler = new JevShadowScheduler({
+    const scheduler = new JevScheduler({
       read: async () => [],
       append: async (_d, _s, row) => {
         records.push(row);
@@ -157,7 +157,7 @@ describe("Jev shadow", () => {
       );
       let sent = "";
       let instructions = "";
-      new JevShadowScheduler({
+      new JevScheduler({
         read: async () => [],
         append: async () => {},
         request: async (request) => {
@@ -190,7 +190,7 @@ describe("Jev shadow", () => {
       record.isError = errorSource === "record";
       f.messages[1].isError = errorSource === "message";
       let sent: unknown;
-      new JevShadowScheduler({
+      new JevScheduler({
         read: async () => [],
         append: async () => {},
         request: async (request) => {
@@ -223,7 +223,7 @@ describe("Jev shadow", () => {
         return response;
       },
     };
-    const scheduler = new JevShadowScheduler(deps);
+    const scheduler = new JevScheduler(deps);
     scheduler.observe(f.messages, f.state, f.config, "s");
     await flush();
     const legacy: JevLedgerRecord = { ...records[0], taskContext: "LEGACY_CONTEXT" };
@@ -231,7 +231,7 @@ describe("Jev shadow", () => {
     delete legacy.bucket;
     delete legacy.policy;
     records.splice(0, records.length, legacy);
-    new JevShadowScheduler(deps).observe(f.messages, f.state, f.config, "s");
+    new JevScheduler(deps).observe(f.messages, f.state, f.config, "s");
     await flush();
     expect(calls).toBe(2);
     expect(records[1].taskContext).not.toContain("LEGACY_CONTEXT");
@@ -254,7 +254,7 @@ describe("Jev shadow", () => {
     const records: JevLedgerRecord[] = [];
     let active = 0;
     let peak = 0;
-    const scheduler = new JevShadowScheduler({
+    const scheduler = new JevScheduler({
       read: async () => [],
       append: async (_d, _s, row) => {
         records.push(row);
@@ -306,18 +306,18 @@ describe("Jev shadow", () => {
       .repeat(600)
       .slice(0, 33548);
     f.messages[1].content = artifact;
-    new JevShadowScheduler(deps).observe(f.messages, f.state, f.config, "large");
+    new JevScheduler(deps).observe(f.messages, f.state, f.config, "large");
     await flush();
     expect(calls).toBe(1);
     expect(sentArtifact).toBe(artifact);
     f.messages[1].content = "x".repeat(64001);
-    new JevShadowScheduler(deps).observe(f.messages, f.state, f.config, "byte-overflow");
+    new JevScheduler(deps).observe(f.messages, f.state, f.config, "byte-overflow");
     await flush();
     expect(calls).toBe(2);
     expect(sentArtifact).toBe("x".repeat(64001));
     // Under the former byte cap, but dense tokens plus full request metadata exceed the budget.
     f.messages[1].content = "x ".repeat(22000);
-    new JevShadowScheduler(deps).observe(f.messages, f.state, f.config, "token-overflow");
+    new JevScheduler(deps).observe(f.messages, f.state, f.config, "token-overflow");
     await flush();
     expect(calls).toBe(2);
     expect(reads).toBe(3);
@@ -370,32 +370,32 @@ describe("Jev shadow", () => {
       },
       recover: () => undefined,
     };
-    expect(collectJevShadowCandidates(f.messages, f.state, f.config)).toHaveLength(0);
-    expect(
-      collectJevShadowCandidates(f.messages, f.state, f.config, bridge).map((c) => c.id)
-    ).toEqual([candidate.compositeId]);
-    expect(collectJevShadowCandidates(f.messages, f.state, f.config, bridge)[0].ageTurns).toBe(19);
+    expect(collectJevCandidates(f.messages, f.state, f.config)).toHaveLength(0);
+    expect(collectJevCandidates(f.messages, f.state, f.config, bridge).map((c) => c.id)).toEqual([
+      candidate.compositeId,
+    ]);
+    expect(collectJevCandidates(f.messages, f.state, f.config, bridge)[0].ageTurns).toBe(19);
     const outerText = f.messages[1].content;
     f.messages[1].content = [
       { type: "text", text: "public envelope" },
       { type: "image", data: "image" },
     ];
-    expect(collectJevShadowCandidates(f.messages, f.state, f.config, bridge)).toHaveLength(0);
+    expect(collectJevCandidates(f.messages, f.state, f.config, bridge)).toHaveLength(0);
     f.messages[1].content = outerText;
     candidate.exposureCount = 0;
-    expect(collectJevShadowCandidates(f.messages, f.state, f.config, bridge)).toHaveLength(0);
+    expect(collectJevCandidates(f.messages, f.state, f.config, bridge)).toHaveLength(0);
     candidate.exposureCount = 1;
     candidate.isError = true;
-    expect(collectJevShadowCandidates(f.messages, f.state, f.config, bridge)[0].isError).toBe(true);
+    expect(collectJevCandidates(f.messages, f.state, f.config, bridge)[0].isError).toBe(true);
     candidate.isError = false;
     f.state.prunedToolIds.add(candidate.compositeId);
-    expect(collectJevShadowCandidates(f.messages, f.state, f.config, bridge)).toHaveLength(0);
+    expect(collectJevCandidates(f.messages, f.state, f.config, bridge)).toHaveLength(0);
   });
   test("malformed results retain and retry next cadence; failed ledger writes are isolated", async () => {
     const f = fixture();
     const records: JevLedgerRecord[] = [];
     let calls = 0;
-    const scheduler = new JevShadowScheduler({
+    const scheduler = new JevScheduler({
       read: async () => [],
       append: async (_d, _s, r) => {
         records.push(r);
@@ -412,7 +412,7 @@ describe("Jev shadow", () => {
     scheduler.observe(f.messages, f.state, f.config, "s");
     await flush();
     expect(calls).toBe(2);
-    const broken = new JevShadowScheduler({
+    const broken = new JevScheduler({
       read: async () => [],
       append: async () => {
         throw new Error("disk failure");
@@ -428,7 +428,7 @@ describe("Jev shadow", () => {
     let calls = 0;
     let resolve!: (r: unknown) => void;
     const records: JevLedgerRecord[] = [];
-    const scheduler = new JevShadowScheduler({
+    const scheduler = new JevScheduler({
       read: async () => {
         reads++;
         return [];
@@ -479,18 +479,18 @@ describe("Jev shadow", () => {
         return response;
       },
     };
-    new JevShadowScheduler(deps).observe(f.messages, f.state, f.config, "s");
+    new JevScheduler(deps).observe(f.messages, f.state, f.config, "s");
     await flush();
     expect(calls).toBe(1);
-    new JevShadowScheduler(deps).observe(f.messages, f.state, f.config, "s");
+    new JevScheduler(deps).observe(f.messages, f.state, f.config, "s");
     await flush();
     expect(calls).toBe(1);
     f.messages[0].content = "New instruction";
-    new JevShadowScheduler(deps).observe(f.messages, f.state, f.config, "s");
+    new JevScheduler(deps).observe(f.messages, f.state, f.config, "s");
     await flush();
     expect(calls).toBe(1);
     f.messages[1].content = "Changed output ".repeat(100);
-    new JevShadowScheduler(deps).observe(f.messages, f.state, f.config, "s");
+    new JevScheduler(deps).observe(f.messages, f.state, f.config, "s");
     await flush();
     expect(calls).toBe(2);
   });
@@ -498,7 +498,7 @@ describe("Jev shadow", () => {
     const f = fixture();
     let resolve!: (r: unknown) => void;
     let writes = 0;
-    const scheduler = new JevShadowScheduler({
+    const scheduler = new JevScheduler({
       read: async () => [],
       append: async () => {
         writes++;
@@ -514,7 +514,7 @@ describe("Jev shadow", () => {
     resolve(response);
     await flush();
     expect(writes).toBe(0);
-    const broken = new JevShadowScheduler({
+    const broken = new JevScheduler({
       read: async () => {
         throw new Error("file failure");
       },
@@ -528,7 +528,7 @@ describe("Jev shadow", () => {
   test("transport credentials and raw errors never enter the audit ledger", async () => {
     const f = fixture();
     const records: JevLedgerRecord[] = [];
-    new JevShadowScheduler({
+    new JevScheduler({
       read: async () => [],
       append: async (_d, _s, row) => {
         records.push(row);
@@ -552,7 +552,7 @@ describe("Jev shadow", () => {
     let calls = 0;
     let resolve!: (r: unknown) => void;
     const records: JevLedgerRecord[] = [];
-    const scheduler = new JevShadowScheduler({
+    const scheduler = new JevScheduler({
       timeoutMs: 1,
       read: async () => [],
       append: async (_d, _s, r) => {
@@ -577,7 +577,7 @@ describe("Jev shadow", () => {
   });
   test("age/hot-tail/size/protected tools/files and nontext output fail closed", () => {
     const f = fixture();
-    const collect = () => collectJevShadowCandidates(f.messages, f.state, f.config);
+    const collect = () => collectJevCandidates(f.messages, f.state, f.config);
     expect(collect()).toHaveLength(1);
     f.config.protectedFilePatterns = ["*.ts"];
     expect(collect()).toHaveLength(0);
@@ -610,7 +610,7 @@ describe("Jev shadow", () => {
       if (location === "tool-name") f.state.toolCalls.get("a")!.toolName = ".env-example";
       const records: JevLedgerRecord[] = [];
       const requests: unknown[] = [];
-      new JevShadowScheduler({
+      new JevScheduler({
         read: async () => [],
         append: async (_d, _s, row) => {
           records.push(row);
@@ -639,7 +639,7 @@ describe("Jev shadow", () => {
     if (location === "protected") f.config.strategies.candidates.protectedTools = ["read"];
     const records: JevLedgerRecord[] = [];
     let calls = 0;
-    new JevShadowScheduler({
+    new JevScheduler({
       read: async () => [],
       append: async (_d, _s, row) => {
         records.push(row);
@@ -663,7 +663,7 @@ describe("Jev shadow", () => {
     const pending: Array<(value: unknown) => void> = [];
     const records: JevLedgerRecord[] = [];
     let calls = 0;
-    const scheduler = new JevShadowScheduler({
+    const scheduler = new JevScheduler({
       read: async () => [],
       append: async (_d, _s, row) => {
         records.push(row);
@@ -701,7 +701,7 @@ describe("Jev shadow", () => {
     let release!: (rows: JevLedgerRecord[]) => void;
     const rows: JevLedgerRecord[] = [];
     const ages: Array<number | null> = [];
-    const scheduler = new JevShadowScheduler({
+    const scheduler = new JevScheduler({
       read: () =>
         new Promise((resolve) => {
           release = resolve;

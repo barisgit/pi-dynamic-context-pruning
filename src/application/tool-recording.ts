@@ -1,4 +1,4 @@
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { DcpState } from "../types/state.js";
 import type { DcpMessage } from "../types/message.js";
 import { createInputFingerprint } from "../state.js";

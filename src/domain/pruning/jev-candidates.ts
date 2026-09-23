@@ -51,7 +51,7 @@ export function snapshotJevTaskContext(messages: DcpMessage[]): string {
   );
 }
 
-export interface JevShadowCandidate {
+export interface JevCandidate {
   id: string;
   artifact: string;
   toolName: string;
@@ -63,21 +63,21 @@ export interface JevShadowCandidate {
 }
 
 /** Pure, bounded remaining-output selection after deterministic rendering. No projections or mutations. */
-export function collectJevShadowCandidates(
+export function collectJevCandidates(
   messages: DcpMessage[],
   state: DcpState,
   config: DcpConfig,
   bridge?: FoRefBridgeV1 | null,
   onSkip?: (reason: string) => void
-): JevShadowCandidate[] {
-  const results: JevShadowCandidate[] = [];
+): JevCandidate[] {
+  const results: JevCandidate[] = [];
   const bucket =
     Math.floor(state.currentTurn / Math.max(1, config.strategies.pruneCadenceTurns)) *
     Math.max(1, config.strategies.pruneCadenceTurns);
   const add = (
     message: DcpMessage,
     record: ToolRecord | undefined,
-    source: JevShadowCandidate["source"]
+    source: JevCandidate["source"]
   ) => {
     if (!record) return onSkip?.("missing-record");
     if (state.prunedToolIds.has(record.toolCallId)) return onSkip?.("already-pruned");

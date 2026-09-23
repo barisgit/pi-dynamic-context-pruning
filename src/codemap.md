@@ -20,7 +20,7 @@ The extension lives entirely in `src/` as TypeScript/ESM — pi loads `.ts` file
 | **Types**          | `src/types/`          | Shared contracts (state, config, message, API)                  |
 | **Prompts**        | `src/prompts/`        | System-prompt additions, tool descriptions, nudge text          |
 
-Domain modules must not import from `@mariozechner/pi-coding-agent`, filesystem utilities, config loading, or application handlers. Application modules adapt pi/provider payloads and delegate pure decisions to domain modules.
+Domain modules must not import from `@earendil-works/pi-coding-agent`, filesystem utilities, config loading, or application handlers. Application modules adapt pi/provider payloads and delegate pure decisions to domain modules.
 
 ### State model
 
@@ -122,8 +122,6 @@ src/
 │   │   ├── index.ts             # Re-exports
 │   │   ├── registration.ts      # registerCompressTool — execute, post-compress hints,
 │   │   │                          passthrough-aware native-compaction auto-trigger
-│   │   ├── validation.ts       # resolveAnchorSourceKey, resolveIdToTimestamp, etc.
-│   │   └── artifacts.ts         # buildCompressionPlanningHints, expandBlockPlaceholders,
 │   │                              buildCompressionArtifactsForRange, supersession helpers
 │   ├── commands/
 │   │   └── dcp.ts               # registerCommands — /dcp help|context|stats|compact
@@ -170,17 +168,17 @@ src/
 
 ### Core domain
 
-| File                                    | Role                                                                                                                                                                                                                                                  |
-| --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `src/domain/pruning/index.ts`           | `applyPruning()` — the main transform. Calls `applyCompressionBlocks`, `repairOrphanedToolPairs`, `applyDeduplication`, `applyErrorPurging`, `applyToolOutputPruning`, `injectMessageIds`. Also exports `getNudgeType()`, `exceedsMaxContextLimit()`. |
-| `src/domain/compression/range.ts`       | `expandCompressionIndexRange()`, `resolveCompressionRangeIndices()`. Atomic assistant+tool-result expansion rules.                                                                                                                                    |
-| `src/domain/compression/materialize.ts` | `renderCompressedBlockText()`, `renderCompressedBlockMessage()` shared compressed-block renderer.                                                                                                                                                     |
-| `src/domain/compression/tooling.ts`     | Planning hints with passthrough-span absorption; boundary validation for refs inside compressed blocks; `resolveSupersededBlockIdsForRange()`, `buildCompressionArtifactsForRange()`, protected-tail helpers.                                         |
-| `src/domain/transcript/index.ts`        | `buildTranscriptSnapshot()` — source items + tool-exchange spans. `buildLiveOwnerKeys()`, `countLogicalTurns()`, `resolveLogicalTurnTailStartTimestamp()`. `buildSourceItemKey()`, `buildSourceOwnerKey()`, `buildBlockOwnerKey()`.                   |
-| `src/domain/refs/index.ts`              | `parseVisibleRef()`, `formatMessageRef()`, `formatBlockRef()`, `allocateMessageRef()`. `MessageAliasState`, `MessageRefSnapshotEntry`.                                                                                                                |
-| `src/domain/provider/payload-filter.ts` | `filterProviderPayloadInput()` — canonical owner-key-based stale artifact suppression in provider payload. Minifies represented compress success artifacts.                                                                                           |
-| `src/domain/replay/index.ts`            | `replayDcpState()` — offline-only reconstruction for replay-equivalence/vacuum tooling and replay tests. Walks entries, rebuilds compress blocks, deactivates compacted blocks, finalizes via `applyPruning()`.                                       |
-| `src/domain/tokens/estimate.ts`         | `estimateTokens()`, `estimateMessageTokens()` via gpt-tokenizer with chars/4 fallback.                                                                                                                                                                |
+| File                                    | Role                                                                                                                                                                                                                                 |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `src/domain/pruning/index.ts`           | `applyPruning()` — the main transform. Calls `applyCompressionBlocks`, `repairOrphanedToolPairs`, `commitHeuristicPruning`, `applyToolOutputPruning`, `injectMessageIds`. Also exports `getNudgeType()`, `exceedsMaxContextLimit()`. |
+| `src/domain/compression/range.ts`       | `expandCompressionIndexRange()`, `resolveCompressionRangeIndices()`. Atomic assistant+tool-result expansion rules.                                                                                                                   |
+| `src/domain/compression/materialize.ts` | `renderCompressedBlockText()`, `renderCompressedBlockMessage()` shared compressed-block renderer.                                                                                                                                    |
+| `src/domain/compression/tooling.ts`     | Planning hints with passthrough-span absorption; boundary validation for refs inside compressed blocks; `resolveSupersededBlockIdsForRange()`, `buildCompressionArtifactsForRange()`, protected-tail helpers.                        |
+| `src/domain/transcript/index.ts`        | `buildTranscriptSnapshot()` — source items + tool-exchange spans. `buildLiveOwnerKeys()`, `countLogicalTurns()`, `resolveLogicalTurnTailStartTimestamp()`. `buildSourceItemKey()`, `buildSourceOwnerKey()`, `buildBlockOwnerKey()`.  |
+| `src/domain/refs/index.ts`              | `parseVisibleRef()`, `formatMessageRef()`, `formatBlockRef()`, `allocateMessageRef()`. `MessageAliasState`, `MessageRefSnapshotEntry`.                                                                                               |
+| `src/domain/provider/payload-filter.ts` | `filterProviderPayloadInput()` — canonical owner-key-based stale artifact suppression in provider payload. Minifies represented compress success artifacts.                                                                          |
+| `src/domain/replay/index.ts`            | `replayDcpState()` — offline-only reconstruction for replay-equivalence/vacuum tooling and replay tests. Walks entries, rebuilds compress blocks, deactivates compacted blocks, finalizes via `applyPruning()`.                      |
+| `src/domain/tokens/estimate.ts`         | `estimateTokens()`, `estimateMessageTokens()` via gpt-tokenizer with chars/4 fallback.                                                                                                                                               |
 
 ### Application orchestration
 
@@ -258,8 +256,7 @@ session event messages
           → countLogicalTurns → state.currentTurn
           → applyCompressionBlocks (splice ranges, insert bN messages)
           → repairOrphanedToolPairs (safety net)
-          → applyDeduplication (add to state.prunedToolIds)
-          → applyErrorPurging (add to state.prunedToolIds)
+          → commitHeuristicPruning (gate exact dedup and accepted live Jev removals)
           → applyToolOutputPruning (replace content of pruned tools)
           → injectMessageIds (dcp-id/dcp-owner tags, update snapshots)
       → getNudgeType (decide if reminder should fire)

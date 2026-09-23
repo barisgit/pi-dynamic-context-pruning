@@ -2,71 +2,34 @@
 
 ## Responsibility
 
-Apply all active runtime pruning to the message array on each `context` pass: compression-block replacement, deduplication, error purging, explicit tool-output tombstoning, and visible-ref injection. Produce the final array fed to the provider.
-
-## Design
-
-### Roles and ID eligibility
-
-- **`ID_ELIGIBLE_ROLES`** = `{user, toolResult, bashExecution}` — assistant is excluded.
-- **`PASSTHROUGH_ROLES`** = `{compaction, branch_summary, custom_message}` — passed through unchanged.
-- Skipping assistant messages preserves the provider prefix cache: mutating freshly generated model output on every turn would invalidate it.
-
-### `ALWAYS_PROTECTED_DEDUP`
-
-`{compress, write, edit}` — these tools are never deduplication-tombstoned regardless of fingerprint collision.
-
-### Bucket gating
-
-Tombstoning decisions (dedup + error purge) are bucketed against `floor(currentTurn / pruneCadenceTurns) * pruneCadenceTurns`. With default cadence `1` this is per-turn; higher values batch transitions so at most one prefix-cache break fires per N turns. The gate is pure and stateless — reloads cannot produce a spurious flush.
-
-### Min net-savings gating
-
-`collectDeduplicationCandidates` / `collectErrorPurgeCandidates` produce `PruneCandidate{toolCallId, netSaved}` (where `netSaved = record.tokenEstimate - tombstoneTokens`); `commitHeuristicPruning` then applies the cadence-collected candidates through two opt-in gates before adding to `prunedToolIds`: per-item (`minPruneItemSavedTokens`, drop tiny outputs) and batch (`minPruneBatchSavedTokens`, hold the whole flush until it clears the bar). Both default `0` (off → legacy unconditional commit) and are pure functions of the transcript. The red-zone override (`state.lastEffectiveContextPercent`/`lastEffectiveContextTokens` from the previous pass exceeding `compress.maxContextPercent`/`maxContextTokens`) bypasses both savings gates. The red-zone signal is live-only — replay never sets it, so determinism holds.
-
-### Logical turns
-
-One standalone visible message = one turn. One assistant tool-batch + matching tool results = one turn. Used for nudge debounce, error-purge age, and hot-tail protection.
+Materialize the model-visible context without changing canonical messages: replace compressed ranges with retained block summaries, apply exact dedup and explicitly accepted live Jev removals, preserve assistant/tool pairing, and inject stable visible IDs.
 
 ## Flow
 
-```text
-applyPruning(messages, state, config)
-  └─ deep-clone messages (isolate mutations across context events)
-  └─ stripGeneratedDcpHallucinations()
-  └─ countLogicalTurns() → state.currentTurn
-  └─ applyCompressionBlocks()          ← replaces covered spans with bN blocks
-  └─ finalizeMaterializedMessages(msgs, state, config, { turnMessages })
-        ├─ stripGeneratedDcpHallucinations()
-        ├─ countLogicalTurns()         ← may differ after block injection
-        ├─ repairOrphanedToolPairs()   ← safety net: atomic assistant+result removal
-        ├─ applyDeduplication()         ← mutates state.prunedToolIds (bucket-gated)
-        ├─ applyErrorPurging()         ← mutates state.prunedToolIds (bucket-gated)
-        ├─ applyToolOutputPruning()     ← replaces content in state.prunedToolIds matches
-        └─ injectMessageIds()           ← visible refs on user/toolResult/bashExecution only
-  └─ returns pruned message array
-```
+`applyPruning` clones/stamps source ownership, removes generated DCP artifacts, counts logical turns and replaces covered ranges with active blocks according to the existing retention tiers. `finalizeMaterializedMessages` repairs orphaned tool pairs, builds optional fo Ref contexts, commits eligible selections through `commitHeuristicPruning`, projects ordinary and Ref tombstones, garbage-collects dead selections, and injects visible IDs.
 
-### injectMessageIds detail
+The two stamp/strip passes also support callers that enter through finalization directly. Do not collapse those entry points without testing their distinct caller obligations.
 
-Walks messages in ordinal order. For each `ID_ELIGIBLE_ROLES` entry:
+## Decisions and savings
 
-1. Builds a stable `sourceKey` (prefers `__dcpSourceKey` internal property; falls back to `buildSourceItemKey`).
-2. Allocates a dense `mNNNN` ref via `allocateMessageRef`.
-3. Derives `ownerKey`: synthetic compressed-block messages first use `INTERNAL_BLOCK_ID` to build `block:bN`; other messages use `__dcpOwnerKey` or `buildSourceOwnerKey`.
-4. Injects the ref as a metadata tag appended to `msg.content`.
-5. Records `{ref, sourceKey, timestamp, ownerKey}` in `messageRefSnapshot` and `messageOwnerSnapshot`.
+- Exact duplicates require identical request fingerprint, full visible content and error status, with a newer copy retained.
+- Live Jev proposals arrive from application scheduling as exact candidate-id/artifact pairs. Current eligibility, content and protections are rechecked. Error outputs are excluded from these live proposals; historical error restoration remains separate.
+- Accepted Jev decisions do not remove output immediately in the async callback. They join the same commit and actual-projection savings calculation on a subsequent context pass. The application receives only IDs actually committed by Jev, not coincident dedup commits.
+- Item and batch gates use configured values (package defaults25/100; the user's overrides100/10000). Fo savings include every exposed copy and recovery-marker costs, measured on the final projection. Existing red-zone behavior bypasses savings gates, not content protections.
+- Cadence uses DCP logical turns. Age is eligibility, not proof of obsolescence. Deprecated error-purge/custom collectors cannot create new selections.
 
-Assistant messages receive no ref, no content mutation, no snapshot entry.
+## Ref and recovery invariants
 
-Legacy `m001`–`m999` aliases are added for transitional compatibility with tests/prompts that use padded short forms.
+Outer containers, images, unsupported/ambiguous output, private inner results and derived text remain protected. The optional fo bridge enumerates only attributable public Refs and projects all copies consistently. Missing bridges fail closed. Tombstones identify `dcp_recover`; originals and assistant/tool pairs stay canonical. Applied IDs/actions persist through the existing session format; transient uncommitted Jev proposals do not.
 
-## Integration
+## IDs and ownership
 
-| Caller                                  | Used from                                                                                |
-| --------------------------------------- | ---------------------------------------------------------------------------------------- |
-| `src/application/session-handler.ts`    | `applyPruning`, `getNudgeType`, `exceedsMaxContextLimit`, `finalizeMaterializedMessages` |
-| `src/domain/compression/`               | `resolveCompressionRangeIndices`, `estimateTokens`, `resolveCompressionRangeIndices`     |
-| `src/domain/nudge/`                     | re-exports nudge helpers from this module                                                |
-| `src/domain/provider/payload-filter.ts` | reads `state.messageOwnerSnapshot` + live owner map for stale artifact filtering         |
-| `src/application/compress-tool/`        | reads `state.messageRefSnapshot` for visible-ref validation during block creation        |
+Only user/toolResult/bashExecution messages receive `mNNNN` IDs; compressed records receive `bN`. Source/owner keys are structured bookkeeping, not model-visible tags. Provider payload filtering uses the canonical owner map. Block rewriting preserves exact coverage, not the generated historical Record label.
+
+## Entry points
+
+- `application/context-handler.ts`: hydration, runtime bridge and accepted Jev proposals, materialization, scheduling.
+- `application/session-handler.ts`: restored-state materialization.
+- `application/compress-tool/registration.ts`: context limits and planning.
+- `domain/provider/payload-filter.ts`: canonical live ownership.
+- `getNudgeType` remains exported from this module; the unused forwarding directory was removed.

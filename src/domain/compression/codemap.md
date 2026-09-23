@@ -56,7 +56,7 @@ Pure compression logic: render active legacy blocks into synthetic transcript me
 ## Integration
 
 - **pruning** — active legacy `state.compressionBlocks` replacement via `renderCompressedBlockMessage`, plus `range.ts` expansion helpers
-- **application/compress-tool** — planning hints, boundary validation, artifacts, supersession (via thin `artifacts.ts` / `validation.ts` barrels)
+- **application/compress-tool** — planning hints, boundary validation, artifacts, supersession (imported directly from domain tooling)
 - **application/context-handler** — nudge planning hints
 - **replay** — offline `validateCompressionRangeBoundaryIds` during range replay
 - **transcript** — snapshot spans, logical-turn tail, `INTERNAL_BLOCK_ID` / source-key derivation

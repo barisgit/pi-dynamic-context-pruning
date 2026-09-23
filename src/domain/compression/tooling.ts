@@ -75,6 +75,30 @@ export function expandBlockPlaceholders(summary: string, state: DcpState): strin
   });
 }
 
+/** New calls may explicitly quote a covered block, but never inherit it by default. */
+export function expandCoveredBlockPlaceholders(
+  summary: string,
+  state: DcpState,
+  coveredBlockIds: readonly number[]
+): string {
+  const seen = new Set<number>();
+  for (const match of summary.matchAll(/\(b(\d+)\)/g)) {
+    const id = Number(match[1]);
+    if (
+      seen.has(id) ||
+      !coveredBlockIds.includes(id) ||
+      !state.compressionBlocks.some((block) => block.id === id && block.active)
+    ) {
+      throw new Error(
+        `Placeholder (b${match[1]}) must reference an active block fully covered by this range, at most once. ` +
+          `Write a replacement summary without placeholders to distill existing blocks.`
+      );
+    }
+    seen.add(id);
+  }
+  return expandBlockPlaceholders(summary, state);
+}
+
 /**
  * Resolve a user-supplied ID string (e.g. "m0001", transitional "m001", or "b3")
  * to an actual message timestamp.
@@ -185,7 +209,7 @@ function buildUnavailableMessageRefError(rawId: string, ref: string, state: DcpS
       return new Error(
         `Message ID ${rawId} is not available as a compression boundary because it is inside existing compressed block b${coveringBlock.id} "${coveringBlock.topic}".` +
           `${formatUnavailableBlockRefHint(rawId, coveringBlock, state)} ` +
-          `Use boundary ref b${coveringBlock.id} to include that whole block and include (b${coveringBlock.id}) exactly once in the summary, ` +
+          `Use boundary ref b${coveringBlock.id} to include that whole block and write a replacement summary, ` +
           `or choose currently visible mNNNN boundaries outside b${coveringBlock.id}. Do not retry a range that starts or ends inside b${coveringBlock.id}.`
       );
     }
@@ -239,17 +263,6 @@ export function validateCompressionRangeBoundaryIds(
     !state.compressionBlocks.some((block) => block.id === parsedEndId.blockId && block.active)
   ) {
     throw new Error(`Unknown message ID: ${endId}`);
-  }
-
-  if (
-    parsedStartId.kind === "block" &&
-    parsedEndId.kind === "block" &&
-    parsedStartId.blockId === parsedEndId.blockId
-  ) {
-    throw new Error(
-      `Range ${startId}..${endId} contains only compressed block b${parsedStartId.blockId}. ` +
-        `Choose raw message boundaries around the block or include additional uncompressed messages.`
-    );
   }
 }
 
@@ -957,7 +970,7 @@ function buildOverlapError(
       `b${existing.id} "${existing.topic}". ` +
       `${formatExistingBlockBoundaryHint(existing, state)} ` +
       `Do not retry the same range: choose a range entirely outside b${existing.id}'s span, ` +
-      `or include b${existing.id} explicitly by using boundary ref b${existing.id} and a matching (b${existing.id}) placeholder in the summary.`
+      `or include b${existing.id} explicitly by using boundary ref b${existing.id} and writing a replacement summary.`
   );
 }
 

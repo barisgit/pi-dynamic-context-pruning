@@ -82,7 +82,7 @@ describe("evaluation Jev adapter", () => {
     });
   });
 
-  test("maps a low-confidence destructive choice to keep", () => {
+  test("maps a low-drop-probability destructive choice to keep", () => {
     expect(
       parseJevResponse({
         answers: {
@@ -98,7 +98,7 @@ describe("evaluation Jev adapter", () => {
       decision: "keep",
       rawChoice: "drop",
       confidence: 0.59,
-      failure: { kind: "low_confidence" },
+      failure: { kind: "low_drop_probability" },
       probabilities: { keep: 0.41, drop: 0.59 },
     });
   });

@@ -2,8 +2,8 @@
 // Dynamic Context Pruning (DCP) — compress tool registration
 // ---------------------------------------------------------------------------
 
-import { Type } from "@sinclair/typebox";
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import { Type } from "@earendil-works/pi-ai";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { CompressionBlock, DcpState } from "../../types/state.js";
 import type { DcpConfig } from "../../types/config.js";
 import { appendDebugLog, buildSessionDebugPayload } from "../../infrastructure/debug-log.js";
@@ -11,7 +11,7 @@ import { COMPRESS_RANGE_DESCRIPTION } from "../../prompts/index.js";
 import {
   buildCompressionArtifactsForRange,
   buildCompressionPlanningHints,
-  expandBlockPlaceholders,
+  expandCoveredBlockPlaceholders,
   renderCompressionPlanningHints,
   resolveAnchorSourceKey,
   resolveAnchorTimestamp,
@@ -544,7 +544,6 @@ export function registerCompressTool(pi: ExtensionAPI, state: DcpState, config: 
           const anchorTimestamp = resolveAnchorTimestamp(endTimestamp, state);
           const boundaryStartSourceKey = resolveIdToSourceKey(startId, state, "startSourceKey");
           const boundaryEndSourceKey = resolveIdToSourceKey(endId, state, "endSourceKey");
-          const expandedSummary = expandBlockPlaceholders(summary, state);
           const artifacts = buildCompressionArtifactsForRange(
             currentMessages,
             state,
@@ -575,6 +574,13 @@ export function registerCompressTool(pi: ExtensionAPI, state: DcpState, config: 
             pendingSupersededBlockIds.add(blockId);
           }
           artifacts.metadata.supersededBlockIds = supersededBlockIds;
+          // The authored summary replaces covered records. Explicit historical
+          // quotations remain possible, but only for blocks this range retires.
+          const expandedSummary = expandCoveredBlockPlaceholders(
+            summary,
+            state,
+            supersededBlockIds
+          );
 
           const block: CompressionBlock = {
             id: nextBlockId++,

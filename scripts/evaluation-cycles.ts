@@ -4,12 +4,14 @@ import {
   buildSessionContext,
   convertToLlm,
   type SessionEntry,
-} from "@mariozechner/pi-coding-agent";
+} from "@earendil-works/pi-coding-agent";
 import { createCheckpointHandoffGenerator } from "../src/application/checkpoint-handoff.js";
 import { buildDcpNativeCompactionResult } from "../src/application/native-compaction.js";
 import { renderCompressedBlockText } from "../src/domain/compression/materialize.js";
 import { makeConfig, makeState } from "../tests/helpers/dcp-test-utils.js";
-import type { complete, Context } from "@mariozechner/pi-ai";
+import type { Context } from "@earendil-works/pi-ai";
+import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
+export type Completion = ModelRegistry["complete"];
 
 export interface CycleAction {
   op: string;
@@ -34,8 +36,8 @@ export interface CycleOptions {
   cycles?: number;
   timing: "early" | "late";
   outputDir: string;
-  completion: typeof complete;
-  model: Parameters<typeof complete>[0];
+  completion: Completion;
+  model: Parameters<Completion>[0];
   strategy: ArtifactStrategy;
 }
 export const INITIAL_RECORD =
@@ -94,7 +96,7 @@ export async function executeCycleAction(
           : "Unknown action; no side effects.",
   };
 }
-function text(response: Awaited<ReturnType<typeof complete>>): string {
+function text(response: Awaited<ReturnType<Completion>>): string {
   if (["error", "aborted", "length"].includes(response.stopReason))
     throw new Error(`Incomplete model response: ${response.stopReason}`);
   return response.content
@@ -135,9 +137,7 @@ export async function runCycles(options: CycleOptions): Promise<unknown> {
   const generator = createCheckpointHandoffGenerator(options.completion);
   const modelContext = {
     model: options.model,
-    modelRegistry: {
-      getApiKeyAndHeaders: async () => ({ ok: true, apiKey: "injected-transport" }),
-    },
+    modelRegistry: {},
   };
   async function checkpoint(cycle: number): Promise<void> {
     const firstKeptEntryId = entries.at(-1)!.id;

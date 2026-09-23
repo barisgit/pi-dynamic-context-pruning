@@ -2,8 +2,9 @@ import { mkdir, writeFile, readFile, readdir } from "node:fs/promises";
 import { resolve, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { homedir } from "node:os";
-import type { complete, Context } from "@mariozechner/pi-ai";
-import { runCycles, type CycleFixture } from "./evaluation-cycles.js";
+import { InMemoryCredentialStore, type Context, type Credential } from "@earendil-works/pi-ai";
+import { ModelRegistry, ModelRuntime } from "@earendil-works/pi-coding-agent";
+import { runCycles, type CycleFixture, type Completion } from "./evaluation-cycles.js";
 import { createPiOpenRouterJevRequest, classifyArtifactWithJev } from "./evaluation-jev.js";
 import {
   collectFoRefAdapterCandidates,
@@ -32,16 +33,16 @@ async function main(): Promise<void> {
   const { projectModelText } = await import(
     pathToFileURL(resolve(foRepo, "src/runtime/envelope.ts")).href
   );
-  // Current installed Pi runtime, matching charter dcp-model-smoke.ts. Credentials
-  // stay in memory and catalog loading is offline; no auth/model configuration writes.
-  const sdkCore = resolve(foRepo, "node_modules/@earendil-works/pi-coding-agent/dist/core");
-  const { AuthStorage } = await import(pathToFileURL(join(sdkCore, "auth-storage.js")).href);
-  const { ModelRegistry } = await import(pathToFileURL(join(sdkCore, "model-registry.js")).href);
-  const { ModelRuntime } = await import(pathToFileURL(join(sdkCore, "model-runtime.js")).href);
+  // Keep credentials in memory and catalog loading offline; never update host auth.
   const agentDir = join(homedir(), ".pi/agent");
-  const credentials = AuthStorage.inMemory(
-    JSON.parse(await readFile(join(agentDir, "auth.json"), "utf8"))
-  );
+  const credentials = new InMemoryCredentialStore();
+  const saved = JSON.parse(await readFile(join(agentDir, "auth.json"), "utf8")) as Record<
+    string,
+    Credential
+  >;
+  for (const [provider, credential] of Object.entries(saved)) {
+    await credentials.modify(provider, async () => credential);
+  }
   const runtime = await ModelRuntime.create({
     credentials,
     modelsPath: join(agentDir, "models.json"),
@@ -67,7 +68,7 @@ async function main(): Promise<void> {
   const metrics: unknown[] = resume
     ? JSON.parse(await readFile(join(outputDir, "metrics.json"), "utf8"))
     : [];
-  const completion: typeof complete = async (selected, context, options) => {
+  const completion: Completion = async (selected, context, options) => {
     const id = ++call;
     if (id > 60) throw new Error("Bounded budget: at most 60 working-model requests");
     const start = performance.now();
@@ -88,11 +89,16 @@ async function main(): Promise<void> {
     const { apiKey: _injectedKey, headers: _injectedHeaders, ...requestOptions } = options ?? {};
     void _injectedKey;
     void _injectedHeaders;
-    const response = await registry.complete(selected, context, {
-      ...requestOptions,
-      signal: AbortSignal.timeout(90000),
-      cacheRetention: "none",
-    });
+    // The generic completion seam is exercised here with a runtime-discovered Model<Api>.
+    const response = await registry.complete(
+      selected as Parameters<ModelRegistry["complete"]>[0],
+      context,
+      {
+        ...requestOptions,
+        signal: AbortSignal.timeout(90000),
+        cacheRetention: "none",
+      } as Parameters<ModelRegistry["complete"]>[2]
+    );
     const row = {
       id,
       variant,

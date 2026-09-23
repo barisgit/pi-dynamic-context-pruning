@@ -1,6 +1,6 @@
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { saveRecoveryText } from "../infrastructure/recovery-output.js";
-import { Type } from "@sinclair/typebox";
+import { Type } from "@earendil-works/pi-ai";
 import type { DcpMessage } from "../types/message.js";
 
 /** Read the optional fo-only bridge at use time, including after extension reload. */

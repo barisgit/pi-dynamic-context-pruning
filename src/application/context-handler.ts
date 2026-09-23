@@ -1,4 +1,4 @@
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { connect } from "pi-extension-utils";
 import type { ReminderIntent } from "pi-extension-utils";
 import type { DcpConfig } from "../types/config.js";
@@ -15,13 +15,17 @@ import {
   buildCompressionPlanningHints,
   renderCompressionPlanningHints,
 } from "../domain/compression/tooling.js";
-import { buildLiveOwnerKeys, INTERNAL_HEADING } from "../domain/transcript/index.js";
+import {
+  buildLiveOwnerKeys,
+  countLogicalTurns,
+  INTERNAL_HEADING,
+} from "../domain/transcript/index.js";
 import { appendDebugLog, buildSessionDebugPayload } from "../infrastructure/debug-log.js";
 import { updateDcpStatus } from "./status.js";
 import { hydrateMissingToolRecords } from "./tool-recording.js";
 import { getFoRefBridge } from "./recover-tool.js";
 import type { FoRefBridgeV1 } from "../domain/pruning/fo-ref-adapter.js";
-import { JevShadowScheduler, type JevShadowDependencies } from "./jev-shadow.js";
+import { JevScheduler, type JevDependencies } from "./jev-review.js";
 
 function cloneRenderedMessages(messages: DcpMessage[]): DcpMessage[] {
   return messages.map((message) => {
@@ -169,12 +173,14 @@ export function materializeContextMessages(
   messages: DcpMessage[],
   state: DcpState,
   config: DcpConfig,
-  foRefBridge?: FoRefBridgeV1
+  foRefBridge?: FoRefBridgeV1,
+  jevDrops?: ReadonlyMap<string, string>,
+  jevCommittedIds?: string[]
 ): ContextMaterializationResult {
   hydrateMissingToolRecords(messages, state);
   const liveOwnerKeys = buildLiveOwnerKeys(messages, state.compressionBlocks);
   return {
-    messages: applyPruning(messages, state, config, { foRefBridge }),
+    messages: applyPruning(messages, state, config, { foRefBridge, jevDrops, jevCommittedIds }),
     liveOwnerKeys,
     mode: "v1",
   };
@@ -185,9 +191,9 @@ export function registerContextHandler(
   pi: ExtensionAPI,
   state: DcpState,
   config: DcpConfig,
-  jevDependencies?: JevShadowDependencies
+  jevDependencies?: JevDependencies
 ): void {
-  const jev = new JevShadowScheduler(jevDependencies);
+  const jev = new JevScheduler(jevDependencies);
   pi.on("session_start", async () => {
     jev.reset();
   });
@@ -198,12 +204,38 @@ export function registerContextHandler(
     jev.reset();
   });
   pi.on("context", async (event, ctx) => {
+    const sessionId = ctx.sessionManager.getSessionId();
+    const bridge = getFoRefBridge();
+    const jevCommittedIds: string[] = [];
+    // Compute the incoming turn before pruning: state.currentTurn still describes
+    // the previous pass, and an old cadence grant must not cross this boundary.
+    const incomingTurn =
+      config.enabled && config.strategies.jev?.enabled && config.strategies.jev.apply === true
+        ? countLogicalTurns(
+            (event.messages as DcpMessage[]).filter(
+              (message) => !(message as any)[INTERNAL_HEADING]
+            )
+          )
+        : undefined;
+    const ready = jev.pending(sessionId, config, incomingTurn);
     const materializedContext = materializeContextMessages(
       event.messages as DcpMessage[],
       state,
       config,
-      getFoRefBridge()
+      bridge,
+      ready,
+      jevCommittedIds
     );
+    jev.committed(sessionId, jevCommittedIds);
+    const visibleToolIds = new Set(
+      materializedContext.messages
+        .filter((message) => message.role === "toolResult" || message.role === "bashExecution")
+        .map((message) => message.toolCallId)
+    );
+    const visibleResults = (event.messages as DcpMessage[]).filter((message) =>
+      visibleToolIds.has(message.toolCallId)
+    );
+    jev.retainEligible(visibleResults, state, config, bridge);
     const liveOwnerKeys = materializedContext.liveOwnerKeys;
     const prunedMessages = materializedContext.messages;
     try {
@@ -212,13 +244,14 @@ export function registerContextHandler(
           prunedMessages,
           state,
           config,
-          ctx.sessionManager.getSessionId(),
-          getFoRefBridge(),
-          ctx.modelRegistry
+          sessionId,
+          bridge,
+          ctx.modelRegistry,
+          visibleResults
         );
       }
     } catch {
-      /* Shadow failures must never prevent deterministic rendering. */
+      /* Jev request/audit failures must never prevent deterministic rendering. */
     }
     const usage = ctx.getContextUsage();
     const dcpEstimatedTokens = prunedMessages.reduce(
