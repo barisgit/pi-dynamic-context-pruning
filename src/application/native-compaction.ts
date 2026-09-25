@@ -69,6 +69,9 @@ interface BuildDcpNativeCompactionResultArgs {
 }
 
 const pendingRequests = new WeakMap<DcpState, DcpNativeCompactionRequest>();
+// Pi may complete an in-flight compact after reload or branch replacement.
+// Callback contexts then belong to the old runtime and must not be accessed.
+const sessionGeneration = new WeakMap<DcpState, number>();
 // Host-generated checkpoints have host details; retain commit bookkeeping only
 // for the in-flight fallback, without changing the persisted checkpoint schema.
 const pendingFallbackDetails = new WeakMap<DcpState, DcpNativeCompactionDetails>();
@@ -439,6 +442,7 @@ export function triggerDcpNativeCompaction(
     ? createRequest(reason, requestOrRequestedBlockIds)
     : (requestOrRequestedBlockIds ?? createRequest(reason));
 
+  const generation = sessionGeneration.get(state) ?? 0;
   pendingRequests.set(state, request);
   notify(ctx, "DCP native compaction queued", "info");
   // Historical records already enter the fresh handoff. Do not duplicate the
@@ -449,15 +453,23 @@ export function triggerDcpNativeCompaction(
     ctx.compact({
       customInstructions,
       onComplete: (result) => {
-        const pending = pendingRequests.get(state);
-        if (pending?.id === request.id) pendingRequests.delete(state);
-        notify(ctx, `DCP native compaction complete: kept from ${result.firstKeptEntryId}`, "info");
+        if ((sessionGeneration.get(state) ?? 0) === generation) {
+          const pending = pendingRequests.get(state);
+          if (pending?.id === request.id) pendingRequests.delete(state);
+          notify(
+            ctx,
+            `DCP native compaction complete: kept from ${result.firstKeptEntryId}`,
+            "info"
+          );
+        }
         resolve({ started: true, completed: true });
       },
       onError: (error) => {
-        const pending = pendingRequests.get(state);
-        if (pending?.id === request.id) pendingRequests.delete(state);
-        notify(ctx, `DCP native compaction failed: ${error.message}`, "error");
+        if ((sessionGeneration.get(state) ?? 0) === generation) {
+          const pending = pendingRequests.get(state);
+          if (pending?.id === request.id) pendingRequests.delete(state);
+          notify(ctx, `DCP native compaction failed: ${error.message}`, "error");
+        }
         resolve({ started: true, completed: false });
       },
     });
@@ -470,6 +482,17 @@ export function registerDcpNativeCompactionBridge(
   config: DcpConfig,
   generateHandoff: CheckpointHandoffGenerator = generateCheckpointHandoff
 ): void {
+  const retirePendingRequest = (): void => {
+    sessionGeneration.set(state, (sessionGeneration.get(state) ?? 0) + 1);
+    pendingRequests.delete(state);
+    pendingFallbackDetails.delete(state);
+    pendingAutoRequests.delete(state);
+  };
+  // A mid-run session_start can re-fire on the same branch; only shutdown or
+  // a genuine tree switch retires this in-flight callback.
+  pi.on("session_shutdown", retirePendingRequest);
+  pi.on("session_tree", retirePendingRequest);
+
   pi.on("session_before_compact", async (event: SessionBeforeCompactEvent, ctx) => {
     pendingFallbackDetails.delete(state);
     if (!config.enabled || !config.nativeCompaction.enabled) return;
@@ -624,7 +647,11 @@ export function registerDcpNativeCompactionBridge(
       // bypass the session manager). pi defers its own post-compaction
       // `continue()` via setTimeout "to break out of event handler chain" for
       // the same reason; we mirror that here.
+      const generation = sessionGeneration.get(state) ?? 0;
       setTimeout(() => {
+        // Reload or branch replacement retires this continuation before it can
+        // touch the old pi API (or its now-throwing context getters).
+        if ((sessionGeneration.get(state) ?? 0) !== generation) return;
         try {
           pi.sendUserMessage(
             "[dcp-auto-compaction] Continue the authorized task from the summary and active DCP blocks. Follow newer user directions and corrections; do not repeat completed work or revive superseded plans."

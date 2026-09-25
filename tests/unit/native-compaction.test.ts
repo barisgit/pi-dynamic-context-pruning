@@ -50,6 +50,165 @@ function compactionEntry(
 }
 
 describe("DCP native pi compaction bridge", () => {
+  test.each(["onError", "onComplete"] as const)(
+    "ignores delayed %s after reload without touching the invalid ctx",
+    async (callbackName) => {
+      const state = makeState([{ id: 1, active: true } as CompressionBlock]);
+      const handlers = new Map<string, any>();
+      registerDcpNativeCompactionBridge(
+        { on: (name: string, handler: any) => handlers.set(name, handler) } as any,
+        state,
+        makeConfig()
+      );
+      let callbacks: any;
+      const notifications: string[] = [];
+      let stale = false;
+      const ctx = {
+        get hasUI() {
+          if (stale) throw new Error("This extension ctx is stale after reload");
+          return true;
+        },
+        ui: { notify: (message: string) => notifications.push(message) },
+        compact: (options: any) => {
+          callbacks = options;
+        },
+      };
+      const result = triggerDcpNativeCompaction(ctx as any, state);
+      await handlers.get("session_shutdown")?.({ reason: "reload" }, {});
+      stale = true;
+
+      expect(() =>
+        callbacks[callbackName](
+          callbackName === "onError" ? new Error("cancelled") : { firstKeptEntryId: "tail" }
+        )
+      ).not.toThrow();
+      expect(await result).toEqual({ started: true, completed: callbackName === "onComplete" });
+      expect(notifications).toEqual(["DCP native compaction queued"]);
+    }
+  );
+
+  test.each(["onError", "onComplete"] as const)(
+    "reports active %s completion",
+    async (callbackName) => {
+      const state = makeState([{ id: 1, active: true } as CompressionBlock]);
+      let callbacks: any;
+      const notifications: string[] = [];
+      const ctx = {
+        hasUI: true,
+        ui: { notify: (message: string) => notifications.push(message) },
+        compact: (options: any) => {
+          callbacks = options;
+        },
+      };
+      const result = triggerDcpNativeCompaction(ctx as any, state);
+      callbacks[callbackName](
+        callbackName === "onError" ? new Error("cancelled") : { firstKeptEntryId: "tail" }
+      );
+      expect(await result).toEqual({ started: true, completed: callbackName === "onComplete" });
+      expect(notifications).toEqual([
+        "DCP native compaction queued",
+        callbackName === "onError"
+          ? "DCP native compaction failed: cancelled"
+          : "DCP native compaction complete: kept from tail",
+      ]);
+    }
+  );
+
+  test("a prior branch's callback does not notify after a new request starts", async () => {
+    const state = makeState([{ id: 1, active: true } as CompressionBlock]);
+    const handlers = new Map<string, any>();
+    registerDcpNativeCompactionBridge(
+      { on: (name: string, handler: any) => handlers.set(name, handler) } as any,
+      state,
+      makeConfig()
+    );
+    const calls: any[] = [];
+    const notifications: string[] = [];
+    const ctx = {
+      hasUI: true,
+      ui: { notify: (message: string) => notifications.push(message) },
+      compact: (options: any) => calls.push(options),
+    };
+    const old = triggerDcpNativeCompaction(ctx as any, state);
+    await handlers.get("session_tree")({}, {});
+    const current = triggerDcpNativeCompaction(ctx as any, state);
+    calls[0].onError(new Error("old failure"));
+    expect(await old).toEqual({ started: true, completed: false });
+    calls[1].onComplete({ firstKeptEntryId: "current-tail" });
+    expect(await current).toEqual({ started: true, completed: true });
+    expect(notifications).toEqual([
+      "DCP native compaction queued",
+      "DCP native compaction queued",
+      "DCP native compaction complete: kept from current-tail",
+    ]);
+  });
+
+  test.each(["session_shutdown", "session_tree"] as const)(
+    "%s retires queued auto compaction for the old session",
+    async (event) => {
+      const state = makeState();
+      const handlers = new Map<string, any>();
+      registerDcpNativeCompactionBridge(
+        { on: (name: string, handler: any) => handlers.set(name, handler) } as any,
+        state,
+        makeConfig()
+      );
+      queueDcpAutoNativeCompaction(state, [1]);
+      await handlers.get(event)({}, {});
+      expect(hasPendingDcpAutoNativeCompaction(state)).toBe(false);
+    }
+  );
+
+  test("a deferred auto-resume does not use the old pi or ctx after shutdown", async () => {
+    const state = makeState([{ id: 1, active: true, savedTokenEstimate: 20 } as CompressionBlock]);
+    const handlers = new Map<string, any>();
+    let stale = false;
+    let sent = 0;
+    const pi = {
+      on: (name: string, handler: any) => handlers.set(name, handler),
+      appendEntry: () => undefined,
+      sendUserMessage: () => {
+        if (stale) throw new Error("stale pi");
+        sent++;
+      },
+    };
+    const ctx = {
+      hasUI: false,
+      get sessionManager() {
+        if (stale) throw new Error("stale ctx");
+        return {
+          getSessionId: () => "s",
+          getCwd: () => "/tmp",
+          getSessionDir: () => "/tmp",
+          getSessionFile: () => "/tmp/s.jsonl",
+          getLeafId: () => "tail",
+        };
+      },
+    };
+    registerDcpNativeCompactionBridge(pi as any, state, makeConfig());
+    await handlers.get("session_compact")(
+      {
+        compactionEntry: {
+          firstKeptEntryId: "tail",
+          details: {
+            source: "dcp-native-compaction",
+            version: 1,
+            requestId: "r",
+            reason: "auto",
+            representedBlockIds: [1],
+            requestedBlockIds: [1],
+            firstKeptEntryId: "tail",
+          },
+        },
+      },
+      ctx
+    );
+    await handlers.get("session_shutdown")({ reason: "reload" }, ctx);
+    stale = true;
+    await flushMacrotasks();
+    expect(sent).toBe(0);
+  });
+
   test("builds a pi compaction result from DCP blocks without recursively carrying raw gaps", () => {
     const messages: any[] = [
       {
