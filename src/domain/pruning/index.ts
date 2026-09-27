@@ -105,6 +105,14 @@ function resolveAnchorIndex(
   return null;
 }
 
+/** A synthetic user message cannot interrupt an assistant's tool-result batch. */
+function toolExchangeSafeInsertionIndex(messages: any[], index: number): number {
+  if (index >= messages.length) return index;
+  const role = messages[index].role;
+  if (role !== "toolResult" && role !== "bashExecution") return index;
+  return expandCompressionIndexRange(messages, index, index).lo;
+}
+
 export type RetainedCompressionBlockDetail = "full" | "compact";
 
 /**
@@ -184,10 +192,13 @@ function applyCompressionBlocks(messages: any[], state: DcpState, config: DcpCon
       // falling back to legacy timestamp sorting for restored timestamp-only blocks.
       const anchorIndex = resolveAnchorIndex(messages, block);
       if (anchorIndex !== null) {
-        messages.splice(anchorIndex, 0, syntheticMsg);
+        messages.splice(toolExchangeSafeInsertionIndex(messages, anchorIndex), 0, syntheticMsg);
       } else {
         messages.push(syntheticMsg);
         messages.sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
+        const sortedIndex = messages.indexOf(syntheticMsg);
+        messages.splice(sortedIndex, 1);
+        messages.splice(toolExchangeSafeInsertionIndex(messages, sortedIndex), 0, syntheticMsg);
       }
     }
 
