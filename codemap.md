@@ -6,7 +6,7 @@ A **pi coding agent extension** implementing Dynamic Context Pruning (DCP). DCP 
 
 1. **Compression blocks** — Replace older conversation ranges with citable `bN` summaries authored by the LLM
 2. **Deduplication** — Remove redundant tool outputs with identical inputs (bucket-gated)
-3. **Error purging** — Mark stale errored tool outputs after N logical turns
+3. **Age masking (opt-in)** — Replace old successful tool outputs/exposed fo Refs with recoverable markers under the shared savings gates (error purging is retired)
 4. **Nudge injection** — Prompt the agent to compress when context fills up
 5. **Provider-payload filtering** — Prune stale hidden artifacts from provider requests using canonical owner keys
 6. **Native compaction bridge** — Translate DCP block state into pi's session compaction lifecycle

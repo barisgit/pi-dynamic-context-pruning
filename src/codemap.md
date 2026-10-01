@@ -256,7 +256,7 @@ session event messages
           → countLogicalTurns → state.currentTurn
           → applyCompressionBlocks (splice ranges, insert bN messages)
           → repairOrphanedToolPairs (safety net)
-          → commitHeuristicPruning (gate exact dedup and accepted live Jev removals)
+          → commitHeuristicPruning (gate exact dedup, opt-in age masking and accepted live Jev removals)
           → applyToolOutputPruning (replace content of pruned tools)
           → injectMessageIds (dcp-id/dcp-owner tags, update snapshots)
       → getNudgeType (decide if reminder should fire)

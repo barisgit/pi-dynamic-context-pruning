@@ -36,6 +36,13 @@ export interface DcpConfig {
     /** Observation remains the default; apply explicitly enables recoverable live removals. */
     jev?: { enabled: boolean; apply?: boolean };
     /**
+     * Mask old successful text tool outputs (ordinary results and exposed fo
+     * Refs) once they reach `candidates.minAgeTurns`. Uses the shared candidate
+     * eligibility plus fixed protections, and commits only through the same
+     * item/batch gates as dedup and Jev. Persisted selections stay masked.
+     */
+    ageMasking?: { enabled: boolean };
+    /**
      * Bucket eligibility and Jev review onto logical-turn multiples of N.
      * Deterministic dedup additions occur only at bucket boundaries; an accepted
      * asynchronous Jev DROP may commit on the next context pass within that bucket

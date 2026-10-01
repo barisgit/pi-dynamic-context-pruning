@@ -37,6 +37,7 @@ const DEFAULT_CONFIG: DcpConfig = {
   },
   strategies: {
     jev: { enabled: false },
+    ageMasking: { enabled: false },
     pruneCadenceTurns: 1,
     minPruneItemSavedTokens: 25,
     minPruneBatchSavedTokens: 100,
@@ -102,6 +103,9 @@ const DEFAULT_CONFIG_FILE_CONTENT = `{
   //   "minPruneItemSavedTokens": 25,
   //   "minPruneBatchSavedTokens": 100,
   //   "deduplication": { "enabled": true, "protectedTools": [] },
+  //   // Mask successful text tool outputs (and exposed fo Refs) older than
+  //   // candidates.minAgeTurns with a dcp_recover marker. Uses the same item/batch gates.
+  //   "ageMasking": { "enabled": false },
   //   "candidates": { "minAgeTurns": 15, "minResultTokens": 300, "protectedTools": [] }
   // },
   // "protectedFilePatterns": [],
@@ -266,6 +270,12 @@ function validateCandidates(config: DcpConfig): void {
 function validateConfig(config: DcpConfig): void {
   if (typeof config.strategies.jev?.enabled !== "boolean") {
     throw new Error("Invalid DCP config: strategies.jev.enabled must be boolean");
+  }
+  if (
+    config.strategies.ageMasking !== undefined &&
+    typeof config.strategies.ageMasking?.enabled !== "boolean"
+  ) {
+    throw new Error("Invalid DCP config: strategies.ageMasking.enabled must be boolean");
   }
   validateCandidates(config);
 }

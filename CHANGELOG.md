@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Added opt-in age masking (`strategies.ageMasking.enabled`, default `false`): successful text tool outputs and exposed fo Refs older than `strategies.candidates.minAgeTurns` are replaced by exact `dcp_recover` markers through the existing eligibility, item/batch savings gates, projection and persistence. Errors, images, containers and authored `run` text, mutations, DCP tools and AGENTS.md/CLAUDE.md/SKILL.md reads are kept.
+
 - Added explicitly opt-in live Jev removals (`strategies.jev.apply: true`) through existing protection, projection, net-savings and recovery paths, including exposed fo Refs. Existing enabled configurations remain shadow-only without this flag. Pending judgments are never loaded as prune commands from old audit rows.
 - Replaced the DROP confidence-margin gate with explicit `P(drop) >= 0.60`; confidence remains telemetry, not a safety guarantee. Errors remain protected from live Jev in this initial policy.
 

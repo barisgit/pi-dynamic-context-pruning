@@ -1,7 +1,7 @@
 import type { DcpState, HeuristicPruneDecision, PrunedToolAction } from "../../types/state.js";
 import type { DcpConfig } from "../../types/config.js";
 import type { DcpMessage } from "../../types/message.js";
-import { collectJevCandidates } from "./jev-candidates.js";
+import { collectJevCandidates, type JevCandidate } from "./jev-candidates.js";
 import { stripDcpHallucinationsFromString } from "../refs/metadata.js";
 import { renderCompressedBlockMessage } from "../compression/materialize.js";
 import { allocateMessageRef } from "../refs/index.js";
@@ -305,7 +305,7 @@ function tombstoneText(id: string, isError: boolean): string {
 interface PruneCandidate {
   toolCallId: string;
   netSaved: number;
-  strategy: "dedup" | "jev";
+  strategy: "dedup" | "jev" | "age";
   renderAction: PrunedToolAction;
   turnIndex: number;
 }
@@ -649,6 +649,64 @@ function requiredPersistedErrorReplacementIds(
   return required;
 }
 
+// ---------------------------------------------------------------------------
+// Age masking
+// ---------------------------------------------------------------------------
+
+// The shared candidate collector already keeps outer run/subagent/workflow
+// results, write, edit, compress and dcp_recover. Age masking adds patch
+// results and reads of standing instruction files.
+const AGE_MASKING_PROTECTED_TOOLS = new Set(["apply_patch"]);
+const INSTRUCTION_FILE_NAMES = new Set(["agents.md", "claude.md", "skill.md"]);
+
+/** Any string argument naming an instruction file (path, Ref input, ...) protects the output. */
+function readsInstructionFile(args: Record<string, unknown>): boolean {
+  return Object.values(args).some(
+    (value) =>
+      typeof value === "string" &&
+      INSTRUCTION_FILE_NAMES.has((value.trim().split(/[\\/]/).pop() ?? "").toLowerCase())
+  );
+}
+
+/**
+ * Collect old successful text outputs for age masking. Pure.
+ *
+ * Reuses the shared candidate eligibility (age against the closed cadence
+ * bucket, minimum size, hot tail, protected tools/files, text-only content).
+ * An fo Ref qualifies only as a public, non-error exposure of a non-error
+ * outer run; the outer run text itself is never a candidate.
+ */
+function collectAgeMaskingCandidates(
+  messages: DcpMessage[],
+  state: DcpState,
+  config: DcpConfig,
+  bridge: FoRefBridgeV1 | undefined,
+  foContexts: FoRefPruningContext[]
+): JevCandidate[] {
+  const refIds = new Set<string>();
+  const maskableRefIds = new Set<string>();
+  for (const context of foContexts) {
+    for (const candidate of context.collection.candidates) {
+      refIds.add(candidate.compositeId);
+      if (
+        !context.outerMessage.isError &&
+        !candidate.isError &&
+        !candidate.error &&
+        candidate.exposureCount > 0 &&
+        candidate.exposureIds.length > 0
+      )
+        maskableRefIds.add(candidate.compositeId);
+    }
+  }
+  return collectJevCandidates(messages, state, config, bridge).filter(
+    (candidate) =>
+      !candidate.isError &&
+      !AGE_MASKING_PROTECTED_TOOLS.has(candidate.toolName.toLowerCase()) &&
+      !readsInstructionFile(candidate.inputArgs) &&
+      (!refIds.has(candidate.id) || maskableRefIds.has(candidate.id))
+  );
+}
+
 /**
  * Gate and commit exact duplicate output removals for this pass.
  * Mutates state.prunedToolIds / totalPruneCount / pendingSave.
@@ -660,7 +718,8 @@ function requiredPersistedErrorReplacementIds(
  *  - batch (`minPruneBatchSavedTokens`): refuse to rewrite old context unless
  *    the whole flush nets at least this many tokens.
  *
- * Configured item and batch thresholds apply to both dedup and Jev; zero disables a gate.
+ * Configured item and batch thresholds apply to dedup, Jev and age masking together;
+ * zero disables a gate.
  * Both are bypassed when the live
  * effective context is in the red zone: under pressure we reclaim space and
  * ignore cache efficiency.
@@ -678,29 +737,38 @@ function commitHeuristicPruning(
   // Deprecated purge/custom settings cannot create new actions. Historical
   // actions still render and retain their conservative restoration checks.
   const dedupCandidates = collectDeduplicationCandidates(eligibleMessages, state, config);
+  const toPruneCandidate = (
+    candidate: JevCandidate,
+    strategy: PruneCandidate["strategy"]
+  ): PruneCandidate => ({
+    toolCallId: candidate.id,
+    netSaved: estimateTokens(candidate.artifact) - tombstoneTokenCost(candidate.id, false),
+    strategy,
+    renderAction: clearRenderAction(),
+    turnIndex:
+      state.toolCalls.get(candidate.id)?.turnIndex ?? state.currentTurn - candidate.ageTurns,
+  });
   const jevCandidates = jevDrops?.size
     ? collectJevCandidates(eligibleMessages, state, config, bridge)
         .filter(
           (candidate) => !candidate.isError && jevDrops.get(candidate.id) === candidate.artifact
         )
-        .map(
-          (candidate): PruneCandidate => ({
-            toolCallId: candidate.id,
-            netSaved: estimateTokens(candidate.artifact) - tombstoneTokenCost(candidate.id, false),
-            strategy: "jev",
-            renderAction: clearRenderAction(),
-            turnIndex:
-              state.toolCalls.get(candidate.id)?.turnIndex ??
-              state.currentTurn - candidate.ageTurns,
-          })
-        )
+        .map((candidate) => toPruneCandidate(candidate, "jev"))
     : [];
-  const candidates = [
-    ...dedupCandidates,
-    ...jevCandidates.filter(
-      (candidate) => !dedupCandidates.some((dedup) => dedup.toolCallId === candidate.toolCallId)
-    ),
-  ];
+  const ageCandidates = config.strategies.ageMasking?.enabled
+    ? collectAgeMaskingCandidates(eligibleMessages, state, config, bridge, foContexts).map(
+        (candidate) => toPruneCandidate(candidate, "age")
+      )
+    : [];
+
+  // One candidate per id; earlier strategies keep attribution for shared ids.
+  const seenIds = new Set<string>();
+  const candidates: PruneCandidate[] = [];
+  for (const candidate of [...dedupCandidates, ...jevCandidates, ...ageCandidates]) {
+    if (seenIds.has(candidate.toolCallId)) continue;
+    seenIds.add(candidate.toolCallId);
+    candidates.push(candidate);
+  }
   if (candidates.length === 0) return null;
 
   const foContextByCompositeId = new Map<string, FoRefPruningContext>();
@@ -758,12 +826,13 @@ function commitHeuristicPruning(
   const decision: HeuristicPruneDecision = {
     dedupCandidates: dedupCandidates.length,
     jevCandidates: jevCandidates.length,
+    ageCandidates: ageCandidates.length,
     uniqueCandidates: measurableCandidates.length,
     keptAfterItemGate: kept.length,
     droppedByItemGate: measurableCandidates.length - kept.length,
     batchSavedTokens,
     committed: 0,
-    committedByStrategy: { dedup: 0, jev: 0 },
+    committedByStrategy: { dedup: 0, jev: 0, age: 0 },
     committedByAction: { cleared: 0, reduced: 0 },
     oldestMutatedDepth: 0,
     cadenceBucket,
