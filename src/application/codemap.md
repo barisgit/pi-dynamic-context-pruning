@@ -49,7 +49,7 @@ Integrates DCP state with pi's native session-compaction lifecycle via `session_
 
 **`session_compact` hook** — deactivates only fully hidden records supplied in the committed checkpoint or host seed, realizes their saved-token estimates, resets nudge watermarks, saves state, and updates the footer. Omitted canonical records remain active; stable tier ranking prevents promotion of old omitted records.
 
-**`turn_end` hook** — drains the `pendingAutoRequests` queue set by `decideNativeCompactionAutoTrigger`. If compaction completed and no user input is pending, sends a continuation prompt telling the agent to continue with the task using the compaction summary.
+**`turn_end` hook** — consumes each queued auto request once and starts compaction without awaiting it, allowing the current turn to become idle. After a successful auto commit, `session_compact` posts a deferred continuation even when user input is pending, so Pi starts a turn and drains that input.
 
 **`triggerDcpNativeCompaction`** — the public entry point used by `/dcp compact` and the auto-trigger path. Calls `ctx.compact()` and returns a promise.
 
