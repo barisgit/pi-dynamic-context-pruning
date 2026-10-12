@@ -993,7 +993,7 @@ describe("DCP native pi compaction bridge", () => {
       ...hiddenMessages.map((m, i) => messageEntry(`hidden-${i}`, m)),
       messageEntry("tail-entry", tailMessage),
     ];
-    const coverage = computeDcpHiddenCoverage(state, branchEntries, "tail-entry");
+    const coverage = computeDcpHiddenCoverage(state, branchEntries, "tail-entry", [block.id]);
     expect(coverage.hiddenMessageCount).toBe(10);
     expect(coverage.ratio).toBeLessThan(0.6);
 
@@ -1094,7 +1094,7 @@ describe("DCP native pi compaction bridge", () => {
 
     // pi's NEW proposed cut is the tail; the live window to be hidden is the 3
     // messages between the prior compaction's firstKeptEntryId and the new cut.
-    const coverage = computeDcpHiddenCoverage(state, branchEntries, "tail-entry");
+    const coverage = computeDcpHiddenCoverage(state, branchEntries, "tail-entry", [block.id]);
 
     // Windowed: only the 3 live messages count, fully covered -> gate passes.
     expect(coverage.hiddenMessageCount).toBe(3);

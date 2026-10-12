@@ -191,6 +191,30 @@ describe("checkpoint fidelity", () => {
     expect(result.compaction.details.uncoveredHiddenMessageCount).toBe(1);
   });
 
+  test.each(["tier", "budget"])(
+    "coverage ignores summaries omitted by %s admission",
+    async (limit) => {
+      const f = fixture();
+      f.config.nativeCompaction.minHiddenCoverageRatio = 0.5;
+      if (limit === "tier") {
+        f.config.compress.renderFullBlockCount = 1;
+        f.config.compress.renderCompactBlockCount = 0;
+      } else {
+        f.config.nativeCompaction.maxSummaryTokens = 50;
+        f.state.compressionBlocks[1].summary = "Huge retained record. ".repeat(1000);
+      }
+      const before = register(f.state, f.config, async () => "Draft only.");
+      const event = {
+        branchEntries: f.entries,
+        preparation: { firstKeptEntryId: "e3", tokensBefore: 1000, previousSummary: "old" },
+      };
+      // All active exact keys cover 2/3, but final records cover only 1/3 or 0.
+      expect(await before(event, hookContext())).toBeUndefined();
+      expect(event.preparation.firstKeptEntryId).toBe("e3");
+      expect(event.preparation.previousSummary).toContain("Draft only.");
+    }
+  );
+
   test("previous checkpoint text is not appended or duplicated", () => {
     const f = fixture();
     const historical = "HISTORICAL_CHECKPOINT_UNIQUE";

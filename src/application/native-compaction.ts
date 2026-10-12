@@ -38,6 +38,8 @@ export interface DcpNativeCompactionDetails {
   requestId: string;
   reason: DcpNativeCompactionReason;
   representedBlockIds: number[];
+  /** Final budget-admitted records; absent on historical version-1 details. */
+  renderedBlockIds?: number[];
   requestedBlockIds: number[];
   firstKeptEntryId: string;
   hiddenMessageCount: number;
@@ -115,7 +117,8 @@ function escapeAttr(value: string): string {
 export function computeDcpHiddenCoverage(
   state: DcpState,
   branchEntries: SessionEntry[],
-  firstKeptEntryId: string
+  firstKeptEntryId: string,
+  renderedBlockIds: readonly number[]
 ): { ratio: number; hiddenMessageCount: number; coveredHiddenCount: number } {
   const records = buildBranchMessageRecords(branchEntries);
   const firstKeptBranchIndex = resolveFirstKeptBranchIndex(branchEntries, firstKeptEntryId);
@@ -145,7 +148,8 @@ export function computeDcpHiddenCoverage(
     return { ratio: 1, hiddenMessageCount: 0, coveredHiddenCount: 0 };
   }
   const covered = new Set<string>();
-  for (const block of state.compressionBlocks.filter((b) => b.active)) {
+  const rendered = new Set(renderedBlockIds);
+  for (const block of state.compressionBlocks.filter((b) => b.active && rendered.has(b.id))) {
     const coveredKeys = resolveBlockCoveredSourceKeys(block);
     for (const key of coveredKeys) {
       if (hiddenKeys.has(key)) covered.add(key);
@@ -419,6 +423,7 @@ export function buildDcpNativeCompactionResult({
       requestId: request.id,
       reason: request.reason,
       representedBlockIds,
+      renderedBlockIds: retained.map((block) => block.id),
       requestedBlockIds,
       firstKeptEntryId,
       hiddenMessageCount,
@@ -545,12 +550,7 @@ export function registerDcpNativeCompactionBridge(
         }
       }
     }
-    const coverage = computeDcpHiddenCoverage(
-      state,
-      event.branchEntries,
-      event.preparation.firstKeptEntryId
-    );
-    const fallback = (): undefined => {
+    const fallback = (coverageRatio?: number): undefined => {
       // Pi consumes this shared preparation object, not mutations to event.customInstructions.
       // Replace rather than append: the fresh tail-informed orientation supersedes prior checkpoints.
       event.preparation.previousSummary = `Current authorized intent and constraints (apply later corrections; preserve explicit permissions):\n${handoff}`;
@@ -562,10 +562,9 @@ export function registerDcpNativeCompactionBridge(
         request,
       });
       pendingFallbackDetails.set(state, prepared.details!);
-      appendDebugLog(config, "native_compaction_host_fallback", { coverageRatio: coverage.ratio });
+      appendDebugLog(config, "native_compaction_host_fallback", { coverageRatio });
       return undefined;
     };
-    if (coverage.ratio < config.nativeCompaction.minHiddenCoverageRatio) return fallback();
     let result: CompactionResult<DcpNativeCompactionDetails>;
     try {
       result = buildDcpNativeCompactionResult({
@@ -580,6 +579,17 @@ export function registerDcpNativeCompactionBridge(
       appendDebugLog(config, "native_compaction_budget_fallback", { error: String(error) });
       return fallback();
     }
+
+    // Coverage is a certificate of the FINAL record admission, after both tier
+    // and budget drops, not a count of every active block in state.
+    const coverage = computeDcpHiddenCoverage(
+      state,
+      event.branchEntries,
+      event.preparation.firstKeptEntryId,
+      result.details?.renderedBlockIds ?? []
+    );
+    if (coverage.ratio < config.nativeCompaction.minHiddenCoverageRatio)
+      return fallback(coverage.ratio);
 
     appendDebugLog(config, "native_compaction_prepared", {
       ...buildSessionDebugPayload(ctx.sessionManager),

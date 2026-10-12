@@ -194,7 +194,7 @@ DCP recognizes fo-coding-agent's versioned `sandbox.result` timeline as a contai
 
 ### Native pi compaction
 
-`/dcp compact` asks Pi to create a native compaction entry from DCP state. DCP evaluates `minHiddenCoverageRatio` against the actual hidden range at Pi's unchanged proposed `firstKeptEntryId`; it never advances the cut to improve the ratio. Only exact `coveredSourceKeys` certify coverage. Timestamp intervals remain placement and legacy compatibility data, not omission certification.
+`/dcp compact` asks Pi to create a native compaction entry from DCP state. DCP evaluates `minHiddenCoverageRatio` using only final rendered records after tier and budget admission, against the actual hidden range at Pi's unchanged proposed `firstKeptEntryId`; it never advances the cut to improve the ratio. Only exact `coveredSourceKeys` certify coverage. Timestamp intervals remain placement and legacy compatibility data, not omission certification.
 
 At sufficient coverage, the checkpoint contains a fresh current-intent-and-constraints handoff plus the retained DCP records allowed by the ordinary full/summary-only counts. The handoff is generated from the current effective context, including the retained recent tail and later corrections. It replaces accumulated compaction summary state: DCP does not recursively carry `preparation.previousSummary`. Uncovered hidden raw content, including tool evidence, may be omitted from the model checkpoint at this gate; canonical session history remains intact on disk. On commit, all fully hidden exact-coverage blocks are deactivated, including records omitted by aging or budget. This retirement also runs after a seeded host fallback; it does not depend on which records were rendered.
 
