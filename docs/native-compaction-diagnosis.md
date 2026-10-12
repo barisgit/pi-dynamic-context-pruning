@@ -1,0 +1,18 @@
+# Native compaction diagnosis — 2026-10-12
+
+Read-only investigation after the retention-classifier removal (`10eb404`). No Pi upgrade or edits to fo-coding-agent.
+
+## Observed evidence
+
+- `src/infrastructure/debug-log.ts` writes through `pi-extension-utils` to `~/.pi/log/dcp.jsonl`. The available current log and rotations `.1`, `.2`, `.3` contain **zero** `native_compaction_cancelled` events, **one** prepared checkpoint, **one** committed checkpoint, and **one** automatic continuation. The successful checkpoint was at `2026-10-09T20:08:38.634Z`, session `01a11b61-58e9-7438-898f-f1b9b3be312d`, boundary `d2db84e3`, model `anthropic/claude-opus-5-5`, thinking `high`.
+- Scanned local `~/.pi/agent/sessions/**/*.jsonl` entries dated October 7–12: **one** compaction entry; **zero** diagnostic `session_compact_failed` entries. Failed hooks do not write a compaction entry, so this is not a count of all attempts.
+- **18** assistant errors mention aborts: 14 `Operation aborted`, one `This operation was aborted`, one `Request was aborted`, two `Request aborted`. Their model-change context was 12 `claude-opus-5-5`, three `gpt-6-astra`, one each `xiaomi/mimo-v2.6-pro`, `gpt-6.1-sol`, and `claude-sonnet-5-5`; thinking was high for 15, off/medium/xhigh for one each. These are ordinary persisted assistant errors, **not established orientation failures**. The `This operation was aborted` error precedes the successful October 9 checkpoint by about 31 seconds.
+- All **14** compaction entries across the local corpus have a saved boundary according to the completed harness audit (`/Users/blaz/.pi/reports/harness-audit-2026-10-12.md`, A7). No unknown-boundary failure appears in the retained diagnostic evidence.
+
+## Conclusions and limits
+
+The claim that compaction never succeeded in the last five days is contradicted by the October 9 commit. The available logs cannot distinguish a reasoning-budget exhaustion from a provider abort or Pi's own signal abort for the reported failures. Orientation completions are not saved as ordinary assistant messages, and the existing generic exception discards `stopReason` and whether `event.signal` was aborted. No retained evidence proves `stopReason: length`, a provider timeout, or an orientation call on `gpt-5.6-sol`.
+
+Source proves a liveness defect independently: `checkpoint-handoff.ts` caps completion at 4096 tokens and rejects length/error/aborted responses with one generic error; `native-compaction.ts` catches that error and returns `cancel: true`. A provider-local failure therefore cancels Pi compaction even when Pi's own signal is live. Add outcome diagnostics and bounded retry/fail-open behavior rather than claiming an unobserved provider cause. Explicit low reasoning is supported by Pi's completion-options contract and avoids consuming the small orientation budget on deep reasoning, but is preventative rather than a proven historical root cause.
+
+Source also proves the coverage/retirement mismatch: coverage counts all active exact keys, retirement records every fully hidden block, while native summary admission follows retention tiers and token budget. The current renderer actually admits tier-selected active blocks, including blocks crossing the cut; the audit's description of a fully-hidden-only renderer does not exactly match this checkout. Gate and retirement must instead derive from the final admitted summaries, preserving the host's cut.
