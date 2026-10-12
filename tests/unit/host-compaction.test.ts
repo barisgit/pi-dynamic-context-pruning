@@ -361,3 +361,38 @@ test("new entry provenance survives serialization and repeated same-timestamp cu
   ]);
   expect(restored.messageAliases.byRef.has("m0002")).toBe(false);
 });
+
+test("predecessor v5 projected keys without provenance migrate when unambiguous", async () => {
+  const { restoreStateFromBranch } = await import("../../src/application/session-handler.js");
+  const { serializePersistedState } = await import("../../src/infrastructure/persistence.js");
+  const first = {
+    type: "compaction",
+    id: "first",
+    parentId: "e5",
+    firstKeptEntryId: "e3",
+    summary: "Pi summary",
+    timestamp: new Date(2000).toISOString(),
+  };
+  const before = [...entries, first] as any[];
+  const snapshot = buildTranscriptSnapshot(buildSessionContext(before).messages as any[]);
+  const record = block(
+    entries.map((e) => e.message),
+    4,
+    4,
+    1
+  );
+  record.metadata.coveredSourceKeys = [snapshot.sourceItems[2].key];
+  record.metadata.coveredSpanKeys = [snapshot.spans[2].key];
+  const state = makeState([record]);
+  const saved = {
+    type: "custom",
+    customType: "dcp-state",
+    id: "saved",
+    parentId: "first",
+    data: serializePersistedState(state),
+  };
+  const restored = makeState();
+  restoreStateFromBranch([...before, saved], restored, makeConfig());
+  expect(restored.compressionBlocks[0].active).toBe(true);
+  expect(restored.compressionBlocks[0].metadata!.coveredSourceEntryIds).toEqual(["e4"]);
+});

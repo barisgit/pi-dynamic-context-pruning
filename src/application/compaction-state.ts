@@ -88,12 +88,12 @@ export function reconcileCompactedBlocks(
           )
           .map((i) => i.key);
     const provenance = block.metadata?.coveredSourceEntryIds;
-    // Historical v5 coverage was always minted from full lineage. New snapshots
-    // carry entry provenance so a rebased ordinal can never be mistaken for it.
+    // Released historical coverage used full lineage; accept predecessor projected
+    // keys only when no lineage key conflicts. New provenance removes this ambiguity.
     const entryIds =
       provenance ??
       covered.map((key) =>
-        exact.length
+        exact.length && legacyEntryByKey.has(key)
           ? legacyEntryByKey.get(key)
           : oldEntryIds[oldItems.findIndex((item) => item.key === key)]
       );
