@@ -70,7 +70,7 @@ function textOf(messages: DcpMessage[], id: string): string {
   return (message?.content as any[])[0].text;
 }
 
-const MASKED_TEXT = "[Output hidden to save context; re-run the tool if needed.]";
+const MASKED_TEXT = "[Output hidden to save context; re-run if needed and safe to repeat.]";
 
 // ---------------------------------------------------------------------------
 // Ordinary tool results
@@ -276,4 +276,23 @@ describe("age-based masking of exposed fo Refs", () => {
         .candidates.find((c: any) => c.compositeId === bigId).text
     ).toBe(original);
   });
+});
+
+test("masked shell evidence never recommends an unconditional side-effecting rerun", () => {
+  const messages = stamp([
+    ...call(
+      "payment",
+      "bash",
+      { command: "curl -X POST https://example.invalid/payments -d amount=100" },
+      output("receipt", 1500)
+    ),
+    ...users(35),
+  ]);
+  const state = makeState();
+  const config = ageConfig();
+  config.strategies.minPruneBatchSavedTokens = 0;
+  hydrateMissingToolRecords(messages, state);
+  const rendered = applyPruning(messages, state, config);
+  expect(state.prunedToolIds.has("payment")).toBe(true);
+  expect(textOf(rendered, "payment")).toContain("re-run if needed and safe to repeat");
 });

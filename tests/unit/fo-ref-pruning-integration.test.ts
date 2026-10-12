@@ -136,7 +136,7 @@ describe("production fo Ref pruning integration", () => {
     expect(state.prunedToolIds.has("outer-run")).toBe(false);
     expect(state.prunedToolIds.has(candidate.compositeId)).toBe(true);
     expect(text.match(/Output hidden to save context/g)).toHaveLength(3);
-    expect(text).toContain("[Output hidden to save context; re-run the tool if needed.]");
+    expect(text).toContain("[Output hidden to save context; re-run if needed and safe to repeat.]");
     expect(text).toContain(`DERIVED:${original}`);
     expect(text).toContain("KEEP-AUTHORED");
     expect(text).toContain("KEEP-FINAL");
@@ -248,7 +248,7 @@ describe("production fo Ref pruning integration", () => {
       const collected = bridge.collect({ outerToolCallId: "outer-run", details: envelope });
       if (collected.status !== "supported") throw new Error("expected supported bridge");
       const candidate = collected.candidates[0];
-      const marker = `[Output hidden to save context; re-run the tool if needed.]`;
+      const marker = `[Output hidden to save context; re-run if needed and safe to repeat.]`;
       const direct = bridge.project({
         outerToolCallId: "outer-run",
         details: envelope,
@@ -326,7 +326,7 @@ describe("production fo Ref pruning integration", () => {
     const collected = bridge.collect({ outerToolCallId: "outer-run", details: envelope });
     if (collected.status !== "supported") throw new Error("expected supported bridge");
     const candidate = collected.candidates[0];
-    const marker = `[Output hidden to save context; re-run the tool if needed.]`;
+    const marker = `[Output hidden to save context; re-run if needed and safe to repeat.]`;
     const direct = bridge.project({
       outerToolCallId: "outer-run",
       details: envelope,
@@ -424,7 +424,7 @@ describe("production fo Ref pruning integration", () => {
         (message: DcpMessage) => message.toolCallId === "outer-run"
       );
       expect((resumedOuter.content as any[])[0].text).toContain(
-        "[Output hidden to save context; re-run the tool if needed.]"
+        "[Output hidden to save context; re-run if needed and safe to repeat.]"
       );
     }
   );
@@ -655,7 +655,7 @@ describe("production fo Ref pruning integration", () => {
         (message: DcpMessage) => message.toolCallId === "ordinary-failed"
       );
       expect((failedResult.content as any[])[0].text).toContain(
-        "[Output hidden to save context; re-run the tool if needed.]"
+        "[Output hidden to save context; re-run if needed and safe to repeat.]"
       );
     }
   );

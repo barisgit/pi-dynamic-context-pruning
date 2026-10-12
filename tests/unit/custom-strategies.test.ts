@@ -210,13 +210,13 @@ describe("retired customStrategies compatibility", () => {
     const pruned = applyPruning(messages, state, cfg);
 
     expect(resultText(pruned, "head")).toBe(
-      "l1\nl2\n[... 3 lines hidden to save context; re-run the tool if needed. ...]"
+      "l1\nl2\n[... 3 lines hidden to save context; re-run if needed and safe to repeat. ...]"
     );
     expect(resultText(pruned, "tail")).toBe(
-      "[... 3 lines hidden to save context; re-run the tool if needed. ...]\nl4\nl5"
+      "[... 3 lines hidden to save context; re-run if needed and safe to repeat. ...]\nl4\nl5"
     );
     expect(resultText(pruned, "both")).toBe(
-      "l1\n[... 3 lines hidden to save context; re-run the tool if needed. ...]\nl5"
+      "l1\n[... 3 lines hidden to save context; re-run if needed and safe to repeat. ...]\nl5"
     );
   });
 
@@ -350,7 +350,7 @@ describe("prunedToolIds GC", () => {
     expect(state.prunedToolIds.has("absent")).toBe(false);
     expect(state.prunedToolActions.has("absent")).toBe(false);
     expect(resultText(pruned, "present")).toContain(
-      "[Output hidden to save context; re-run the tool if needed.]"
+      "[Output hidden to save context; re-run if needed and safe to repeat.]"
     );
   });
 });

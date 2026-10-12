@@ -173,7 +173,7 @@ Ordinary live blocks with selected boundary IDs render `Record m0003–m0016 (en
 
 Pi alone summarizes canonical session history using its own compaction settings and `/compact` command. DCP has no before-compaction hook, summary generator, cancellation, custom compaction trigger, or `nativeCompaction` configuration. Recommended host settings are `reserveTokens: 16384` and `keepRecentTokens: 35000`.
 
-After a successful compaction, DCP retires every block whose coverage is wholly or partly outside the kept tail. Blocks entirely within that tail remain active; their source/span keys and placement anchors are rebased into Pi's new projection. DCP resets nudge watermarks and persists the reconciled state. Resume also reconciles cuts committed after the last saved DCP snapshot. Canonical history remains on disk; Pi's summary, not a DCP checkpoint, carries the hidden history forward. Model summarization is not a losslessness guarantee.
+After a successful compaction, DCP retires every block whose coverage is wholly or partly outside the kept tail. Blocks entirely within that tail remain active; their source/span keys and placement anchors are rebased into Pi's new projection. Optional stable entry provenance in v5 metadata distinguishes equal-timestamp ordinal collisions; older snapshots derive it automatically from full lineage. DCP resets nudge watermarks and persists the reconciled state. Resume also reconciles cuts committed after the last saved DCP snapshot. Canonical history remains on disk; Pi's summary, not a DCP checkpoint, carries the hidden history forward. Model summarization is not a losslessness guarantee.
 
 Historical heading-bearing state and heading-only exchanges remain readable without conversion. Headings are historical input, not current instructions. DCP still aggregates fo's versioned sandbox timelines in ordinary blocks.
 
@@ -210,7 +210,7 @@ Outer `run`, `subagent`, and `workflow` results are not treated as generic raw l
 
 With the optional version-aware fo exposed-Ref bridge, DCP applies exact-result deduplication and shared protection/cadence/savings gates, and opt-in age masking to identifiable **exposed** inner results through the same precise projection. Fo owns canonical Ref enumeration and text projection; DCP owns retention selection. No bridge is required for normal Pi. Missing or unsupported bridges leave containers intact rather than guessing from their displayed text.
 
-Masked output reads: `[Output hidden to save context; re-run the tool if needed.]`. There is no recovery tool or model-visible recovery ID. Canonical originals remain on disk. Re-run observational tools when their hidden evidence is needed; mutating tools remain protected.
+Masked output reads: `[Output hidden to save context; re-run if needed and safe to repeat.]`. There is no recovery tool or model-visible recovery ID. Canonical originals remain on disk. Re-run only observational or otherwise safe-to-repeat tools. Write/edit/patch tools are protected, but successful shell commands can be masked regardless of side effects.
 
 ### Prefix-cache considerations
 

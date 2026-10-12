@@ -19,7 +19,7 @@ The two stamp/strip passes also support callers that enter through finalization 
 
 ## Ref projection invariants
 
-Outer containers, images, unsupported/ambiguous output, private inner results and derived text remain protected. The optional fo bridge enumerates only attributable public Refs and projects all copies consistently. Missing bridges fail closed. Placeholders say output was hidden to save context and the tool can be re-run. Internal composite selection IDs are never rendered as recovery instructions; originals and assistant/tool pairs stay canonical. Applied IDs/actions persist through the existing session format.
+Outer containers, images, unsupported/ambiguous output, private inner results and derived text remain protected. The optional fo bridge enumerates only attributable public Refs and projects all copies consistently. Missing bridges fail closed. Placeholders say output was hidden to save context and the tool can be re-run if needed and safe to repeat. Internal composite selection IDs are never rendered as recovery instructions; originals and assistant/tool pairs stay canonical. Applied IDs/actions persist through the existing session format.
 
 ## IDs and ownership
 

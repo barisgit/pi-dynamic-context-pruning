@@ -185,14 +185,14 @@ describe("fo Ref adapter projection", () => {
     expect(calls).toHaveLength(3);
     expect(calls[0]).toEqual({});
     expect(calls[1]?.[first.localId]).toContain(
-      "[Output hidden to save context; re-run the tool if needed.]"
+      "[Output hidden to save context; re-run if needed and safe to repeat.]"
     );
     expect(calls[1]?.[second.localId]).toBeUndefined();
     expect(calls[2]?.[first.localId]).toContain(
-      "[Output hidden to save context; re-run the tool if needed.]"
+      "[Output hidden to save context; re-run if needed and safe to repeat.]"
     );
     expect(calls[2]?.[second.localId]).toBe(
-      `a\n[... 3 lines hidden to save context; re-run the tool if needed. ...]\ne`
+      `a\n[... 3 lines hidden to save context; re-run if needed and safe to repeat. ...]\ne`
     );
     expect(result.originalText).toBe("ORIGINAL OUTER MODEL TEXT");
     expect(result.baselineText).toContain(first.localId);
@@ -224,7 +224,7 @@ describe("fo Ref adapter projection", () => {
       maxVisibleBytes: 10_000,
     });
     expect(calls[2]?.[exposed.localId]).toBe(
-      `line 1\n[... 2 lines hidden to save context; re-run the tool if needed. ...]\nline 4`
+      `line 1\n[... 2 lines hidden to save context; re-run if needed and safe to repeat. ...]\nline 4`
     );
   });
 

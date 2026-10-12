@@ -142,7 +142,7 @@ describe("context materialization routing", () => {
     expect(state.toolCalls.has("read-2")).toBe(true);
     expect(state.prunedToolIds.has("read-1")).toBe(true);
     expect(textOf(firstResult)).toContain(
-      "[Output hidden to save context; re-run the tool if needed.]"
+      "[Output hidden to save context; re-run if needed and safe to repeat.]"
     );
   });
 
