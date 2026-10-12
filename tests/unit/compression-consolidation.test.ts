@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
 import { registerCompressTool } from "../../src/application/compress-tool/registration.js";
-import { buildDcpNativeCompactionResult } from "../../src/application/native-compaction.js";
 import { applyPruning } from "../../src/domain/pruning/index.js";
 import { renderCompressedBlockText } from "../../src/domain/compression/materialize.js";
 import {
@@ -27,7 +26,6 @@ function harness() {
   const state = makeState();
   const config = makeConfig();
   config.compress.protectRecentTurns = 1;
-  config.nativeCompaction.enabled = false;
   applyPruning(messages, state, config);
   let tool: any;
   const pi = {
@@ -97,25 +95,6 @@ describe("agent-authored block consolidation", () => {
     expect(
       renderCompressedBlockText({ ...restored.compressionBlocks[1]!, detailLevel: "compact" })
     ).not.toContain("OLD_RECORD_DETAIL");
-
-    config.nativeCompaction.enabled = true;
-    const branchEntries: any[] = messages.map((message, index) => ({
-      type: "message",
-      timestamp: new Date(message.timestamp).toISOString(),
-      id: `entry-${index}`,
-      parentId: index === 0 ? null : `entry-${index - 1}`,
-      message,
-    }));
-    const checkpoint = buildDcpNativeCompactionResult({
-      state: restored,
-      config,
-      branchEntries,
-      preparation: { firstKeptEntryId: "entry-2", tokensBefore: 10_000 },
-      request: { id: "consolidated-checkpoint", reason: "host", requestedAt: 1 },
-      handoff: "Continue with revised permission boundary.",
-    });
-    expect(checkpoint.summary).toContain("revised permission boundary");
-    expect(checkpoint.summary).not.toContain("OLD_RECORD_DETAIL");
   });
 
   test("a range across blocks retires both children and renders only the replacement", async () => {

@@ -1,6 +1,6 @@
 # Dynamic Context Pruning (DCP) for Pi
 
-Maintains useful working context in long Pi sessions through authored historical records, selective tool-output pruning, and compaction checkpoints. Intent, restrictions, corrections, and verification evidence take priority over minimum token count or maximum cache reuse. Compression is not a guarantee of losslessness.
+Maintains useful working context in long Pi sessions through authored historical records, selective tool-output pruning, and Pi-owned compaction. Intent, restrictions, corrections, and verification evidence take priority over minimum token count or maximum cache reuse. Compression is not a guarantee of losslessness.
 
 ## Features
 
@@ -9,7 +9,7 @@ Maintains useful working context in long Pi sessions through authored historical
 - **Age masking** — optional (`strategies.ageMasking.enabled`) recoverable masking of old successful tool outputs and exposed fo Refs, through the same savings gates
 - **Context nudges** — injects compression reminders into the context at configurable thresholds: soft housekeeping notices, strong emergency warnings, and iteration reminders after long tool-call chains
 - **Session persistence via direct restore** — compression blocks and pruning state survive session restarts. Active blocks are persisted with exact coverage/anchor metadata and restored directly; replay is kept only for offline vacuum/verification scripts.
-- **Native pi compaction bridge** — builds a budgeted checkpoint from retained DCP records plus a fresh, tail-informed orientation, with coverage-gated host fallback
+- **Pi-owned compaction** — Pi summarizes; DCP retires blocks that leave the kept tail and rebases surviving coverage
 - **Original-output recovery** — `dcp_recover` reads saved tool results or exposed fo Refs without rerunning the original operation
 - **Debug logging** — optional best-effort JSONL diagnostics at `~/.pi/log/dcp.jsonl`
 - **`/dcp` commands** — inspect context usage, view stats, and trigger compression interactively
@@ -55,7 +55,7 @@ DCP uses a layered configuration system (later layers override earlier ones):
 
 ### Example: `~/.pi/agent/dcp.jsonc`
 
-The example uses package pruning defaults: **25 tokens/item, 100 tokens/batch, 1 logical turn/cadence**. The current user deployment deliberately keeps **100 / 10,000 / 25**, respectively; these are user overrides, not new package defaults. Its native checkpoint overrides remain **35,000 tokens** and **0.50 minimum hidden coverage**. Age/size settings only make outputs eligible for review; they do not authorize age-only deletion.
+The example uses package pruning defaults: **25 tokens/item, 100 tokens/batch, 1 logical turn/cadence**. The current user deployment deliberately keeps **100 / 10,000 / 25**, respectively; these are user overrides, not new package defaults. Age/size settings only make outputs eligible for review; they do not authorize age-only deletion.
 
 ```jsonc
 {
@@ -91,19 +91,6 @@ The example uses package pruning defaults: **25 tokens/item, 100 tokens/batch, 1
     "nudgeForce": "soft",
     // These tool outputs are never auto-pruned
     "protectedTools": ["compress", "write", "edit"],
-  },
-  "nativeCompaction": {
-    // Normal DCP compression requests pi-native compaction immediately when
-    // the active branch has this many user/assistant/toolResult/bashExecution
-    // messages and active DCP blocks exist. Passthrough entries (DCP
-    // reminders, prior compactions, branch summaries) are not counted.
-    "enabled": true,
-    "autoTriggerMessageCount": 1000,
-    "autoTriggerForceMessageCount": 2000,
-    "minActiveBlockCount": 1,
-    // Current user overrides; package defaults may differ
-    "minHiddenCoverageRatio": 0.5,
-    "maxSummaryTokens": 35000,
   },
   "strategies": {
     // Batch heuristic tombstone additions onto turn boundaries that are
@@ -155,7 +142,6 @@ All commands are available in the pi TUI via `/dcp <subcommand>`:
 | `/dcp context`        | Show context window usage and session stats                     |
 | `/dcp stats`          | Show pruning statistics (tokens saved, blocks, operations)      |
 | `/dcp compress`       | Trigger LLM compression immediately (sends a follow-up message) |
-| `/dcp compact`        | Materialize active DCP blocks into a pi-native compaction entry |
 
 ## How It Works
 
@@ -182,25 +168,15 @@ A `summary` is local memory of the selected stretch, written for a continuing ag
 
 Existing blocks can be genuinely consolidated: use `b1` through `b3` to replace several settled records, or `b1` as both boundaries to rewrite just that block. Write the distilled replacement directly; old summaries are not automatically copied into it. Preserve still-relevant restrictions, corrections, evidence and unresolved work. An optional `(bN)` explicitly inserts a fully covered active record verbatim, at most once; unknown, inactive, repeated or out-of-range placeholders reject the whole call. Historical placeholder replay and already stored summaries remain compatible. Qualify superseded conclusions explicitly. Record direction and next actions as they stood at the stretch's close when needed for continuation; later user corrections take precedence. A fresh current orientation is generated only at compaction, not continuously maintained in every block. Recording a blocker or unknown at the end of an otherwise settled investigation is valid; ongoing work whose raw evidence is still needed should stay uncompressed.
 
-Ordinary live blocks with selected boundary IDs render `Record m0003–m0016 (ended <endId ISO timestamp>)` above their summary. Native compaction record rendering omits generated Record headers, including headers expanded from nested blocks; generated section tier/version labels are not needed in model-facing text. Boundary IDs, timestamps, and coverage remain structured bookkeeping. The default model-visible tiers are the newest 4 full records, the next 8 whole-summary-only records, and no rendered block for anything older. `renderFullBlockCount` and `renderCompactBlockCount` configure those existing counts; they do not add a new timer, cadence, or retention knob. An omitted old block still hides its covered raw range, and its canonical authored summary and coverage remain intact in state. Age positions are ranked across the canonical block log, including retired entries: committing a checkpoint cannot promote forgotten older blocks back into view.
+Ordinary live blocks with selected boundary IDs render `Record m0003–m0016 (ended <endId ISO timestamp>)` above their summary. The default model-visible tiers are the newest 4 full records, the next 8 whole-summary-only records, and no rendered block for anything older. `renderFullBlockCount` and `renderCompactBlockCount` configure those existing counts; they do not add a new timer, cadence, or retention knob. An omitted old block still hides its covered raw range, and its canonical authored summary and coverage remain intact in state. Age positions are ranked across the canonical block log, including retired entries: committing a checkpoint cannot promote forgotten older blocks back into view.
 
-### Compaction-only current orientation
+### Native Pi compaction
 
-There is no mutable live heading, heading-only tool call, heading-age reminder, or ordinary-turn heading injection. At a DCP native checkpoint, a dedicated completion on the working model generates a fresh orientation from the **current effective context, including the recent retained tail**. It states the authorized goal, progress, restrictions/corrections, unresolved issues, and next action. This does not start a recursive main-agent turn or rewrite the historical records. Long tool evidence is not clipped by Pi's ordinary summarization serializer.
+Pi alone summarizes canonical session history using its own compaction settings and `/compact` command. DCP has no before-compaction hook, summary generator, cancellation, custom compaction trigger, or `nativeCompaction` configuration. Recommended host settings are `reserveTokens: 16384` and `keepRecentTokens: 35000`.
 
-Historical heading-bearing state and heading-only tool exchanges remain readable. Old headings are historical input, not automatically current instructions. Existing sessions resume without a new-session requirement, manual conversion, or a storage-schema change for this interface update.
+After a successful compaction, DCP retires every block whose coverage is wholly or partly outside the kept tail. Blocks entirely within that tail remain active; their source/span keys and placement anchors are rebased into Pi's new projection. DCP resets nudge watermarks and persists the reconciled state. Resume also reconciles cuts committed after the last saved DCP snapshot. Canonical history remains on disk; Pi's summary, not a DCP checkpoint, carries the hidden history forward. Model summarization is not a losslessness guarantee.
 
-DCP recognizes fo-coding-agent's versioned `sandbox.result` timeline as a container and aggregates its nested operations rather than rendering hundreds of outer `run` calls.
-
-### Native pi compaction
-
-`/dcp compact` asks Pi to create a native compaction entry from DCP state. DCP evaluates `minHiddenCoverageRatio` using only final rendered records after tier and budget admission, against the actual hidden range at Pi's unchanged proposed `firstKeptEntryId`; it never advances the cut to improve the ratio. Only exact `coveredSourceKeys` certify coverage. Timestamp intervals remain placement and legacy compatibility data, not omission certification.
-
-At sufficient coverage, the checkpoint contains a fresh current-intent-and-constraints handoff plus the retained DCP records allowed by the ordinary full/summary-only counts. The handoff is generated from the current effective context, including the retained recent tail and later corrections. It replaces accumulated compaction summary state: DCP does not recursively carry `preparation.previousSummary`. Uncovered hidden raw content, including tool evidence, may be omitted from the model checkpoint at this gate; canonical session history remains intact on disk. On commit, only fully hidden exact-coverage records actually supplied in the checkpoint or host seed are deactivated. Tier/budget omissions remain active canonical history; retirement never promotes older records in ordinary tier ranking.
-
-`nativeCompaction.maxSummaryTokens` budgets this checkpoint. DCP first strips optional block metadata, then drops whole oldest retained records until the checkpoint fits; it never clips an authored summary. If the fresh handoff itself is still oversized, DCP falls back to Pi's host summarizer and seeds it by replacing `preparation.previousSummary` with the fresh intent/constraints. Low rendered coverage uses the host fallback seeded with the final admitted records and fresh orientation. The fallback is not passed through `event.customInstructions`, and prior summaries are not appended recursively. This avoids the former preserve-all budget-cancellation dead end while retaining a fresh statement of current intent.
-
-An unknown host boundary cancels to prevent Pi from dropping the kept tail. A failed, empty, or truncated orientation retries once while Pi’s abort signal is live, then warns and lets Pi summarize with its original preparation. Pi’s own abort stops without a retry. Auto-trigger timing remains governed by the existing message-count and coverage settings; this contract adds no new timing knobs. `/dcp compact` with no active blocks still skips as a command-level convenience. Disabling DCP or `nativeCompaction.enabled` leaves host compaction unchanged. Compression and checkpointing improve continuation utility but provide no blanket fidelity or losslessness guarantee.
+Historical heading-bearing state and heading-only exchanges remain readable without conversion. Headings are historical input, not current instructions. DCP still aggregates fo's versioned sandbox timelines in ordinary blocks.
 
 ### Atomic tool pair removal
 
@@ -247,7 +223,7 @@ Recovery reads the saved original on the current branch; it does not rerun a too
 
 Compression, exact duplicate replacement, block aging and provider-payload filtering can change old context. Existing `strategies.pruneCadenceTurns` controls pruning opportunities; `minPruneItemSavedTokens` and `minPruneBatchSavedTokens` govern exact duplicate and age-masking removals together. Cadence counts DCP logical turns, including autonomous tool batches, not just user chat turns. Actual token savings include recovery-marker/projection cost; a candidate must not be mistaken for a committed removal.
 
-Native checkpoint timing, block-aging counts and red-zone behavior are unchanged by this simplification.
+Masking cadence, block-aging counts and red-zone behavior are unchanged.
 
 ## Session persistence (direct restore)
 

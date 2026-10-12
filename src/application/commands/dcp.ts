@@ -3,7 +3,6 @@ import type { AutocompleteItem } from "@earendil-works/pi-tui";
 import type { DcpState } from "../../types/state.js";
 import type { DcpConfig } from "../../types/config.js";
 import { computeDisplayedTokensSaved, updateDcpStatus } from "../status.js";
-import { triggerDcpNativeCompaction } from "../native-compaction.js";
 
 // ---------------------------------------------------------------------------
 // Formatting helpers
@@ -23,7 +22,7 @@ Commands:
   /dcp context      — Show context window usage breakdown
   /dcp stats        — Show pruning statistics for this session
   /dcp compress     — Trigger compression (sends compress tool invocation to LLM)
-  /dcp compact      — Materialize active DCP blocks into pi-native compaction`;
+`;
 
 function handleHelp(ctx: ExtensionCommandContext): void {
   ctx.ui.notify(HELP_TEXT, "info");
@@ -114,11 +113,6 @@ async function handleCompress(pi: ExtensionAPI, ctx: ExtensionCommandContext): P
   ctx.ui.notify("Triggered compression", "info");
 }
 
-async function handleNativeCompact(ctx: ExtensionCommandContext, state: DcpState): Promise<void> {
-  await ctx.waitForIdle();
-  await triggerDcpNativeCompaction(ctx, state, "command");
-}
-
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
@@ -131,11 +125,6 @@ export function registerCommands(pi: ExtensionAPI, state: DcpState, _config: Dcp
         { value: "context", label: "context", description: "Show context window usage breakdown" },
         { value: "stats", label: "stats", description: "Show pruning statistics" },
         { value: "compress", label: "compress", description: "Trigger LLM compression" },
-        {
-          value: "compact",
-          label: "compact",
-          description: "Materialize DCP blocks into pi compaction",
-        },
         { value: "help", label: "help", description: "Show help" },
       ];
       const matched = subcommands
@@ -164,10 +153,6 @@ export function registerCommands(pi: ExtensionAPI, state: DcpState, _config: Dcp
 
         case "compress":
           await handleCompress(pi, ctx);
-          break;
-
-        case "compact":
-          await handleNativeCompact(ctx, state);
           break;
 
         default:

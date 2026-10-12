@@ -16,7 +16,7 @@ import { makeConfig, makeState } from "../helpers/dcp-test-utils.js";
 // ---------------------------------------------------------------------------
 
 describe("VAL: legacy commands and manualMode removed", () => {
-  test("/dcp registers only context/stats/compress/compact/help completions", () => {
+  test("/dcp registers only context/stats/compress/help completions", () => {
     const state = makeState();
     const config = makeConfig();
 
@@ -32,7 +32,7 @@ describe("VAL: legacy commands and manualMode removed", () => {
     expect(registered).not.toBeNull();
     const items = registered.getArgumentCompletions("") ?? [];
     const values = items.map((it: any) => it.value).sort();
-    expect(values).toEqual(["compact", "compress", "context", "help", "stats"]);
+    expect(values).toEqual(["compress", "context", "help", "stats"]);
   });
 
   test("unknown removed subcommands fall through to error notify", async () => {

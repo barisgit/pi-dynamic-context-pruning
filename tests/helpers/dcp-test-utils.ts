@@ -84,15 +84,6 @@ export function makeConfig(): DcpConfig & {
       protectedTools: [],
       protectUserMessages: false,
     },
-    nativeCompaction: {
-      enabled: true,
-      autoTriggerMessageCount: 1000,
-      autoTriggerForceMessageCount: 2000,
-      minActiveBlockCount: 1,
-      minHiddenCoverageRatio: 0,
-      maxPreviousSummaryTokens: 4000,
-      maxSummaryTokens: 20000,
-    },
     strategies: {
       candidates: { minAgeTurns: 15, minResultTokens: 300, protectedTools: [] },
       pruneCadenceTurns: 1,

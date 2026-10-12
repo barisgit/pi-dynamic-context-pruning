@@ -1,13 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import {
-  buildDcpNativeCompactionResult,
-  registerDcpNativeCompactionBridge,
-} from "../../src/application/native-compaction.js";
-import {
   applyPruning,
   selectRetainedCompressionBlockDetails,
 } from "../../src/domain/pruning/index.js";
-import { estimateTokens } from "../../src/domain/tokens/estimate.js";
 import {
   restorePersistedState,
   serializePersistedState,
@@ -165,32 +160,6 @@ function makeCanonicalHistory(): {
   };
 }
 
-async function commitNativeResult(
-  state: ReturnType<typeof makeState>,
-  config: ReturnType<typeof makeConfig>,
-  details: NonNullable<ReturnType<typeof buildDcpNativeCompactionResult>["details"]>
-): Promise<void> {
-  const handlers = new Map<string, any>();
-  const pi = {
-    on: (name: string, handler: any) => handlers.set(name, handler),
-    appendEntry: () => undefined,
-  };
-  registerDcpNativeCompactionBridge(pi as any, state, config, async () => "fresh handoff");
-  await handlers.get("session_compact")(
-    { compactionEntry: { details } },
-    {
-      hasUI: false,
-      sessionManager: {
-        getSessionId: () => "retention-test",
-        getCwd: () => "/tmp",
-        getSessionDir: () => "/tmp",
-        getSessionFile: () => "/tmp/retention-test.jsonl",
-        getLeafId: () => "tail",
-      },
-    }
-  );
-}
-
 describe("compression block retention tiers", () => {
   test("renders newest full, next compact, and omits whole older blocks while hiding covered raw", () => {
     const config = makeConfig();
@@ -238,152 +207,5 @@ describe("compression block retention tiers", () => {
     expect(text).not.toContain("summary-1-");
     expect(restored.compressionBlocks).toHaveLength(4);
     expect(restored.compressionBlocks.every((block) => block.active)).toBe(true);
-  });
-
-  test("native retirement does not promote older active blocks after append or v5 restore", async () => {
-    const { blocks, messages, entries, firstOlderEntryId } = makeCanonicalHistory();
-    const config = makeConfig();
-    const state = makeState(blocks);
-
-    const initial = renderedText(applyPruning(messages, state, config));
-    for (let id = 19; id <= 22; id++) {
-      expect(initial).toContain(`CANONICAL_SUMMARY_${id}_END`);
-      expect(initial).toContain(`FULL_ONLY_${id}`);
-    }
-    for (let id = 11; id <= 18; id++) {
-      expect(initial).toContain(`CANONICAL_SUMMARY_${id}_END`);
-      expect(initial).not.toContain(`FULL_ONLY_${id}`);
-    }
-    for (let id = 1; id <= 10; id++) expect(initial).not.toContain(`CANONICAL_SUMMARY_${id}_END`);
-
-    const checkpoint = buildDcpNativeCompactionResult({
-      state,
-      config,
-      branchEntries: entries,
-      preparation: { firstKeptEntryId: firstOlderEntryId, tokensBefore: 10_000 },
-      request: { id: "retention-regression", reason: "host", requestedAt: 1 },
-      handoff: "Continue with retained work.",
-    });
-    expect(checkpoint.details?.representedBlockIds).toEqual(
-      Array.from({ length: 12 }, (_, index) => index + 11)
-    );
-    await commitNativeResult(state, config, checkpoint.details!);
-
-    expect(
-      state.compressionBlocks.filter((block) => block.active).map((block) => block.id)
-    ).toEqual(Array.from({ length: 10 }, (_, index) => index + 1));
-    expect(selectRetainedCompressionBlockDetails(state.compressionBlocks, 4, 8).size).toBe(0);
-
-    const retainedTail = messages.slice(24);
-    const postCheckpointMessages = [
-      {
-        role: "user",
-        content: [{ type: "text", text: checkpoint.summary }],
-        timestamp: 12_500,
-      },
-      ...retainedTail,
-      {
-        role: "user",
-        content: [{ type: "text", text: "APPENDED_WORK" }],
-        timestamp: 31_000,
-      },
-    ];
-    const afterAppend = JSON.stringify(applyPruning(postCheckpointMessages, state, config));
-    expect(afterAppend).toContain("APPENDED_WORK");
-    for (let id = 1; id <= 10; id++) {
-      expect(afterAppend).not.toContain(`CANONICAL_SUMMARY_${id}_END`);
-      expect(afterAppend).not.toContain(`COVERED_RAW_${id}`);
-      expect(afterAppend).not.toContain(`call-${id}`);
-    }
-
-    const persisted = serializePersistedState(state);
-    expect(persisted.schemaVersion).toBe(5);
-    const restored = makeState();
-    restorePersistedState(persisted, restored);
-    expect(selectRetainedCompressionBlockDetails(restored.compressionBlocks, 4, 8).size).toBe(0);
-    const afterRestore = JSON.stringify(applyPruning(postCheckpointMessages, restored, config));
-    for (let id = 1; id <= 10; id++) {
-      expect(afterRestore).not.toContain(`CANONICAL_SUMMARY_${id}_END`);
-      expect(afterRestore).not.toContain(`COVERED_RAW_${id}`);
-      expect(afterRestore).not.toContain(`call-${id}`);
-    }
-  });
-
-  test("native commit retains omitted canonical summaries through persistence", async () => {
-    const { blocks, entries, tailEntryId } = makeCanonicalHistory();
-    const state = makeState(blocks);
-    const config = makeConfig();
-    const summariesBefore = blocks.map((block) => block.summary);
-
-    const oneRecordConfig = makeConfig();
-    oneRecordConfig.compress.renderFullBlockCount = 0;
-    oneRecordConfig.compress.renderCompactBlockCount = 1;
-    oneRecordConfig.nativeCompaction.maxSummaryTokens = 0;
-    const oneRecord = buildDcpNativeCompactionResult({
-      state,
-      config: oneRecordConfig,
-      branchEntries: entries,
-      preparation: { firstKeptEntryId: tailEntryId, tokensBefore: 10_000 },
-      request: { id: "budget-probe", reason: "host", requestedAt: 1 },
-    });
-    config.nativeCompaction.maxSummaryTokens = estimateTokens(oneRecord.summary);
-
-    const checkpoint = buildDcpNativeCompactionResult({
-      state,
-      config,
-      branchEntries: entries,
-      preparation: { firstKeptEntryId: tailEntryId, tokensBefore: 10_000 },
-      request: { id: "all-hidden", reason: "host", requestedAt: 2 },
-    });
-    expect(checkpoint.summary).toContain("CANONICAL_SUMMARY_22_END");
-    expect(checkpoint.summary).not.toContain("CANONICAL_SUMMARY_21_END");
-    expect(checkpoint.summary).not.toContain("CANONICAL_SUMMARY_1_END");
-    expect(checkpoint.details?.representedBlockIds).toEqual([22]);
-
-    await commitNativeResult(state, config, checkpoint.details!);
-    expect(
-      state.compressionBlocks.filter((block) => !block.active).map((block) => block.id)
-    ).toEqual([22]);
-    expect(state.compressionBlocks.map((block) => block.summary)).toEqual(summariesBefore);
-
-    const persisted = serializePersistedState(state);
-    expect(state.compressionBlocks.map((block) => block.summary)).toEqual(summariesBefore);
-    if (persisted.schemaVersion !== 5 || "unchanged" in persisted) {
-      throw new Error("expected v5 state");
-    }
-    expect(
-      persisted.blocks.filter((block) => block.summary === "").map((block) => block.id)
-    ).toEqual([22]);
-
-    const restored = makeState();
-    restorePersistedState(persisted, restored);
-    expect(
-      restored.compressionBlocks.filter((block) => !block.active).map((block) => block.id)
-    ).toEqual([22]);
-    expect(selectRetainedCompressionBlockDetails(restored.compressionBlocks, 4, 8).size).toBe(11);
-    const materialized = JSON.stringify(
-      applyPruning(
-        [
-          {
-            role: "user",
-            content: [{ type: "text", text: checkpoint.summary }],
-            timestamp: 30_000,
-          },
-          {
-            role: "user",
-            content: [{ type: "text", text: "APPENDED_AFTER_ALL_HIDDEN" }],
-            timestamp: 31_000,
-          },
-        ],
-        restored,
-        config
-      )
-    );
-    expect(materialized).toContain("APPENDED_AFTER_ALL_HIDDEN");
-    expect(restored.compressionBlocks.find((block) => block.id === 21)?.summary).toBe(
-      "CANONICAL_SUMMARY_21_END"
-    );
-    expect(materialized).not.toContain("CANONICAL_SUMMARY_21_END");
-    expect(materialized).not.toContain("CANONICAL_SUMMARY_1_END");
   });
 });

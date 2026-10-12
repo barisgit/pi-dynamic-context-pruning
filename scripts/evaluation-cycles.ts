@@ -3,12 +3,10 @@ import { join } from "node:path";
 import {
   buildSessionContext,
   convertToLlm,
+  serializeConversation,
   type SessionEntry,
 } from "@earendil-works/pi-coding-agent";
-import { createCheckpointHandoffGenerator } from "../src/application/checkpoint-handoff.js";
-import { buildDcpNativeCompactionResult } from "../src/application/native-compaction.js";
 import { renderCompressedBlockText } from "../src/domain/compression/materialize.js";
-import { makeConfig, makeState } from "../tests/helpers/dcp-test-utils.js";
 import type { Context } from "@earendil-works/pi-ai";
 import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
 export type Completion = ModelRegistry["complete"];
@@ -129,29 +127,26 @@ export async function runCycles(options: CycleOptions): Promise<unknown> {
       detailLevel: "minimal",
     })
   );
-  const config = makeConfig();
-  config.nativeCompaction.maxSummaryTokens = 35000;
-  const state = makeState();
-  let previousSummary = "";
   const observations: unknown[] = [];
-  const generator = createCheckpointHandoffGenerator(options.completion);
-  const modelContext = {
-    model: options.model,
-    modelRegistry: {},
-  };
   async function checkpoint(cycle: number): Promise<void> {
     const firstKeptEntryId = entries.at(-1)!.id;
-    const event = { branchEntries: entries, signal: new AbortController().signal };
-    const handoff = await generator(event as never, modelContext as never, state, config);
-    const result = buildDcpNativeCompactionResult({
-      state,
-      config,
-      branchEntries: entries,
-      preparation: { firstKeptEntryId, tokensBefore: 0, previousSummary },
-      request: { id: `${options.id}-${cycle}`, reason: "host", requestedAt: clock },
-      handoff,
-    });
-    previousSummary = result.summary;
+    // Offline evaluation only: model-generated summaries using Pi's serializer.
+    const response = await options.completion(
+      options.model,
+      {
+        systemPrompt:
+          "Summarize the conversation for continuation. Preserve current intent, constraints, corrections, verification evidence and unresolved work.",
+        messages: [
+          {
+            role: "user",
+            content: serializeConversation(convertToLlm(buildSessionContext(entries).messages)),
+            timestamp: clock,
+          },
+        ],
+      },
+      { maxTokens: 4096, cacheRetention: "none" }
+    );
+    const result = { summary: text(response), firstKeptEntryId, tokensBefore: 0 };
     entries.push({
       type: "compaction",
       id: `e${entries.length}`,

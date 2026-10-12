@@ -11,10 +11,6 @@ import { applyPruning, injectMessageIds } from "../../src/domain/pruning/index.j
 import { registerCompressTool } from "../../src/application/compress-tool/registration.js";
 import { registerContextHandler } from "../../src/application/context-handler.js";
 import {
-  buildDcpNativeCompactionResult,
-  registerDcpNativeCompactionBridge,
-} from "../../src/application/native-compaction.js";
-import {
   serializePersistedState,
   restorePersistedState,
 } from "../../src/infrastructure/persistence.js";
@@ -136,29 +132,6 @@ describe("mutable heading", () => {
     }
   });
 
-  test("renders exact full heading for compaction without injecting it into ordinary context", () => {
-    const h = harness();
-    h.state.compressionBlocks = [block()];
-    h.state.heading = heading;
-    const rendered = applyPruning(messages, h.state, h.config);
-    const expected =
-      '<heading revised-after="m0002">\nGoal: Objective: .charters/example/charter.md\n\nNow: The renderer passed tests; release approval remains.\n\nNext: Request approval so the release can proceed.\n\nConstraints: Do not commit.\n</heading>';
-    expect(renderHeading(heading)).toBe(expected);
-    expect(rendered).toHaveLength(3);
-    expect(rendered.some((message) => message[INTERNAL_HEADING])).toBe(false);
-    expect(JSON.stringify(rendered)).not.toContain("<heading ");
-    expect(JSON.stringify(rendered[0])).toContain(
-      "Record m0001–m0001 (ended 1970-01-01T00:00:01.000Z)"
-    );
-    expect(JSON.stringify(rendered[1])).toContain("raw before tail");
-    expect(JSON.stringify(rendered[2])).toContain("hot tail");
-    expect(
-      renderHeading({ goal: "g", now: "n", next: "x", revisedAfterId: "m0001", revisedAt: 1 })
-    ).not.toContain("Constraints:");
-    expect(applyPruning(messages, h.state, h.config)).toEqual(rendered);
-    expect(h.state.currentTurn).toBe(3);
-  });
-
   test("ordinary tool calls preserve the rendered prefix even when heading state changes", () => {
     for (const blocks of [[], [block()]]) {
       const h = harness();
@@ -213,42 +186,6 @@ describe("mutable heading", () => {
     const result = applyPruning(inputWithHeading, h.state, h.config);
     expect(result.filter((message) => message[INTERNAL_HEADING])).toHaveLength(0);
     expect(h.state.currentTurn).toBe(3);
-  });
-
-  test("legacy heading remains stored while fresh orientation replaces history and budget uses fallback", async () => {
-    const h = harness();
-    h.state.heading = heading;
-    h.state.compressionBlocks = [block()];
-    const args = {
-      state: h.state,
-      config: h.config,
-      branchEntries: branch as any,
-      preparation: { firstKeptEntryId: "entry-1", tokensBefore: 1000 },
-      request: { id: "req", reason: "command" as const, requestedAt: 4000 },
-      handoff: "Fresh orientation from recent corrections.",
-    };
-    const summary = buildDcpNativeCompactionResult(args).summary;
-    expect(summary.startsWith("<current-orientation>")).toBe(true);
-    expect(summary).not.toContain(renderHeading(heading));
-    h.config.nativeCompaction.maxSummaryTokens = 1;
-    expect(() => buildDcpNativeCompactionResult(args)).toThrow("use host summarization");
-    const handlers = new Map<string, any>();
-    registerDcpNativeCompactionBridge(
-      { on: (name: string, handler: any) => handlers.set(name, handler) } as any,
-      h.state,
-      h.config,
-      async () => "fresh"
-    );
-    expect(
-      await handlers.get("session_before_compact")(
-        { branchEntries: branch, preparation: args.preparation },
-        h.ctx
-      )
-    ).toBeUndefined();
-    expect((args.preparation as any).previousSummary).toContain("fresh");
-    expect((args.preparation as any).previousSummary).not.toContain(renderHeading(heading));
-    expect(h.state.heading).toEqual(heading);
-    expect(h.state.compressionBlocks[0].active).toBe(true);
   });
 
   test("context reminder never requests ongoing heading maintenance", async () => {

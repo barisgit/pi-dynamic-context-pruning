@@ -10,6 +10,7 @@ import {
 } from "../infrastructure/persistence.js";
 import { countLogicalTurns } from "../domain/transcript/index.js";
 import { updateDcpStatus } from "./status.js";
+import { reconcileCompactedBlocks } from "./native-compaction.js";
 
 /** Apply config-derived baseline state before session hooks run. */
 export function initializeSessionState(_state: DcpState, _config: DcpConfig): void {
@@ -342,6 +343,16 @@ function directRestore(
     state,
     config
   );
+
+  // A process may stop after Pi commits but before the DCP snapshot flushes.
+  // Reconcile every cut newer than the restored snapshot, in branch order.
+  const snapshotIndex = latestEntry ? branchEntries.indexOf(latestEntry) : -1;
+  for (const entry of branchEntries.slice(snapshotIndex + 1)) {
+    if (entry?.type !== "compaction") continue;
+    reconcileCompactedBlocks(state, [...branchEntries], entry.id);
+    state.lastCompressTurn = -1;
+    state.lastNudgeTurn = -1;
+  }
 
   const repairedNudgeWatermarks = repairStaleNudgeWatermarks(branchEntries, state);
 

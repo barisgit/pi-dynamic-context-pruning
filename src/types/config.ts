@@ -20,18 +20,6 @@ export interface DcpConfig {
     protectedTools: string[]; // these tool outputs always protected from pruning
     protectUserMessages: boolean;
   };
-  nativeCompaction: {
-    enabled: boolean;
-    autoTriggerMessageCount: number;
-    autoTriggerForceMessageCount?: number;
-    minActiveBlockCount: number;
-    /** Minimum exact coverage at the actual cut for DCP replacement; lower coverage uses host summarization. */
-    minHiddenCoverageRatio: number;
-    /** Legacy compatibility knob; fresh handoff replaces recursive previous-summary carry. */
-    maxPreviousSummaryTokens: number;
-    /** Retained-memory budget: strip optional metadata, drop oldest whole records, then use host fallback. */
-    maxSummaryTokens: number;
-  };
   strategies: {
     /**
      * Mask old successful text tool outputs (ordinary results and exposed fo

@@ -24,7 +24,7 @@ test("five checkpoints preserve late restrictions and execute corrected next act
       completion: (async (_model: any, context: any) => {
         const serialized = JSON.stringify(context);
         expect(serialized).toContain("only local drafts are authorized");
-        if (context.systemPrompt.startsWith("Produce a fresh")) {
+        if (context.systemPrompt.startsWith("Summarize the conversation")) {
           handoffs++;
           return {
             stopReason: "stop",
@@ -110,7 +110,7 @@ test("late checkpoint uses executed action feedback and malformed JSON cannot ca
       model: { id: "injected", provider: "test" } as any,
       strategy: async (f) => ({ text: f.artifact }),
       completion: (async (_model: any, context: any) => {
-        if (context.systemPrompt.startsWith("Produce a fresh")) {
+        if (context.systemPrompt.startsWith("Summarize the conversation")) {
           sawFeedback = JSON.stringify(context).includes("Unknown action; no side effects");
           return {
             stopReason: "stop",

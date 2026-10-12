@@ -26,15 +26,6 @@ const DEFAULT_CONFIG: DcpConfig = {
     protectedTools: ["compress", "write", "edit"],
     protectUserMessages: false,
   },
-  nativeCompaction: {
-    enabled: true,
-    autoTriggerMessageCount: 1000,
-    autoTriggerForceMessageCount: 2000,
-    minActiveBlockCount: 3,
-    minHiddenCoverageRatio: 0.6,
-    maxPreviousSummaryTokens: 4000,
-    maxSummaryTokens: 20000,
-  },
   strategies: {
     ageMasking: { enabled: false },
     pruneCadenceTurns: 1,
@@ -76,17 +67,6 @@ const DEFAULT_CONFIG_FILE_CONTENT = `{
   //   "nudgeForce": "soft",
   //   "protectedTools": ["compress", "write", "edit"],
   //   "protectUserMessages": false
-  // },
-  // "nativeCompaction": {
-  //   // When enabled, normal DCP compression can immediately request pi-native
-  //   // compaction once the active branch has this many renderable messages.
-  //   "enabled": true,
-  //   "autoTriggerMessageCount": 1000,
-  //   "autoTriggerForceMessageCount": 2000,
-  //   "minActiveBlockCount": 3,
-  //   "minHiddenCoverageRatio": 0.6,
-  //   "maxPreviousSummaryTokens": 4000,
-  //   "maxSummaryTokens": 20000
   // },
   // "strategies": {
   //   // Batch tombstone additions onto bucketed turn boundaries to reduce
