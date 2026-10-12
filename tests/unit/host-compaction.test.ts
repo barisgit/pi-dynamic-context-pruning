@@ -150,3 +150,51 @@ test("resume repairs a host commit that happened after the last persisted DCP sn
   ).toBe(true);
   expect(restored.lastNudgeTurn).toBe(-1);
 });
+
+test("existing v5 full-lineage keys survive a second cut when coverage stays in the kept tail", async () => {
+  const { reconcileCompactedBlocks } = await import("../../src/application/compaction-state.js");
+  const previous = {
+    type: "compaction",
+    id: "prior",
+    parentId: "e5",
+    firstKeptEntryId: "e3",
+    summary: "prior summary",
+    timestamp: new Date(1500).toISOString(),
+  };
+  const branch = [
+    ...entries,
+    previous,
+    {
+      type: "message",
+      id: "later",
+      parentId: "prior",
+      message: { role: "user", content: "later", timestamp: 1800 },
+    },
+    {
+      type: "compaction",
+      id: "next",
+      parentId: "later",
+      firstKeptEntryId: "e4",
+      summary: "next summary",
+      timestamp: new Date(2000).toISOString(),
+    },
+  ] as any[];
+  const state = makeState([
+    block(
+      entries.map((e) => e.message),
+      4,
+      4,
+      1
+    ),
+  ]);
+  expect(reconcileCompactedBlocks(state, branch, "next")).toEqual([]);
+  expect(state.compressionBlocks[0].active).toBe(true);
+  const liveKeys = new Set(
+    buildTranscriptSnapshot(buildSessionContext(branch).messages as any[]).sourceItems.map(
+      (i) => i.key
+    )
+  );
+  expect(state.compressionBlocks[0].metadata!.coveredSourceKeys.every((k) => liveKeys.has(k))).toBe(
+    true
+  );
+});

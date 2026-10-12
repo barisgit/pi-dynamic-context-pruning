@@ -10,7 +10,7 @@ import {
 } from "../infrastructure/persistence.js";
 import { countLogicalTurns } from "../domain/transcript/index.js";
 import { updateDcpStatus } from "./status.js";
-import { reconcileCompactedBlocks } from "./native-compaction.js";
+import { reconcileCompactedBlocks } from "./compaction-state.js";
 
 /** Apply config-derived baseline state before session hooks run. */
 export function initializeSessionState(_state: DcpState, _config: DcpConfig): void {
