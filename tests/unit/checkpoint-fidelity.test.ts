@@ -514,6 +514,25 @@ describe("checkpoint fidelity", () => {
     expect(calls).toBe(1);
   });
 
+  test("orientation errors distinguish provider length from a live host signal", async () => {
+    const f = fixture();
+    const generator = createCheckpointHandoffGenerator((async () => ({
+      stopReason: "length",
+      content: [],
+      usage: { output: 4096, reasoning: 4096 },
+    })) as any);
+    await expect(
+      generator(
+        { branchEntries: f.entries, signal: new AbortController().signal } as any,
+        { model: {}, modelRegistry: {} } as any,
+        f.state,
+        f.config
+      )
+    ).rejects.toThrow(
+      "stopReason=length; hostAborted=false; outputTokens=4096; reasoningTokens=4096"
+    );
+  });
+
   test("invalid cut and failed or truncated fresh handoff cancel the hook", async () => {
     const f = fixture();
     for (const setup of [

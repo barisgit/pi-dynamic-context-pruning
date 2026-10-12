@@ -1,5 +1,6 @@
 import { projectCheckpointMessage } from "./checkpoint-content.js";
 import { randomUUID } from "node:crypto";
+import { appendDebugLog } from "../infrastructure/debug-log.js";
 import { renderHeading } from "../domain/compression/heading.js";
 import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
 import {
@@ -59,6 +60,7 @@ export function createCheckpointHandoffGenerator(
       .filter(Boolean)
       .join("\n\n");
     const content: (TextContent | ImageContent)[] = [{ type: "text", text: transcript }, ...images];
+    const startedAt = Date.now();
     const response = await invoke(
       ctx.model,
       {
@@ -79,6 +81,15 @@ export function createCheckpointHandoffGenerator(
         sessionId: randomUUID(),
       }
     );
+    appendDebugLog(config, "checkpoint_orientation_result", {
+      model: ctx.model.id,
+      provider: ctx.model.provider,
+      elapsedMs: Date.now() - startedAt,
+      stopReason: response.stopReason,
+      hostAborted: event.signal?.aborted === true,
+      outputTokens: response.usage?.output,
+      reasoningTokens: response.usage?.reasoning,
+    });
     if (
       event.signal?.aborted ||
       response.stopReason === "error" ||
@@ -86,7 +97,7 @@ export function createCheckpointHandoffGenerator(
       response.stopReason === "length"
     ) {
       throw new Error(
-        "Checkpoint orientation failed, was cancelled, or exhausted its output budget."
+        `Checkpoint orientation unavailable (stopReason=${response.stopReason}; hostAborted=${event.signal?.aborted === true}; outputTokens=${response.usage?.output ?? "unknown"}; reasoningTokens=${response.usage?.reasoning ?? "unknown"}).`
       );
     }
     const text = response.content
