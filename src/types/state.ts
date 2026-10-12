@@ -257,14 +257,13 @@ export type PersistedDcpState =
 /** Runtime-only summary of a heuristic-pruning pass decision. */
 export interface HeuristicPruneDecision {
   dedupCandidates: number;
-  jevCandidates: number;
   ageCandidates: number;
   uniqueCandidates: number;
   keptAfterItemGate: number;
   droppedByItemGate: number;
   batchSavedTokens: number;
   committed: number;
-  committedByStrategy: { dedup: number; jev: number; age: number };
+  committedByStrategy: { dedup: number; age: number };
   committedByAction: { cleared: number; reduced: number };
   oldestMutatedDepth: number;
   cadenceBucket: number;
@@ -363,7 +362,7 @@ export interface DcpState {
   /** Number of discrete pruning operations performed */
   totalPruneCount: number;
   /**
-   * Monotonic estimated tokens reclaimed by pruning (exact dedup and live Jev) — the net saving of every committed tombstone
+   * Monotonic estimated tokens reclaimed by pruning (exact dedup and age masking) — the net saving of every committed tombstone
    * (result body minus tombstone cost). Distinct from `tokensSaved`, which is
    * the compress-block savings. Persisted in the shared scalars so it survives
    * reload; outside the replay-equivalence contract (like `totalPruneCount`).

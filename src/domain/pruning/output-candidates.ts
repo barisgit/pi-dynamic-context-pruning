@@ -5,10 +5,8 @@ import { estimateTokens } from "../tokens/estimate.js";
 import { toolNameMatches } from "./index.js";
 import { collectFoRefAdapterCandidates, type FoRefBridgeV1 } from "./fo-ref-adapter.js";
 
-export const JEV_MAX_TASK_TOKENS = 4000;
-
 /** Only public text content, never details, thinking, images or private metadata. */
-export function jevText(message: DcpMessage): string | null {
+export function publicText(message: DcpMessage): string | null {
   if (typeof message.content === "string") return message.content;
   if (
     !Array.isArray(message.content) ||
@@ -18,66 +16,33 @@ export function jevText(message: DcpMessage): string | null {
   return message.content.map((p: any) => p.text).join("\n");
 }
 
-/** Select complete recent public dialogue entries, never private/tool content. */
-export function snapshotJevTaskContext(messages: DcpMessage[]): string {
-  const parts: string[] = [];
-  let tokens = 0;
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const message = messages[i];
-    let text = "";
-    if (message.role === "user" || message.role === "assistant") {
-      const content =
-        typeof message.content === "string"
-          ? message.content
-          : Array.isArray(message.content)
-            ? message.content
-                .filter((p: any) => p?.type === "text" && typeof p.text === "string")
-                .map((p: any) => p.text)
-                .join("\n")
-            : "";
-      if (content) text = `${message.role}: ${content}`;
-    } else if (message.role === "compactionSummary" || message.role === "branchSummary") {
-      if (typeof message.summary === "string") text = `Older summary: ${message.summary}`;
-    }
-    if (!text) continue;
-    const cost = estimateTokens(text);
-    if (tokens + cost > JEV_MAX_TASK_TOKENS) continue;
-    tokens += cost;
-    parts.unshift(text);
-  }
-  return (
-    "Partial recent public context; omitted history and nontext content may matter. Newer dialogue overrides older summaries.\n\n" +
-    parts.join("\n\n")
-  );
-}
-
-export interface JevCandidate {
+export interface OutputCandidate {
   id: string;
   artifact: string;
   toolName: string;
   inputArgs: Record<string, unknown>;
   isError: boolean;
-  /** Captured at observation time; exposed inner Refs inherit the outer call turn index. */
+  /** Measured against the current logical turn; exposed inner Refs inherit the outer call turn index. */
   ageTurns: number;
   source: "tool-result" | "fo-ref";
 }
 
 /** Pure, bounded remaining-output selection after deterministic rendering. No projections or mutations. */
-export function collectJevCandidates(
+export function collectOutputCandidates(
   messages: DcpMessage[],
   state: DcpState,
   config: DcpConfig,
   bridge?: FoRefBridgeV1 | null,
   onSkip?: (reason: string) => void
-): JevCandidate[] {
-  const results: JevCandidate[] = [];
+): OutputCandidate[] {
+  const results: OutputCandidate[] = [];
   const bucket =
     Math.floor(state.currentTurn / Math.max(1, config.strategies.pruneCadenceTurns)) *
     Math.max(1, config.strategies.pruneCadenceTurns);
   const add = (
     message: DcpMessage,
     record: ToolRecord | undefined,
-    source: JevCandidate["source"]
+    source: OutputCandidate["source"]
   ) => {
     if (!record) return onSkip?.("missing-record");
     if (state.prunedToolIds.has(record.toolCallId)) return onSkip?.("already-pruned");
@@ -107,7 +72,7 @@ export function collectJevCandidates(
       record.turnIndex >= state.currentTurn - config.compress.protectRecentTurns
     )
       return onSkip?.("age-or-hot-tail");
-    const text = jevText(message);
+    const text = publicText(message);
     if (text === null) return onSkip?.("unsupported-content");
     if (!text || estimateTokens(text) < config.strategies.candidates.minResultTokens)
       return onSkip?.("below-minimum-size");
@@ -130,7 +95,7 @@ export function collectJevCandidates(
       !record ||
       record.isError ||
       message.isError ||
-      jevText(message) === null ||
+      publicText(message) === null ||
       record.toolName.toLowerCase() !== "run"
     )
       continue;

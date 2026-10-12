@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Removed the optional retention classifier, its network client, live proposals, and audit writer. Deduplication, age masking, recovery, and native compaction are unchanged. Historical classifier config is ignored.
+
+## Unreleased
+
 - Added opt-in age masking (`strategies.ageMasking.enabled`, default `false`): successful text tool outputs and exposed fo Refs older than `strategies.candidates.minAgeTurns` are replaced by exact `dcp_recover` markers through the existing eligibility, item/batch savings gates, projection and persistence. Errors, images, containers and authored `run` text, mutations, DCP tools and AGENTS.md/CLAUDE.md/SKILL.md reads are kept.
 
 - Added explicitly opt-in live Jev removals (`strategies.jev.apply: true`) through existing protection, projection, net-savings and recovery paths, including exposed fo Refs. Existing enabled configurations remain shadow-only without this flag. Pending judgments are never loaded as prune commands from old audit rows.

@@ -144,6 +144,17 @@ describe("candidate config and deprecated compatibility", () => {
     );
   });
 
+  test("ignores retired classifier settings without changing active strategies", () => {
+    withConfig(
+      { strategies: { jev: { enabled: "obsolete", apply: true }, ageMasking: { enabled: true } } },
+      (config) => {
+        expect(config.strategies.ageMasking?.enabled).toBe(true);
+        expect(config.strategies.deduplication.enabled).toBe(true);
+        expect(config.strategies.candidates.minAgeTurns).toBe(15);
+      }
+    );
+  });
+
   test("validates shared age, size and protection", () => {
     for (const candidates of [
       { minAgeTurns: -1 },

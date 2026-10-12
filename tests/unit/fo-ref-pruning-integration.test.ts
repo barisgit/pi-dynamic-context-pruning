@@ -3,7 +3,6 @@ import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { applyPruning, makeConfig, makeState } from "../helpers/dcp-test-utils.js";
 import { hydrateMissingToolRecords } from "../../src/application/tool-recording.js";
-import { JevScheduler } from "../../src/application/jev-review.js";
 import {
   serializePersistedState,
   restorePersistedState,
@@ -218,7 +217,7 @@ describe("production fo Ref pruning integration", () => {
   );
 
   realFoTest(
-    "live Jev applies repeated exposed Ref only when actual projected savings clears the gate",
+    "age masking applies repeated exposed Ref only when actual projected savings clears the gate",
     async () => {
       const { bridge, makeRef, projectModelText } = await loadRealFo();
       const original = "several distinct words of evidence ".repeat(180);
@@ -266,34 +265,14 @@ describe("production fo Ref pruning integration", () => {
       const config = configureRefClearing();
       config.strategies.candidates.minAgeTurns = 0;
       config.strategies.candidates.minResultTokens = 1;
-      config.strategies.jev = { enabled: true, apply: true };
+      config.strategies.ageMasking = { enabled: true };
       config.strategies.minPruneBatchSavedTokens = 0;
-      applyPruning(messages, state, config, { foRefBridge: bridge });
-      const scheduler = new JevScheduler({
-        read: async () => [],
-        append: async () => {},
-        request: async () => ({
-          answers: {
-            retention: {
-              type: "choice",
-              choice: "drop",
-              confidence: 0.2,
-              probabilities: { keep: 0.3, drop: 0.7 },
-            },
-          },
-        }),
-      });
-      scheduler.observe(messages, state, config, "fo-live", bridge);
-      await new Promise((resolve) => setTimeout(resolve, 15));
-      const drops = scheduler.pending("fo-live", config);
-      expect(drops.get(candidate.compositeId)).toBe(original);
       config.strategies.minPruneItemSavedTokens = actual + 1;
-      applyPruning(messages, state, config, { foRefBridge: bridge, jevDrops: drops });
+      applyPruning(messages, state, config, { foRefBridge: bridge });
       expect(state.prunedToolIds.has(candidate.compositeId)).toBe(false);
       config.strategies.minPruneItemSavedTokens = actual;
       const rendered = applyPruning(messages, state, config, {
         foRefBridge: bridge,
-        jevDrops: drops,
       });
       expect(state.prunedToolIds.has(candidate.compositeId)).toBe(true);
       expect(state.lastHeuristicPruneDecision?.batchSavedTokens).toBe(actual);

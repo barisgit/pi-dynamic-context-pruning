@@ -36,7 +36,6 @@ const DEFAULT_CONFIG: DcpConfig = {
     maxSummaryTokens: 20000,
   },
   strategies: {
-    jev: { enabled: false },
     ageMasking: { enabled: false },
     pruneCadenceTurns: 1,
     minPruneItemSavedTokens: 25,
@@ -268,9 +267,6 @@ function validateCandidates(config: DcpConfig): void {
 }
 
 function validateConfig(config: DcpConfig): void {
-  if (typeof config.strategies.jev?.enabled !== "boolean") {
-    throw new Error("Invalid DCP config: strategies.jev.enabled must be boolean");
-  }
   if (
     config.strategies.ageMasking !== undefined &&
     typeof config.strategies.ageMasking?.enabled !== "boolean"

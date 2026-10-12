@@ -5,7 +5,6 @@ import { homedir } from "node:os";
 import { InMemoryCredentialStore, type Context, type Credential } from "@earendil-works/pi-ai";
 import { ModelRegistry, ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { runCycles, type CycleFixture, type Completion } from "./evaluation-cycles.js";
-import { createPiOpenRouterJevRequest, classifyArtifactWithJev } from "./evaluation-jev.js";
 import {
   collectFoRefAdapterCandidates,
   projectFoRefOuterResult,
@@ -19,7 +18,7 @@ async function main(): Promise<void> {
   const provider = process.argv[4];
   const modelId = process.argv[5];
   const usage =
-    "Usage: bun scripts/evaluation-run.ts OUTPUT_DIR FO_REPO PROVIDER MODEL_ID [--resume]; five cycles, five variants, at most 60 model / 10 Jev requests, synthetic only";
+    "Usage: bun scripts/evaluation-run.ts OUTPUT_DIR FO_REPO PROVIDER MODEL_ID [--resume]; five cycles, four variants, at most 60 model requests, synthetic only";
   if (process.argv.includes("--help")) {
     console.log(usage);
     return;
@@ -111,25 +110,6 @@ async function main(): Promise<void> {
     await writeFile(join(outputDir, "metrics.json"), JSON.stringify(metrics, null, 2));
     return response;
   };
-  const jevTransport = await createPiOpenRouterJevRequest({
-    fetchImpl: ((input: Parameters<typeof fetch>[0], init: Parameters<typeof fetch>[1]) =>
-      fetch(input, { ...init, signal: AbortSignal.timeout(30000) })) as typeof fetch,
-  });
-  let jevCalls = existingFiles.filter((file) => /^jev-\d+-input\.json$/.test(file)).length;
-  const jevRequest: typeof jevTransport = async (request) => {
-    if (++jevCalls > 10) throw new Error("Bounded budget: at most ten Jev requests");
-    const start = performance.now();
-    await writeFile(
-      join(outputDir, `jev-${jevCalls}-input.json`),
-      JSON.stringify(request, null, 2)
-    );
-    const response = await jevTransport(request);
-    await writeFile(
-      join(outputDir, `jev-${jevCalls}-output.json`),
-      JSON.stringify({ response, latencyMs: performance.now() - start }, null, 2)
-    );
-    return response;
-  };
   function envelope(f: CycleFixture): any {
     const items =
       f.cycle === 0
@@ -177,7 +157,6 @@ async function main(): Promise<void> {
   for (const spec of [
     { id: "A", timing: "early" },
     { id: "B", timing: "early" },
-    { id: "C", timing: "early" },
     { id: "D", timing: "early" },
     { id: "B-late", timing: "late" },
   ] as const) {
@@ -256,19 +235,9 @@ async function main(): Promise<void> {
         maxVisibleEventBytes: 2000000,
       });
       let output = projected.status === "projected" ? projected.projectedText : original;
-      let decision: unknown;
-      if (spec.id === "C" || spec.id === "D") {
+      if (spec.id === "D") {
         const candidate = collected.candidates.find((c) => c.timelineId === "diagnostic")!;
-        decision = await classifyArtifactWithJev(
-          {
-            candidateId: candidate.compositeId,
-            taskContext:
-              "Prepare local release mail drafts only. Retain current blockers and unverified integration status. No integration run has succeeded.",
-            artifact: candidate.text,
-          },
-          jevRequest
-        );
-        // C exercises the actual classifier; failures and uncertain drops retain the output.
+        // Preserve the selective-summary trial independently of retention classification.
         const choices: Record<string, string> = {};
         for (const id of state.prunedToolIds) {
           const c = collected.candidates.find((c) => c.compositeId === id);
@@ -276,22 +245,18 @@ async function main(): Promise<void> {
             choices[c.localId] =
               "[Duplicate observed output removed; canonical original recoverable]";
         }
-        if ((decision as { decision: string }).decision === "drop")
-          choices[candidate.localId] = "[Jev-selected drop; canonical original recoverable]";
-        if (spec.id === "D") {
-          const context: Context = {
-            systemPrompt:
-              "Summarize this original synthetic artifact. Preserve exact blocker identifiers, verification uncertainty and consequential facts. Do not invent success. Return only the summary.",
-            messages: [{ role: "user", content: candidate.text, timestamp: 1000 }],
-          };
-          const response = await completion(model, context, { maxTokens: 500 });
-          if (response.stopReason !== "stop") throw new Error("Artifact summary incomplete");
-          choices[candidate.localId] =
-            response.content
-              .filter((p) => p.type === "text")
-              .map((p) => p.text)
-              .join("\n") + `\nRecovery: ${candidate.compositeId}`;
-        }
+        const context: Context = {
+          systemPrompt:
+            "Summarize this original synthetic artifact. Preserve exact blocker identifiers, verification uncertainty and consequential facts. Do not invent success. Return only the summary.",
+          messages: [{ role: "user", content: candidate.text, timestamp: 1000 }],
+        };
+        const response = await completion(model, context, { maxTokens: 500 });
+        if (response.stopReason !== "stop") throw new Error("Artifact summary incomplete");
+        choices[candidate.localId] =
+          response.content
+            .filter((p) => p.type === "text")
+            .map((p) => p.text)
+            .join("\n") + `\nRecovery: ${candidate.compositeId}`;
         const result = bridge.project({
           outerToolCallId,
           details: env,
@@ -317,7 +282,6 @@ async function main(): Promise<void> {
           projectedCharacters: output.length,
           gate: state.lastHeuristicPruneDecision,
           selected: [...state.prunedToolIds],
-          jev: decision,
           originalUnchanged: true,
           exactRecovery: true,
         },
@@ -340,7 +304,6 @@ async function main(): Promise<void> {
           provider: model.provider,
           results,
           workingModelCalls: call,
-          jevCalls,
           costMeaning:
             "SDK usage.cost is catalog estimate, not an invoice; no cache savings inference",
         },
@@ -349,6 +312,6 @@ async function main(): Promise<void> {
       )
     );
   }
-  console.log(JSON.stringify({ outputDir, workingModelCalls: call, jevCalls }));
+  console.log(JSON.stringify({ outputDir, workingModelCalls: call }));
 }
 if (import.meta.main) await main();

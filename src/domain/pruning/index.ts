@@ -1,7 +1,7 @@
 import type { DcpState, HeuristicPruneDecision, PrunedToolAction } from "../../types/state.js";
 import type { DcpConfig } from "../../types/config.js";
 import type { DcpMessage } from "../../types/message.js";
-import { collectJevCandidates, type JevCandidate } from "./jev-candidates.js";
+import { collectOutputCandidates, type OutputCandidate } from "./output-candidates.js";
 import { stripDcpHallucinationsFromString } from "../refs/metadata.js";
 import { renderCompressedBlockMessage } from "../compression/materialize.js";
 import { allocateMessageRef } from "../refs/index.js";
@@ -305,7 +305,7 @@ function tombstoneText(id: string, isError: boolean): string {
 interface PruneCandidate {
   toolCallId: string;
   netSaved: number;
-  strategy: "dedup" | "jev" | "age";
+  strategy: "dedup" | "age";
   renderAction: PrunedToolAction;
   turnIndex: number;
 }
@@ -682,7 +682,7 @@ function collectAgeMaskingCandidates(
   config: DcpConfig,
   bridge: FoRefBridgeV1 | undefined,
   foContexts: FoRefPruningContext[]
-): JevCandidate[] {
+): OutputCandidate[] {
   const refIds = new Set<string>();
   const maskableRefIds = new Set<string>();
   for (const context of foContexts) {
@@ -698,7 +698,7 @@ function collectAgeMaskingCandidates(
         maskableRefIds.add(candidate.compositeId);
     }
   }
-  return collectJevCandidates(messages, state, config, bridge).filter(
+  return collectOutputCandidates(messages, state, config, bridge).filter(
     (candidate) =>
       !candidate.isError &&
       !AGE_MASKING_PROTECTED_TOOLS.has(candidate.toolName.toLowerCase()) &&
@@ -718,7 +718,7 @@ function collectAgeMaskingCandidates(
  *  - batch (`minPruneBatchSavedTokens`): refuse to rewrite old context unless
  *    the whole flush nets at least this many tokens.
  *
- * Configured item and batch thresholds apply to dedup, Jev and age masking together;
+ * Configured item and batch thresholds apply to dedup and age masking together;
  * zero disables a gate.
  * Both are bypassed when the live
  * effective context is in the red zone: under pressure we reclaim space and
@@ -729,16 +729,14 @@ function commitHeuristicPruning(
   state: DcpState,
   config: DcpConfig,
   bridge: FoRefBridgeV1 | undefined,
-  foContexts: FoRefPruningContext[],
-  jevDrops?: ReadonlyMap<string, string>,
-  jevCommittedIds?: string[]
+  foContexts: FoRefPruningContext[]
 ): HeuristicPruneDecision | null {
   liftUnsafePersistedErrors(eligibleMessages, state);
   // Deprecated purge/custom settings cannot create new actions. Historical
   // actions still render and retain their conservative restoration checks.
   const dedupCandidates = collectDeduplicationCandidates(eligibleMessages, state, config);
   const toPruneCandidate = (
-    candidate: JevCandidate,
+    candidate: OutputCandidate,
     strategy: PruneCandidate["strategy"]
   ): PruneCandidate => ({
     toolCallId: candidate.id,
@@ -748,13 +746,6 @@ function commitHeuristicPruning(
     turnIndex:
       state.toolCalls.get(candidate.id)?.turnIndex ?? state.currentTurn - candidate.ageTurns,
   });
-  const jevCandidates = jevDrops?.size
-    ? collectJevCandidates(eligibleMessages, state, config, bridge)
-        .filter(
-          (candidate) => !candidate.isError && jevDrops.get(candidate.id) === candidate.artifact
-        )
-        .map((candidate) => toPruneCandidate(candidate, "jev"))
-    : [];
   const ageCandidates = config.strategies.ageMasking?.enabled
     ? collectAgeMaskingCandidates(eligibleMessages, state, config, bridge, foContexts).map(
         (candidate) => toPruneCandidate(candidate, "age")
@@ -764,7 +755,7 @@ function commitHeuristicPruning(
   // One candidate per id; earlier strategies keep attribution for shared ids.
   const seenIds = new Set<string>();
   const candidates: PruneCandidate[] = [];
-  for (const candidate of [...dedupCandidates, ...jevCandidates, ...ageCandidates]) {
+  for (const candidate of [...dedupCandidates, ...ageCandidates]) {
     if (seenIds.has(candidate.toolCallId)) continue;
     seenIds.add(candidate.toolCallId);
     candidates.push(candidate);
@@ -825,14 +816,13 @@ function commitHeuristicPruning(
   }
   const decision: HeuristicPruneDecision = {
     dedupCandidates: dedupCandidates.length,
-    jevCandidates: jevCandidates.length,
     ageCandidates: ageCandidates.length,
     uniqueCandidates: measurableCandidates.length,
     keptAfterItemGate: kept.length,
     droppedByItemGate: measurableCandidates.length - kept.length,
     batchSavedTokens,
     committed: 0,
-    committedByStrategy: { dedup: 0, jev: 0, age: 0 },
+    committedByStrategy: { dedup: 0, age: 0 },
     committedByAction: { cleared: 0, reduced: 0 },
     oldestMutatedDepth: 0,
     cadenceBucket,
@@ -861,7 +851,6 @@ function commitHeuristicPruning(
     state.pendingSave = true;
     decision.committed++;
     decision.committedByStrategy[candidate.strategy]++;
-    if (candidate.strategy === "jev") jevCommittedIds?.push(candidate.toolCallId);
     if (candidate.renderAction.action === "reduce") {
       decision.committedByAction.reduced++;
     } else {
@@ -1075,10 +1064,6 @@ export interface FinalizeMaterializedMessagesOptions {
   messageSourceKeys?: readonly string[];
   /** Optional fo bridge injected by the application layer. */
   foRefBridge?: FoRefBridgeV1;
-  /** Exact in-memory accepted Jev artifacts; revalidated against current candidates. */
-  jevDrops?: ReadonlyMap<string, string>;
-  /** Filled only with IDs actually committed by Jev (not duplicate pruning). */
-  jevCommittedIds?: string[];
 }
 
 /**
@@ -1135,9 +1120,7 @@ export function finalizeMaterializedMessages(
     state,
     config,
     options.foRefBridge,
-    foContexts,
-    options.jevDrops,
-    options.jevCommittedIds
+    foContexts
   );
   applyToolOutputPruning(msgs, state, heuristicMessages);
   const liveCompositeIds = applyFoRefOutputPruning(state, options.foRefBridge, foContexts);
@@ -1155,10 +1138,7 @@ export function applyPruning(
   messages: DcpMessage[],
   state: DcpState,
   config: DcpConfig,
-  options: Pick<
-    FinalizeMaterializedMessagesOptions,
-    "foRefBridge" | "jevDrops" | "jevCommittedIds"
-  > = {}
+  options: Pick<FinalizeMaterializedMessagesOptions, "foRefBridge"> = {}
 ): any[] {
   // Deep-clone each message and its content to prevent mutations from
   // affecting the original objects across context events.

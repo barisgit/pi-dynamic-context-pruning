@@ -1,4 +1,4 @@
-import { readFile, writeFile, readdir } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 /** Aggregate recorded provider usage without pretending catalog estimates are billed cost. */
@@ -41,22 +41,12 @@ export async function summarizeEvaluation(dir: string): Promise<unknown> {
       originalRecoveryPassed: run.observations.every(
         (row: any) => row.strategyEvidence.originalUnchanged && row.strategyEvidence.exactRecovery
       ),
-      jevDecisions: run.observations.map((row: any) => row.strategyEvidence.jev).filter(Boolean),
     };
   });
-  const jevFiles = (await readdir(dir)).filter((file) => /^jev-\d+-output\.json$/.test(file));
-  const jev = await Promise.all(
-    jevFiles.map(async (file) => JSON.parse(await readFile(join(dir, file), "utf8")))
-  );
   const summary = {
     model: results.model,
     provider: results.provider,
     variants,
-    jev: {
-      calls: jev.length,
-      summedLatencyMs: jev.reduce((n, row) => n + row.latencyMs, 0),
-      usage: jev.map((row) => row.response.usage ?? null),
-    },
     interpretation: {
       billedCostUsd: null,
       cacheSavings: null,

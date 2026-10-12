@@ -65,7 +65,7 @@ Consumed by: `application/compress-tool/registration.ts`, `application/context-h
 
 - `applyCompressionBlocks` — splice in synthetic block messages, compute net token savings
 - `repairOrphanedToolPairs` — safety net: remove orphaned tool results, strip orphaned tool calls
-- `commitHeuristicPruning` — shared net-savings gates for exact duplicate and accepted live Jev removals; no age-only error purge
+- `commitHeuristicPruning` — shared net-savings gates for exact duplicate and age masking; no age-only error purge
 - `injectMessageIds` — assign stable `mXXXX` refs to non-assistant messages only; assistant role is skipped entirely (no allocation, no snapshot, no content tag) to preserve last-turn prefix cache
 - `getNudgeType` — nudge firing logic (debounced by logical turns)
 
