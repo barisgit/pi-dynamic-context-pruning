@@ -9,7 +9,7 @@ Reference for coding agents operating in this repository.
 A **pi coding agent extension** (TypeScript/ESM) that implements Dynamic Context Pruning (DCP).
 Pi loads extension `.ts` files directly — there is no build step and no compiled output.
 
-Continuation fidelity is the primary objective: preserve intent, restrictions, corrections, evidence, and uncertainty rather than minimizing tokens or maximizing cache hits. Substantial authored memory is valid. No blanket losslessness guarantee follows from compression or recovery.
+Continuation fidelity is the primary objective: preserve intent, restrictions, corrections, evidence, and uncertainty rather than minimizing tokens or maximizing cache hits. Substantial authored memory is valid. No blanket losslessness guarantee follows from compression or model summarization.
 
 **Host runtime:** Node.js inside pi  
 **Dev/test toolchain:** Bun  
@@ -98,7 +98,7 @@ This repo is post **direct-restore**: persistence restores coverage-bearing bloc
 - **Mid-run restore is non-destructive on `session_start`.** pi can re-fire `session_start` mid-run (no matching `session_shutdown`). Because restore is snapshot-only, a `resetState()` + rebuild in that window would silently drop a just-created compress block that has not flushed yet. `directRestore` therefore retains live state (`restoreOutcome: "retained-live"`) when `state.pendingSave` is set and retain-live is allowed. This guard is scoped to `session_start` only; `session_tree` is a genuine branch switch and always loads the target branch (`allowRetainLive: false`).
 - **`compress` flushes inline.** Like native compaction, a successful `compress` calls `saveState(...)` immediately after block accounting, so a new block reaches disk before any mid-run restore can run, rather than waiting for a deferred `agent_end`.
 - `src/domain/replay/` is retained for offline scripts such as `scripts/vacuum-dcp-session.ts` and `scripts/replay-equivalence.ts`, not for live resume
-- `src/domain/compression/materialize.ts` contains only the shared compressed-block renderer used by the legacy runtime path and offline replay/native-compaction support
+- `src/domain/compression/materialize.ts` contains only the shared compressed-block renderer used by the legacy runtime path and offline replay support
 
 ---
 
@@ -116,13 +116,8 @@ This repo is post **direct-restore**: persistence restores coverage-bearing bloc
 - Live `compress` requires a nonempty `ranges` array; summaries remain freeform and both topic levels are optional (`Compressed history` fallback). There is no live heading field or heading-only invocation.
 - Blocks store one historical `summary`, plus original `startId`/`endId` for a time-fixed Record header using `endTimestamp` in ordinary context. Summaries record constraints/corrections, rationale, evidence, and unresolved issues at the stretch's close. Later user corrections supersede historical excerpts and plans.
 - `renderFullBlockCount` / `renderCompactBlockCount` are the existing configurable tier counts (defaults: newest 4 full, next 8 summary-only). Full includes the entire authored summary, conversation excerpts, aggregate effects, and modified-file paths. Summary-only keeps the entire authored summary and omits conversation/effects/modified-files. Older blocks render no model-visible block, but still hide exactly covered raw messages and retain canonical history. Rank the canonical block log including inactive entries before selecting active records, so retiring newer blocks cannot revive omitted older blocks after append or restore. This is count-based admission only: add no new timing, cadence, or retention knobs.
-- Native rendering omits generated Record headers (including expanded nested headers) and generated tier/version labels; structured coverage/boundaries remain.
-- `src/application/checkpoint-handoff.ts` generates a fresh orientation only at native compaction, using a dedicated working-model completion over current effective context **including the retained recent tail**. It rebuilds current context, materializes on cloned state, avoids Pi's tool-result-clipping summary serializer, and never enters a recursive main-agent turn. Use the host `modelRegistry.complete` for provider/auth routing; the former direct pi-ai `complete` fallback is not exported by the 0.87.1 SDK. Injectable generator/completion seams support tests.
-- At `session_before_compact`, compute `minHiddenCoverageRatio` from final rendered record IDs after tier and token-budget admission, against the actual hidden range at the host's unchanged `firstKeptEntryId`; never move the cut to improve coverage. Exact `coveredSourceKeys` are the only omission certificate. Timestamp intervals remain fallback placement/legacy data and must not certify coverage.
-- At sufficient coverage, the native checkpoint is budgeted retained blocks plus a fresh current-intent/constraints handoff from effective context, including the recent tail and later corrections. It may discard uncovered hidden raw tool evidence from model text while canonical session history stays intact. Do not recursively carry `preparation.previousSummary`; the fresh handoff replaces accumulated summary state.
-- Budget reduction order is optional block metadata first, then whole oldest retained records. Never clip an authored summary. Low rendered coverage falls back to the host summarizer with final admitted records plus fresh orientation as `event.preparation.previousSummary`. An oversized orientation seeds only that orientation. Do not seed this fallback through `event.customInstructions` and do not append old summaries. In-flight fallback details retain commit bookkeeping: retire only fully hidden exact blocks actually supplied in the result or host seed; keep omitted records active, reset nudge watermarks, and resume authorized auto-compaction only after a real commit; persist no new schema fields.
-- An unknown boundary cancels because Pi would otherwise lose the entire kept tail. Orientation errors/empty/truncated output retry once while the host signal is live, then warn and use Pi summarization with preparation unchanged. A host abort stops immediately without retrying. This adds no model-path selector or persistence schema change.
-- `config.enabled: false` or `nativeCompaction.enabled: false` leaves host compaction alone. `/dcp compact` retains its active-block-only command UX.
+- Pi owns native summarization. DCP registers only `session_compact`, never `session_before_compact`: no checkpoint rendering, orientation completion, cancellation, preparation mutation, `/dcp compact`, or automatic DCP compaction trigger remains. Pi's threshold and `/compact` drive compaction; recommended host settings are `reserveTokens: 16384`, `keepRecentTokens: 35000`.
+- On a committed host cut, retire blocks with any source outside the kept projection. Preserve blocks wholly in the tail, rebasing exact source/span keys and anchors through canonical entry provenance. Clear nudge watermarks and persist. Existing v5 full-lineage keys migrate automatically through provenance, including on restore; no schema bump or fresh session is required. Reconcile cuts newer than the restored snapshot after interrupted saves, and never let old off-branch repair resurrect records outside the selected projection.
 - `state.heading` is retained only for historical compatibility. Heading-bearing v5 snapshots and old heading-only tool exchanges continue to decode automatically; no schema bump/manual conversion/new session is required. Ordinary materialization never injects a mutable heading or rewrites a previously baked heading. Heading-age reminders are removed. Legacy synthetic `INTERNAL_HEADING` messages remain excluded from source snapshots/ref injection/pruning.
 
 - Full rendered blocks contain four distinct layers: the historical record, bounded chronological `u:` / `a:` conversation excerpts, aggregate read/search/mutation/command/delegation counts, and bounded unique modified-file paths. Individual tool calls and commands are not rendered deterministically; the summary must preserve consequential commands, verification outcomes, and delegated findings. Summary-only blocks contain only the whole historical record.
@@ -164,12 +159,13 @@ This logical-turn model is used by:
 ### 5. Pruning and prefix-cache boundaries
 
 - Exact-result deduplication is the only always-on automatic heuristic removal: require matching request fingerprint, complete visible content and error status, and retain the newer copy. Same arguments alone do not prove redundancy.
-- Opt-in age masking (`strategies.ageMasking.enabled`, default false) is the one age rule: successful text outputs and exposed non-error fo Refs that pass shared candidate eligibility (`candidates.minAgeTurns`, size, protections, hot tail) join dedup in `commitHeuristicPruning` under the same item/batch gates. It always keeps errors, images/nontext, outer containers, write/edit/apply_patch, compress/dcp_recover and AGENTS.md/CLAUDE.md/SKILL.md reads. Do not add per-tool age tables; the retired customStrategies stay retired.
-- Deterministic error purging and custom age-only clear/head-tail collectors are retired. Deprecated configuration cannot reactivate them. Preserve decoding/rendering of historical saved actions where needed for resume and exact recovery; do not silently reset existing state.
-- `strategies.pruneCadenceTurns` controls cadence; never hardcode the user's25. Duplicate removals use bucketed eligibility and existing per-item/batch net-savings gates, including projection/recovery-marker costs and live red-zone semantics. Shadow proposals never apply. Explicit live proposals use the same actual net-savings gate and can commit on the next context pass after the asynchronous response, without waiting another cadence.
+- Opt-in age masking (`strategies.ageMasking.enabled`, default false) is the one age rule: successful text outputs and exposed non-error fo Refs that pass shared candidate eligibility (`candidates.minAgeTurns`, size, protections, hot tail) join dedup in `commitHeuristicPruning` under the same item/batch gates. It always keeps errors, images/nontext, outer containers, write/edit/apply_patch, compress and AGENTS.md/CLAUDE.md/SKILL.md reads. Do not add per-tool age tables; the retired customStrategies stay retired.
+- Deterministic error purging and custom age-only clear/head-tail collectors are retired. Deprecated configuration cannot reactivate them. Preserve decoding/rendering of historical saved actions where needed for resume; do not silently reset existing state.
+- `strategies.pruneCadenceTurns` controls cadence; never hardcode the user's25. Duplicate removals use bucketed eligibility and existing per-item/batch net-savings gates, including projection/placeholder costs and live red-zone semantics. Shadow proposals never apply. Explicit live proposals use the same actual net-savings gate and can commit on the next context pass after the asynchronous response, without waiting another cadence.
+- Masked outputs say they were hidden to save context and the tool can be re-run if needed. There is no `dcp_recover` tool, recovery lookup, or exposed recovery ID. Canonical originals remain untouched.
 - Tool-result pruning replaces visible output, not the whole assistant/tool pair. Canonical originals stay untouched. Persisted unsafe image/composite/error selections retain their existing conservative restoration checks.
-- Outer `run`, `subagent`, `workflow`, images and unsupported output are not generic logs. Exposed inner fo Refs use the optional versioned bridge for precise enumeration/projection/recovery. Private, derived, ambiguous and independently emitted error/image channels are not guessed or flattened.
-- Composite `fo-ref:v1` IDs must survive resume and GC while their originals remain live. All exposed copies receive a consistent projection. Missing/unsupported bridges fail closed without affecting ordinary Pi.
+- Outer `run`, `subagent`, `workflow`, images and unsupported output are not generic logs. Exposed inner fo Refs use the optional versioned bridge for precise enumeration/projection. Private, derived, ambiguous and independently emitted error/image channels are not guessed or flattened.
+- Internal composite `fo-ref:v1` selection IDs must survive resume and GC while their originals remain live. They are not model-facing recovery IDs. All exposed copies receive a consistent projection. Missing/unsupported bridges fail closed without affecting ordinary Pi.
 
 ### 6. Debug logging
 
@@ -181,25 +177,25 @@ This logical-turn model is used by:
 
 ## Module map
 
-| Path                                    | Purpose                                                                                                       |
-| --------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| `src/index.ts`                          | Thin pi extension entrypoint; wires config, state, tools, commands, and hook handlers                         |
-| `src/types/`                            | DCP config, state, message, and provider/boundary contracts                                                   |
-| `src/domain/transcript/`                | Canonical source-item/span snapshots, logical turns, exact coverage, owner-key derivation                     |
-| `src/domain/refs/`                      | Visible ref parsing/formatting/allocation and DCP metadata stripping                                          |
-| `src/domain/compression/`               | Compression range helpers, materialization, exact metadata, planning, supersession helpers                    |
-| `src/domain/pruning/`                   | Active runtime pruning path: block application, repair, dedup, age eligibility, nudge injection, ID injection |
-| `src/domain/provider/`                  | Provider-payload stale artifact filtering using canonical owner keys                                          |
-| `src/application/`                      | Pi hook/tool/command orchestration and host payload adaptation                                                |
-| `src/application/checkpoint-handoff.ts` | Dedicated working-model orientation from full effective context at compaction                                 |
-| `src/application/recover-tool.ts`       | Canonical saved-output recovery and optional fo bridge discovery                                              |
-| `src/application/compress-tool/`        | `compress` registration; validation/artifact helpers live in domain/compression/tooling                       |
-| `src/application/commands/dcp.ts`       | `/dcp` slash command registration                                                                             |
-| `src/infrastructure/`                   | JSONC config loading, debug logging, persisted-state migration/serialization                                  |
-| `src/prompts/`                          | System prompt additions, compress tool contract text, nudge text                                              |
-| `tests/unit/`                           | Focused Bun unit suites for transcript, compression, pruning, nudges, provider filtering                      |
-| `tests/integration/`                    | End-to-end applyPruning/compress-tool/debug behavior coverage                                                 |
-| `DCP_V2_DESIGN.md`                      | future-state design and invariants                                                                            |
+| Path                                  | Purpose                                                                                                       |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `src/index.ts`                        | Thin pi extension entrypoint; wires config, state, tools, commands, and hook handlers                         |
+| `src/types/`                          | DCP config, state, message, and provider/boundary contracts                                                   |
+| `src/domain/transcript/`              | Canonical source-item/span snapshots, logical turns, exact coverage, owner-key derivation                     |
+| `src/domain/refs/`                    | Visible ref parsing/formatting/allocation and DCP metadata stripping                                          |
+| `src/domain/compression/`             | Compression range helpers, materialization, exact metadata, planning, supersession helpers                    |
+| `src/domain/pruning/`                 | Active runtime pruning path: block application, repair, dedup, age eligibility, nudge injection, ID injection |
+| `src/domain/provider/`                | Provider-payload stale artifact filtering using canonical owner keys                                          |
+| `src/application/`                    | Pi hook/tool/command orchestration and host payload adaptation                                                |
+| `src/application/compaction-state.ts` | Canonical provenance mapping and post-cut block reconciliation                                                |
+| `src/application/fo-ref-bridge.ts`    | Optional fo bridge discovery for masking enumeration and projection                                           |
+| `src/application/compress-tool/`      | `compress` registration; validation/artifact helpers live in domain/compression/tooling                       |
+| `src/application/commands/dcp.ts`     | `/dcp` slash command registration                                                                             |
+| `src/infrastructure/`                 | JSONC config loading, debug logging, persisted-state migration/serialization                                  |
+| `src/prompts/`                        | System prompt additions, compress tool contract text, nudge text                                              |
+| `tests/unit/`                         | Focused Bun unit suites for transcript, compression, pruning, nudges, provider filtering                      |
+| `tests/integration/`                  | End-to-end applyPruning/compress-tool/debug behavior coverage                                                 |
+| `DCP_V2_DESIGN.md`                    | future-state design and invariants                                                                            |
 
 ### Layer rules
 

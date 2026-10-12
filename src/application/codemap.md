@@ -39,19 +39,13 @@ Exported helper: `materializeContextMessages` — first rehydrates missing runti
 
 ### `native-compaction.ts`
 
-Integrates DCP state with pi's native session-compaction lifecycle via `session_before_compact` and `session_compact` event hooks, plus `turn_end` for auto-trigger.
+Registers only `session_compact`. Pi alone summarizes and selects the cut. DCP does not cancel, override, seed, or trigger native compaction.
 
-**`session_before_compact` hook** — generates a fresh orientation from effective context including the recent tail. Provider-local failure retries once while Pi's signal is live, then warns and leaves host preparation unchanged; a host abort stops immediately. An unknown boundary cancels to prevent loss of the kept tail.
+`compaction-state.ts` maps current and historical full-lineage coverage through entry provenance, retires blocks losing any source at the cut, rebases kept blocks and visible aliases, and recomputes active savings. Commit handling realizes retired savings, resets nudge watermarks, persists, and updates the footer. Restore reconciles interrupted saves and validates legacy sibling repair against the selected branch projection.
 
-- Builds a tiered checkpoint from whole authored records plus fresh orientation, stripping optional metadata before dropping whole oldest records to fit the budget.
-- Gates native output on exact hidden source keys covered by final admitted records, never moving Pi's cut or recursively appending prior checkpoints.
-- Low rendered coverage seeds host `preparation.previousSummary` with final records plus orientation. An oversized orientation seeds only that orientation. Uncovered raw gaps are not serialized by DCP; Pi performs the host fallback.
+### `fo-ref-bridge.ts`
 
-**`session_compact` hook** — deactivates only fully hidden records supplied in the committed checkpoint or host seed, realizes their saved-token estimates, resets nudge watermarks, saves state, and updates the footer. Omitted canonical records remain active; stable tier ranking prevents promotion of old omitted records.
-
-**`turn_end` hook** — consumes each queued auto request once and starts compaction without awaiting it, allowing the current turn to become idle. After a successful auto commit, `session_compact` posts a deferred continuation even when user input is pending, so Pi starts a turn and drains that input.
-
-**`triggerDcpNativeCompaction`** — the public entry point used by `/dcp compact` and the auto-trigger path. Calls `ctx.compact()` and returns a promise.
+Discovers the optional version-1 bridge with `collect` and `project`; recovery is not required. The bridge is discovered at use time so reload does not leave a stale capability cache.
 
 ### `provider-handler.ts`
 

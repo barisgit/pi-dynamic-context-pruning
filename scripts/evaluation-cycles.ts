@@ -102,7 +102,7 @@ function text(response: Awaited<ReturnType<Completion>>): string {
     .map((p) => p.text)
     .join("\n");
 }
-/** Rebuild actual Pi checkpoints five times and execute each model's next action in a safe local sandbox. */
+/** Generate offline summaries with Pi serialization five times and execute each model's next action in a safe local sandbox. */
 export async function runCycles(options: CycleOptions): Promise<unknown> {
   const cycles = options.cycles ?? 5;
   if (!Number.isInteger(cycles) || cycles < 1 || cycles > 5) throw new Error("cycles must be 1..5");

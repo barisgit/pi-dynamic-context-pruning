@@ -13,13 +13,13 @@ The two stamp/strip passes also support callers that enter through finalization 
 ## Decisions and savings
 
 - Exact duplicates require identical request fingerprint, full visible content and error status, with a newer copy retained.
-- Optional age masking (`strategies.ageMasking.enabled`, default off) selects successful text outputs and exposed, non-error fo Refs whose shared candidate eligibility passes (`candidates.minAgeTurns` against the closed cadence bucket). It adds fixed protections for `apply_patch` and AGENTS.md/CLAUDE.md/SKILL.md reads to the shared collector's container/write/edit/compress/recovery exclusions, and joins dedup in the same commit. Outer run text, out() text and other derived content stay.
-- Item and batch gates use configured values (package defaults25/100; the user's overrides100/10000). Fo savings include every exposed copy and recovery-marker costs, measured on the final projection. Existing red-zone behavior bypasses savings gates, not content protections.
+- Optional age masking (`strategies.ageMasking.enabled`, default off) selects successful text outputs and exposed, non-error fo Refs whose shared candidate eligibility passes (`candidates.minAgeTurns` against the closed cadence bucket). It adds fixed protections for `apply_patch` and AGENTS.md/CLAUDE.md/SKILL.md reads to the shared collector's container/write/edit/compress exclusions, and joins dedup in the same commit. Outer run text, out() text and other derived content stay.
+- Item and batch gates use configured values (package defaults25/100; the user's overrides100/10000). Fo savings include every exposed copy and placeholder costs, measured on the final projection. Existing red-zone behavior bypasses savings gates, not content protections.
 - Cadence uses DCP logical turns. Age is eligibility, not proof of obsolescence. Deprecated error-purge/custom collectors cannot create new selections.
 
-## Ref and recovery invariants
+## Ref projection invariants
 
-Outer containers, images, unsupported/ambiguous output, private inner results and derived text remain protected. The optional fo bridge enumerates only attributable public Refs and projects all copies consistently. Missing bridges fail closed. Tombstones identify `dcp_recover`; originals and assistant/tool pairs stay canonical. Applied IDs/actions persist through the existing session format.
+Outer containers, images, unsupported/ambiguous output, private inner results and derived text remain protected. The optional fo bridge enumerates only attributable public Refs and projects all copies consistently. Missing bridges fail closed. Placeholders say output was hidden to save context and the tool can be re-run. Internal composite selection IDs are never rendered as recovery instructions; originals and assistant/tool pairs stay canonical. Applied IDs/actions persist through the existing session format.
 
 ## IDs and ownership
 

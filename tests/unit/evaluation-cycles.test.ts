@@ -9,7 +9,7 @@ import {
   runCycles,
 } from "../../scripts/evaluation-cycles.js";
 
-// Inject only the remote completion boundary; checkpoint building/context rebuilding remain real.
+// Inject only the remote completion boundary; Pi serialization/context rebuilding remain real.
 test("five checkpoints preserve late restrictions and execute corrected next actions", async () => {
   const dir = await mkdtemp(join(tmpdir(), "dcp-evaluation-"));
   let continuations = 0;

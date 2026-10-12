@@ -70,7 +70,7 @@ function textOf(messages: DcpMessage[], id: string): string {
   return (message?.content as any[])[0].text;
 }
 
-const marker = (id: string) => `[Output hidden to save context; re-run the tool if needed.]`;
+const MASKED_TEXT = "[Output hidden to save context; re-run the tool if needed.]";
 
 // ---------------------------------------------------------------------------
 // Ordinary tool results
@@ -103,8 +103,8 @@ describe("age-based tool-output masking", () => {
     expect([...state.prunedToolIds].sort()).toEqual(["first", "second"]);
     expect(state.lastHeuristicPruneDecision?.committedByStrategy.age).toBe(2);
     expect(state.lastHeuristicPruneDecision?.batchSavedTokens).toBeGreaterThanOrEqual(10_000);
-    expect(textOf(rendered, "first")).toBe(marker("first"));
-    expect(textOf(rendered, "second")).toBe(marker("second"));
+    expect(textOf(rendered, "first")).toBe(MASKED_TEXT);
+    expect(textOf(rendered, "second")).toBe(MASKED_TEXT);
   });
 
   test("is off by default and keeps young and hot-tail output", () => {
@@ -144,7 +144,6 @@ describe("age-based tool-output masking", () => {
       ["write", "write", { path: "b.ts" }],
       ["patch", "apply_patch", { patch: "diff" }],
       ["compress", "compress", { ranges: [] }],
-
       ["agent", "subagent", { task: "look" }],
       ["agents-md", "read", { path: "AGENTS.md" }],
       ["claude-md", "read", { path: "/repo/docs/CLAUDE.md" }],
@@ -175,7 +174,7 @@ describe("age-based tool-output masking", () => {
     const state = makeState();
     hydrateMissingToolRecords(messages, state);
     const rendered = applyPruning(messages, state, ageConfig());
-    expect(textOf(rendered, "call")).toBe(marker("call"));
+    expect(textOf(rendered, "call")).toBe(MASKED_TEXT);
     expect(state.pendingSave).toBe(true);
 
     expect(textOf(messages, "call")).toBe(original);
@@ -184,7 +183,7 @@ describe("age-based tool-output masking", () => {
     const resumed = makeState();
     restorePersistedState(serializePersistedState(state), resumed);
     hydrateMissingToolRecords(messages, resumed);
-    expect(textOf(applyPruning(messages, resumed, ageConfig(false)), "call")).toBe(marker("call"));
+    expect(textOf(applyPruning(messages, resumed, ageConfig(false)), "call")).toBe(MASKED_TEXT);
   });
 });
 
@@ -258,7 +257,7 @@ describe("age-based masking of exposed fo Refs", () => {
       "outer-run"
     );
     expect([...state.prunedToolIds]).toEqual([bigId]);
-    expect(text).toContain(marker(bigId));
+    expect(text).toContain(MASKED_TEXT);
     expect(text).not.toContain("ref-body line 100 observed");
     expect(text).toContain("AUTHORED-OUT-TEXT");
     expect(text).toContain("KEEP-FINAL");
@@ -270,7 +269,7 @@ describe("age-based masking of exposed fo Refs", () => {
     hydrateMissingToolRecords(messages, resumed);
     expect(
       textOf(applyPruning(messages, resumed, config, { foRefBridge: bridge }), "outer-run")
-    ).toContain(marker(bigId));
+    ).toContain(MASKED_TEXT);
     expect(
       bridge
         .collect({ outerToolCallId: "outer-run", details: envelope })
