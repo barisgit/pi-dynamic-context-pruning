@@ -2,13 +2,14 @@ import { buildSessionProjection, type SessionEntry } from "@earendil-works/pi-co
 import type { DcpState } from "../types/state.js";
 import { buildTranscriptSnapshot } from "../domain/transcript/index.js";
 
-/** Retire any block losing source at Pi's cut; rebase surviving keys into the kept projection. */
+/** Reconcile a committed cut, or normalize restored coverage into the current projection. */
 export function reconcileCompactedBlocks(
   state: DcpState,
   branch: SessionEntry[],
-  compactionId: string
+  compactionId?: string
 ): number[] {
-  const index = branch.findIndex((e) => e.id === compactionId);
+  const index = compactionId ? branch.findIndex((e) => e.id === compactionId) : -1;
+  if (compactionId && index < 0) return [];
   const before = index < 0 ? branch : branch.slice(0, index);
   const after = index < 0 ? branch : branch.slice(0, index + 1);
   const oldProjection = buildSessionProjection(before);
@@ -22,15 +23,6 @@ export function reconcileCompactedBlocks(
   const newKeyByOldKey = new Map(
     oldItems.map((item, i) => [item.key, newKeyByEntry.get(oldEntryIds[i])])
   );
-  // Preserve visible IDs for kept messages despite ordinal-dependent source keys.
-  const keptAliases = [...state.messageAliases.bySourceKey].flatMap(([key, ref]) => {
-    const next = newKeyByOldKey.get(key);
-    return next ? [[next, ref] as const] : [];
-  });
-  for (const [key, ref] of keptAliases) {
-    state.messageAliases.bySourceKey.set(key, ref);
-    state.messageAliases.byRef.set(ref, key);
-  }
   // Older v5 blocks were minted from the full branch, even after prior cuts.
   // Resolve those keys through entry provenance rather than treating shifted ordinals as lost source.
   const lineage: { message: any; entryId: string }[] = [];
@@ -61,6 +53,15 @@ export function reconcileCompactedBlocks(
   for (const [i, item] of legacyItems.entries()) {
     if (!newKeyByOldKey.has(item.key))
       newKeyByOldKey.set(item.key, newKeyByEntry.get(lineage[i].entryId));
+  }
+  // Preserve visible IDs for kept messages despite ordinal-dependent source keys.
+  const keptAliases = [...state.messageAliases.bySourceKey].flatMap(([key, ref]) => {
+    const next = newKeyByOldKey.get(key);
+    return next ? [[next, ref] as const] : [];
+  });
+  for (const [key, ref] of keptAliases) {
+    state.messageAliases.bySourceKey.set(key, ref);
+    state.messageAliases.byRef.set(ref, key);
   }
   const retired: number[] = [];
   for (const block of state.compressionBlocks) {

@@ -198,3 +198,53 @@ test("existing v5 full-lineage keys survive a second cut when coverage stays in 
     true
   );
 });
+
+test("legacy sibling repair cannot revive a block retired by this branch's host cut", async () => {
+  const { restoreStateFromBranch } = await import("../../src/application/session-handler.js");
+  const { serializePersistedState } = await import("../../src/infrastructure/persistence.js");
+  const state = makeState([
+    block(
+      entries.map((e) => e.message),
+      0,
+      1,
+      1
+    ),
+  ]);
+  const before = {
+    type: "custom",
+    customType: "dcp-state",
+    id: "before",
+    parentId: "e5",
+    data: serializePersistedState(state),
+  };
+  const compaction = {
+    type: "compaction",
+    id: "host",
+    parentId: "before",
+    firstKeptEntryId: "e3",
+    summary: "Pi summary",
+    timestamp: new Date(2000).toISOString(),
+  };
+  state.compressionBlocks[0].active = false;
+  state.lifetimeTokensSavedRealized = 10;
+  const after = {
+    type: "custom",
+    customType: "dcp-state",
+    id: "after",
+    parentId: "host",
+    data: serializePersistedState(state),
+  };
+  const sibling = {
+    type: "compaction",
+    id: "sibling",
+    parentId: "before",
+    firstKeptEntryId: "e3",
+    summary: "old DCP summary",
+    details: { source: "dcp-native-compaction", representedBlockIds: [1] },
+  };
+  const branch = [...entries, before, compaction, after] as any[];
+  const restored = makeState();
+  restoreStateFromBranch(branch, restored, makeConfig(), [...branch, sibling]);
+  expect(restored.compressionBlocks[0].active).toBe(false);
+  expect(restored.lifetimeTokensSavedRealized).toBe(10);
+});

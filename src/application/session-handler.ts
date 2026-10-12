@@ -236,6 +236,22 @@ function repairOffBranchNativeCompactionState(
     if (repairedBlocks.size === inactiveCandidateIds.length) break;
   }
 
+  if (branchEntries.some((entry) => entry?.type === "compaction")) {
+    // A sibling repair must not undo a legitimate cut on the selected branch.
+    const probe = {
+      ...state,
+      compressionBlocks: [...repairedBlocks.values()],
+      messageAliases: {
+        ...state.messageAliases,
+        byRef: new Map(state.messageAliases.byRef),
+        bySourceKey: new Map(state.messageAliases.bySourceKey),
+      },
+    };
+    reconcileCompactedBlocks(probe, [...branchEntries]);
+    for (const [id, block] of repairedBlocks) {
+      if (!block.active) repairedBlocks.delete(id);
+    }
+  }
   if (repairedBlocks.size === 0) return [];
 
   const repairedIds = Array.from(repairedBlocks.keys()).sort((a, b) => a - b);
@@ -352,6 +368,11 @@ function directRestore(
     reconcileCompactedBlocks(state, [...branchEntries], entry.id);
     state.lastCompressTurn = -1;
     state.lastNudgeTurn = -1;
+  }
+
+  // Normalize historical full-lineage keys even when the snapshot follows the cut.
+  if (branchEntries.some((entry) => entry?.type === "compaction")) {
+    reconcileCompactedBlocks(state, [...branchEntries]);
   }
 
   const repairedNudgeWatermarks = repairStaleNudgeWatermarks(branchEntries, state);

@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { buildSessionContext } from "@earendil-works/pi-coding-agent";
 import { restoreStateFromBranch } from "../../src/application/session-handler.js";
 import { serializePersistedState } from "../../src/infrastructure/persistence.js";
 import type { CompressionBlock } from "../../src/types/state.js";
@@ -37,6 +38,8 @@ function nativeCompactionEntry(representedBlockIds: number[]): any {
     type: "compaction",
     summary: "native compaction baked DCP summaries into the rebuilt buffer",
     id: "native-compaction-1",
+    firstKeptEntryId: "raw-1",
+    tokensBefore: 0,
     parentId: null,
     timestamp: new Date(6000).toISOString(),
     details: {
@@ -163,11 +166,14 @@ describe("resume restore parity", () => {
       dcpStateEntry(serializePersistedState(savedState)),
     ];
 
+    branch.forEach((entry, index) => {
+      entry.parentId = index ? branch[index - 1].id : null;
+    });
     const config = makeConfig();
     const restored = makeState();
     restoreStateFromBranch(branch, restored, config);
 
-    const resumeBuffer = rawMessages.map((message) => ({ ...message }));
+    const resumeBuffer = buildSessionContext(branch).messages;
     const rawEstimate = estimateTokens(textOf(resumeBuffer));
     const pruned = applyPruning(resumeBuffer, restored, config);
     const prunedText = textOf(pruned);
