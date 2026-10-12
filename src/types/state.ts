@@ -142,6 +142,8 @@ export interface CompressionCommandStat {
 /** Hidden deterministic metadata attached to a compressed block. */
 export interface CompressionBlockMetadata {
   coveredSourceKeys: string[];
+  /** Stable Pi-entry provenance, parallel to coverage keys; absent in historical snapshots. */
+  coveredSourceEntryIds?: string[];
   coveredSpanKeys: string[];
   coveredArtifactRefs: string[];
   coveredToolIds: string[];

@@ -52,6 +52,9 @@ function persistCompressionBlockV5(block: CompressionBlock): PersistedCompressio
     metadata: {
       ...(block.metadata ?? createEmptyCompressionBlockMetadata()),
       coveredSourceKeys: [...(block.metadata?.coveredSourceKeys ?? [])],
+      coveredSourceEntryIds: block.metadata?.coveredSourceEntryIds
+        ? [...block.metadata.coveredSourceEntryIds]
+        : undefined,
       coveredSpanKeys: [...(block.metadata?.coveredSpanKeys ?? [])],
       coveredArtifactRefs: [...(block.metadata?.coveredArtifactRefs ?? [])],
       coveredToolIds: [...(block.metadata?.coveredToolIds ?? [])],
@@ -201,6 +204,9 @@ function normalizeCompressionBlockMetadata(
 
   return {
     coveredSourceKeys: normalizeStringArray(metadata.coveredSourceKeys),
+    coveredSourceEntryIds: Array.isArray(metadata.coveredSourceEntryIds)
+      ? normalizeStringArray(metadata.coveredSourceEntryIds)
+      : undefined,
     coveredSpanKeys: normalizeStringArray(metadata.coveredSpanKeys),
     coveredArtifactRefs: normalizeStringArray(metadata.coveredArtifactRefs),
     coveredToolIds: normalizeStringArray(metadata.coveredToolIds),

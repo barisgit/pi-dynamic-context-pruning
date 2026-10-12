@@ -2,6 +2,17 @@ import { buildSessionProjection, type SessionEntry } from "@earendil-works/pi-co
 import type { DcpState } from "../types/state.js";
 import { buildTranscriptSnapshot } from "../domain/transcript/index.js";
 
+/** Keep entry provenance distinct when a host entry expands to multiple projected messages. */
+export function getProjectedSourceEntryIds(
+  projection: ReturnType<typeof buildSessionProjection>
+): string[] {
+  return projection.entries.flatMap((e) =>
+    e.messages.map((_, index) =>
+      e.messages.length === 1 ? e.sourceEntry.id : `${e.sourceEntry.id}:${index}`
+    )
+  );
+}
+
 /** Reconcile a committed cut, or normalize restored coverage into the current projection. */
 export function reconcileCompactedBlocks(
   state: DcpState,
@@ -17,8 +28,8 @@ export function reconcileCompactedBlocks(
   const oldItems = buildTranscriptSnapshot(oldProjection.messages as any[]).sourceItems;
   const newSnapshot = buildTranscriptSnapshot(newProjection.messages as any[]);
   const newItems = newSnapshot.sourceItems;
-  const oldEntryIds = oldProjection.entries.flatMap((e) => e.messages.map(() => e.sourceEntry.id));
-  const newEntryIds = newProjection.entries.flatMap((e) => e.messages.map(() => e.sourceEntry.id));
+  const oldEntryIds = getProjectedSourceEntryIds(oldProjection);
+  const newEntryIds = getProjectedSourceEntryIds(newProjection);
   const newKeyByEntry = new Map(newItems.map((item, i) => [newEntryIds[i], item.key]));
   const newKeyByOldKey = new Map(
     oldItems.map((item, i) => [item.key, newKeyByEntry.get(oldEntryIds[i])])
@@ -50,19 +61,18 @@ export function reconcileCompactedBlocks(
     }
   }
   const legacyItems = buildTranscriptSnapshot(lineage.map((item) => item.message)).sourceItems;
-  for (const [i, item] of legacyItems.entries()) {
-    if (!newKeyByOldKey.has(item.key))
-      newKeyByOldKey.set(item.key, newKeyByEntry.get(lineage[i].entryId));
-  }
-  // Preserve visible IDs for kept messages despite ordinal-dependent source keys.
+  const legacyEntryByKey = new Map(legacyItems.map((item, i) => [item.key, lineage[i].entryId]));
+  // Do not merge ordinal namespaces: repeated timestamps can make identical keys
+  // name different entries. Ambiguous old aliases expire instead of targeting new source.
   const keptAliases = [...state.messageAliases.bySourceKey].flatMap(([key, ref]) => {
-    const next = newKeyByOldKey.get(key);
+    const current = newKeyByOldKey.get(key);
+    const legacy = newKeyByEntry.get(legacyEntryByKey.get(key) ?? "");
+    if (legacyEntryByKey.has(key) && newKeyByOldKey.has(key) && legacy !== current) return [];
+    const next = current ?? legacy;
     return next ? [[next, ref] as const] : [];
   });
-  for (const [key, ref] of keptAliases) {
-    state.messageAliases.bySourceKey.set(key, ref);
-    state.messageAliases.byRef.set(ref, key);
-  }
+  state.messageAliases.bySourceKey = new Map(keptAliases);
+  state.messageAliases.byRef = new Map(keptAliases.map(([key, ref]) => [ref, key]));
   const retired: number[] = [];
   for (const block of state.compressionBlocks) {
     if (!block.active) continue;
@@ -77,8 +87,18 @@ export function reconcileCompactedBlocks(
               i.timestamp <= block.endTimestamp
           )
           .map((i) => i.key);
-    const mapped = covered.map((key) => newKeyByOldKey.get(key));
-    if (!covered.length || mapped.some((key) => !key)) {
+    const provenance = block.metadata?.coveredSourceEntryIds;
+    // Historical v5 coverage was always minted from full lineage. New snapshots
+    // carry entry provenance so a rebased ordinal can never be mistaken for it.
+    const entryIds =
+      provenance ??
+      covered.map((key) =>
+        exact.length
+          ? legacyEntryByKey.get(key)
+          : oldEntryIds[oldItems.findIndex((item) => item.key === key)]
+      );
+    const mapped = entryIds.map((id) => newKeyByEntry.get(id ?? ""));
+    if (!covered.length || mapped.length !== covered.length || mapped.some((key) => !key)) {
       block.active = false;
       retired.push(block.id);
       state.lifetimeTokensSavedRealized = Math.max(
@@ -89,6 +109,7 @@ export function reconcileCompactedBlocks(
     }
     if (block.metadata) {
       block.metadata.coveredSourceKeys = mapped as string[];
+      block.metadata.coveredSourceEntryIds = entryIds as string[];
       const keptKeys = new Set(mapped);
       block.metadata.coveredSpanKeys = newSnapshot.spans
         .filter((span) => span.sourceKeys.every((key) => keptKeys.has(key)))
@@ -99,7 +120,9 @@ export function reconcileCompactedBlocks(
     // The insertion anchor is placement, not coverage. If it vanished, place after the retained range.
     block.anchorSourceKey = block.anchorSourceKey?.startsWith("tail:")
       ? block.anchorSourceKey
-      : (newKeyByOldKey.get(block.anchorSourceKey ?? "") ??
+      : ((provenance
+          ? newKeyByOldKey.get(block.anchorSourceKey ?? "")
+          : newKeyByEntry.get(legacyEntryByKey.get(block.anchorSourceKey ?? "") ?? "")) ??
         newItems[newItems.findIndex((i) => i.key === block.endSourceKey) + 1]?.key ??
         "tail:compaction");
   }

@@ -248,3 +248,116 @@ test("legacy sibling repair cannot revive a block retired by this branch's host 
   expect(restored.compressionBlocks[0].active).toBe(false);
   expect(restored.lifetimeTokensSavedRealized).toBe(10);
 });
+
+test("shared timestamps cannot make a legacy hidden record delete unrelated kept source", async () => {
+  const { restoreStateFromBranch } = await import("../../src/application/session-handler.js");
+  const { serializePersistedState } = await import("../../src/infrastructure/persistence.js");
+  const { applyPruning } = await import("../../src/domain/pruning/index.js");
+  const raw = entries.map((entry, i) => ({
+    ...entry,
+    message: { role: "user", content: `SOURCE_${i}`, timestamp: 1000 },
+  }));
+  const snapshot = buildTranscriptSnapshot(raw.map((e) => e.message));
+  const exactBlock = (index: number, id: number) => ({
+    ...block(
+      raw.map((e) => e.message),
+      index,
+      index,
+      id
+    ),
+    startTimestamp: 1000,
+    endTimestamp: 1000,
+    summary: id === 1 ? "HIDDEN RECORD" : "KEPT RECORD",
+    metadata: {
+      ...block(
+        raw.map((e) => e.message),
+        index,
+        index,
+        id
+      ).metadata,
+      coveredSourceKeys: [snapshot.sourceItems[index].key],
+      coveredSpanKeys: [snapshot.spans[index].key],
+    },
+  });
+  const state = makeState([exactBlock(1, 1), exactBlock(3, 2)]);
+  const cut = {
+    type: "compaction",
+    id: "cut",
+    parentId: "e5",
+    firstKeptEntryId: "e3",
+    summary: "Pi summary",
+    timestamp: new Date(2000).toISOString(),
+  };
+  const persisted = {
+    type: "custom",
+    customType: "dcp-state",
+    id: "saved",
+    parentId: "cut",
+    data: serializePersistedState(state),
+  };
+  const branch = [...raw, cut, persisted] as any[];
+  const restored = makeState();
+  restoreStateFromBranch(branch, restored, makeConfig());
+  expect(restored.compressionBlocks[0].active).toBe(false);
+  expect(restored.compressionBlocks[1].active).toBe(true);
+  const rendered = JSON.stringify(
+    applyPruning(buildSessionContext(branch).messages as any[], restored, makeConfig())
+  );
+  expect(rendered).toContain("SOURCE_4");
+  expect(rendered).toContain("SOURCE_5");
+  expect(rendered).not.toContain("SOURCE_3");
+  expect(rendered).not.toContain("HIDDEN RECORD");
+  expect(rendered).toContain("KEPT RECORD");
+});
+
+test("new entry provenance survives serialization and repeated same-timestamp cuts without alias collisions", async () => {
+  const { reconcileCompactedBlocks } = await import("../../src/application/compaction-state.js");
+  const { serializePersistedState, restorePersistedState } =
+    await import("../../src/infrastructure/persistence.js");
+  const raw = entries.map((entry, i) => ({
+    ...entry,
+    message: { role: "user", content: `SOURCE_${i}`, timestamp: 1000 },
+  }));
+  const first = {
+    type: "compaction",
+    id: "first",
+    parentId: "e5",
+    firstKeptEntryId: "e3",
+    summary: "Pi summary",
+    timestamp: new Date(2000).toISOString(),
+  };
+  const before = [...raw, first] as any[];
+  const snapshot = buildTranscriptSnapshot(buildSessionContext(before).messages as any[]);
+  const currentBlock = block(
+    raw.map((e) => e.message),
+    5,
+    5,
+    1
+  );
+  currentBlock.startTimestamp = currentBlock.endTimestamp = 1000;
+  currentBlock.metadata.coveredSourceKeys = [snapshot.sourceItems[3].key];
+  currentBlock.metadata.coveredSpanKeys = [snapshot.spans[3].key];
+  currentBlock.metadata.coveredSourceEntryIds = ["e5"];
+  const state = makeState([currentBlock]);
+  const restored = makeState();
+  restorePersistedState(serializePersistedState(state), restored);
+  expect(restored.compressionBlocks[0].metadata!.coveredSourceEntryIds).toEqual(["e5"]);
+  restored.messageAliases.bySourceKey.set(snapshot.sourceItems[1].key, "m0002");
+  restored.messageAliases.byRef.set("m0002", snapshot.sourceItems[1].key);
+  const next = {
+    type: "compaction",
+    id: "next",
+    parentId: "first",
+    firstKeptEntryId: "e4",
+    summary: "next Pi summary",
+    timestamp: new Date(3000).toISOString(),
+  };
+  const after = [...before, next] as any[];
+  expect(reconcileCompactedBlocks(restored, after, "next")).toEqual([]);
+  expect(restored.compressionBlocks[0].active).toBe(true);
+  expect(restored.compressionBlocks[0].metadata!.coveredSourceEntryIds).toEqual(["e5"]);
+  expect(restored.compressionBlocks[0].metadata!.coveredSourceKeys).toEqual([
+    buildTranscriptSnapshot(buildSessionContext(after).messages as any[]).sourceItems[2].key,
+  ]);
+  expect(restored.messageAliases.byRef.has("m0002")).toBe(false);
+});

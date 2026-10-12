@@ -41,7 +41,7 @@ Exported helper: `materializeContextMessages` — first rehydrates missing runti
 
 Registers only `session_compact`. Pi alone summarizes and selects the cut. DCP does not cancel, override, seed, or trigger native compaction.
 
-`compaction-state.ts` maps current and historical full-lineage coverage through entry provenance, retires blocks losing any source at the cut, rebases kept blocks and visible aliases, and recomputes active savings. Commit handling realizes retired savings, resets nudge watermarks, persists, and updates the footer. Restore reconciles interrupted saves and validates legacy sibling repair against the selected branch projection.
+`compaction-state.ts` maps current and historical full-lineage coverage through entry provenance, retires blocks losing any source at the cut, rebases kept blocks using optional persisted entry provenance, expires ambiguous visible aliases, and recomputes active savings. Commit handling realizes retired savings, resets nudge watermarks, persists, and updates the footer. Restore reconciles interrupted saves and validates legacy sibling repair against the selected branch projection.
 
 ### `fo-ref-bridge.ts`
 

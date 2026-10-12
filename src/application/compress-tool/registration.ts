@@ -26,8 +26,9 @@ import { exceedsMaxContextLimit, resolveEffectiveContextSize } from "../../domai
 import { estimateMessageTokens, estimateTokens } from "../../domain/compression/range.js";
 import { updateDcpStatus } from "../status.js";
 import { saveState } from "../session-handler.js";
-import { buildSessionContext } from "@earendil-works/pi-coding-agent";
+import { buildSessionProjection } from "@earendil-works/pi-coding-agent";
 import { buildTranscriptSnapshot } from "../../domain/transcript/index.js";
+import { getProjectedSourceEntryIds } from "../compaction-state.js";
 
 export type {
   CompressionCandidateRange,
@@ -44,7 +45,10 @@ export {
   validateCompressionRangeBoundaryIds,
 } from "../../domain/compression/tooling.js";
 
-function buildCurrentBranchMessages(ctx: any): any[] {
+function buildCurrentBranchMessages(ctx: any): {
+  messages: any[];
+  entryIdsByKey: Map<string, string>;
+} {
   const branch = ctx.sessionManager.getBranch();
   // getBranch is already a linear path; normalize entry links for partial host fixtures.
   const entries = branch.map((entry: any, index: number) => ({
@@ -52,7 +56,15 @@ function buildCurrentBranchMessages(ctx: any): any[] {
     id: entry.id ?? `entry-${index}`,
     parentId: index ? (branch[index - 1].id ?? `entry-${index - 1}`) : null,
   }));
-  return buildSessionContext(entries).messages;
+  const projection = buildSessionProjection(entries);
+  const entryIds = getProjectedSourceEntryIds(projection);
+  const keys = buildTranscriptSnapshot(projection.messages as any[]).sourceItems;
+  return {
+    messages: projection.messages,
+    entryIdsByKey: branch.every((entry: any) => typeof entry.id === "string")
+      ? new Map(keys.map((item, index) => [item.key, entryIds[index]]))
+      : new Map(),
+  };
 }
 
 function resolveEffectiveRangeTopic(range: { topic?: string }, defaultTopic?: string): string {
@@ -164,7 +176,7 @@ export function registerCompressTool(pi: ExtensionAPI, state: DcpState, config: 
       const ranges = params.ranges ?? [];
       if (ranges.length === 0) throw new Error("Provide at least one range.");
       const newBlockIds: number[] = [];
-      const currentMessages = buildCurrentBranchMessages(ctx);
+      const { messages: currentMessages, entryIdsByKey } = buildCurrentBranchMessages(ctx);
       const usage = ctx.getContextUsage();
       // Gate the protected-tail emergency override on effective context size =
       // max(host tokens, DCP's last rendered-transcript estimate), mirroring the
@@ -272,6 +284,12 @@ export function registerCompressTool(pi: ExtensionAPI, state: DcpState, config: 
             startTimestamp,
             endTimestamp
           );
+          const provenance = artifacts.metadata.coveredSourceKeys.map((key) =>
+            entryIdsByKey.get(key)
+          );
+          if (provenance.every((id): id is string => typeof id === "string")) {
+            artifacts.metadata.coveredSourceEntryIds = provenance;
+          }
           const expandedStartSourceKey =
             artifacts.metadata.coveredSourceKeys[0] ?? boundaryStartSourceKey;
           const expandedEndSourceKey =
