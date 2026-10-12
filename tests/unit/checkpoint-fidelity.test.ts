@@ -533,17 +533,134 @@ describe("checkpoint fidelity", () => {
     );
   });
 
-  test("invalid cut and failed or truncated fresh handoff cancel the hook", async () => {
+  test("provider-local orientation failure retries once then leaves host preparation untouched", async () => {
     const f = fixture();
-    for (const setup of [
-      { cut: "missing", handoff: async () => "unused" },
-      {
-        cut: "e1",
-        handoff: async () => {
-          throw new Error("model unavailable");
-        },
+    let attempts = 0;
+    const notices: any[] = [];
+    const before = register(f.state, f.config, async () => {
+      attempts++;
+      throw new Error("provider abort");
+    });
+    const event = {
+      branchEntries: f.entries,
+      signal: new AbortController().signal,
+      preparation: {
+        firstKeptEntryId: "e3",
+        tokensBefore: 1000,
+        previousSummary: "Prior authorized memory",
       },
-    ]) {
+    };
+    const original = structuredClone(event.preparation);
+    expect(
+      await before(event, {
+        ...hookContext(),
+        hasUI: true,
+        ui: { notify: (...args: any[]) => notices.push(args) },
+      })
+    ).toBeUndefined();
+    expect(attempts).toBe(2);
+    expect(event.preparation).toEqual(original);
+    expect(notices.at(-1)?.[1]).toBe("warning");
+    expect(f.state.compressionBlocks.every((b) => b.active)).toBe(true);
+  });
+
+  test("orientation-free host commit keeps blocks active and resumes an automatic request", async () => {
+    const f = fixture();
+    const handlers = new Map<string, any>();
+    const sent: string[] = [];
+    registerDcpNativeCompactionBridge(
+      {
+        on: (name: string, fn: any) => handlers.set(name, fn),
+        appendEntry() {},
+        sendUserMessage: (text: string) => sent.push(text),
+      } as any,
+      f.state,
+      f.config,
+      async () => {
+        throw new Error("unavailable");
+      }
+    );
+    const ctx = { ...hookContext(), compact() {} };
+    void triggerDcpNativeCompaction(ctx as any, f.state, "auto");
+    const event = {
+      branchEntries: f.entries,
+      signal: new AbortController().signal,
+      preparation: { firstKeptEntryId: "e3", tokensBefore: 1000 },
+    };
+    expect(await handlers.get("session_before_compact")(event, ctx)).toBeUndefined();
+    await handlers.get("session_compact")(
+      {
+        compactionEntry: { firstKeptEntryId: "e3", details: { readFiles: [], modifiedFiles: [] } },
+      },
+      ctx
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(f.state.compressionBlocks.every((b) => b.active)).toBe(true);
+    expect(sent).toHaveLength(1);
+  });
+
+  test("an oversized fresh orientation falls back to Pi without changing the cut", async () => {
+    const f = fixture();
+    f.config.nativeCompaction.maxSummaryTokens = 1;
+    const before = register(
+      f.state,
+      f.config,
+      async () => "A fresh restriction too large for one token."
+    );
+    const event = {
+      branchEntries: f.entries,
+      preparation: { firstKeptEntryId: "e3", tokensBefore: 1000, previousSummary: "old" },
+    };
+    expect(await before(event, hookContext())).toBeUndefined();
+    expect(event.preparation.firstKeptEntryId).toBe("e3");
+    expect(event.preparation.previousSummary).toContain("fresh restriction");
+  });
+
+  test("retry success supplies a DCP checkpoint at the host's unchanged cut", async () => {
+    const f = fixture();
+    f.config.nativeCompaction.minHiddenCoverageRatio = 0.5;
+    let attempts = 0;
+    const before = register(f.state, f.config, async () => {
+      if (++attempts === 1) throw new Error("temporary provider failure");
+      return "Fresh restrictions";
+    });
+    const result = await before(
+      {
+        branchEntries: f.entries,
+        signal: new AbortController().signal,
+        preparation: { firstKeptEntryId: "e3", tokensBefore: 1000 },
+      },
+      hookContext()
+    );
+    expect(attempts).toBe(2);
+    expect(result.compaction.firstKeptEntryId).toBe("e3");
+    expect(result.compaction.summary).toContain("Fresh restrictions");
+  });
+
+  test("Pi abort during orientation stops without a retry or an extension cancel", async () => {
+    const f = fixture();
+    const abort = new AbortController();
+    let attempts = 0;
+    const before = register(f.state, f.config, async () => {
+      attempts++;
+      abort.abort();
+      throw new Error("Pi aborted");
+    });
+    const event = {
+      branchEntries: f.entries,
+      signal: abort.signal,
+      preparation: { firstKeptEntryId: "e3", tokensBefore: 1000, previousSummary: "unchanged" },
+    };
+    expect(await before(event, hookContext())).toBeUndefined();
+    expect(attempts).toBe(1);
+    expect(await before(event, hookContext())).toBeUndefined();
+    expect(attempts).toBe(1);
+    expect(event.preparation.previousSummary).toBe("unchanged");
+  });
+
+  test("invalid cut cancels to avoid losing the kept tail; invalid handoff still rejects", async () => {
+    const f = fixture();
+    for (const setup of [{ cut: "missing", handoff: async () => "unused" }]) {
       const before = register(f.state, f.config, setup.handoff);
       expect(
         await before(

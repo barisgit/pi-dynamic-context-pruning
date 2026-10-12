@@ -99,7 +99,11 @@ function createRequest(
   };
 }
 
-function notify(ctx: ExtensionContext, message: string, type: "info" | "error" = "info"): void {
+function notify(
+  ctx: ExtensionContext,
+  message: string,
+  type: "info" | "warning" | "error" = "info"
+): void {
   if (!ctx.hasUI) return;
   ctx.ui.notify(message, type);
 }
@@ -502,14 +506,44 @@ export function registerDcpNativeCompactionBridge(
       notify(ctx, "DCP checkpoint cancelled: unknown compaction boundary.", "error");
       return { cancel: true };
     }
-    let handoff: string;
-    try {
-      handoff = await generateHandoff(event, ctx, state, config);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      notify(ctx, `DCP checkpoint orientation unavailable: ${message}`, "error");
-      appendDebugLog(config, "native_compaction_cancelled", { error: message });
-      return { cancel: true };
+    let handoff: string | undefined;
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      // Pi owns cancellation. A provider-local abort with a live host signal
+      // is retryable; a real host abort must not start another completion.
+      if (event.signal?.aborted) return;
+      try {
+        handoff = await generateHandoff(event, ctx, state, config);
+        if (!handoff.trim()) throw new Error("Checkpoint orientation was empty.");
+        if (event.signal?.aborted) return;
+        break;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        appendDebugLog(config, "native_compaction_orientation_failed", {
+          ...buildSessionDebugPayload(ctx.sessionManager),
+          attempt,
+          hostAborted: event.signal?.aborted === true,
+          error: message,
+        });
+        if (event.signal?.aborted) return;
+        if (attempt === 2) {
+          notify(
+            ctx,
+            "DCP checkpoint orientation unavailable after retry; using Pi summarization.",
+            "warning"
+          );
+          // Host summary has no DCP records as input. Retain all active blocks,
+          // but keep request attribution so a committed auto attempt can resume.
+          const prepared = buildDcpNativeCompactionResult({
+            state,
+            config,
+            branchEntries: event.branchEntries,
+            preparation: event.preparation,
+            request,
+          });
+          pendingFallbackDetails.set(state, { ...prepared.details!, representedBlockIds: [] });
+          return;
+        }
+      }
     }
     const coverage = computeDcpHiddenCoverage(
       state,
