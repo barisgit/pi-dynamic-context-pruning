@@ -114,6 +114,7 @@ function escapeAttr(value: string): string {
   return value.replace(/"/g, "&quot;");
 }
 
+/** Certify only exact hidden source keys carried by final admitted records. */
 export function computeDcpHiddenCoverage(
   state: DcpState,
   branchEntries: SessionEntry[],
@@ -337,13 +338,10 @@ function stripRecordHeaders(text: string): string {
   );
 }
 
-function renderBlockForCompaction(block: CompressionBlock): string {
-  return stripRecordHeaders(renderCompressedBlockText({ ...block, detailLevel: "full" })).trim();
-}
-
+/** Build a bounded checkpoint; retirement IDs are fully hidden admitted records only. */
 export function buildDcpNativeCompactionResult({
   state,
-  config: _config,
+  config,
   branchEntries,
   preparation,
   request,
@@ -377,8 +375,8 @@ export function buildDcpNativeCompactionResult({
   const requestedBlockIds = request.requestedBlockIds ?? [];
   const tiers = selectRetainedCompressionBlockDetails(
     state.compressionBlocks,
-    _config.compress.renderFullBlockCount,
-    _config.compress.renderCompactBlockCount
+    config.compress.renderFullBlockCount,
+    config.compress.renderCompactBlockCount
   );
   // Newest first for admission; render admitted records chronologically.
   const retained = [...tiers.keys()].map((id) => state.compressionBlocks.find((b) => b.id === id)!);
@@ -400,7 +398,7 @@ export function buildDcpNativeCompactionResult({
   // Prior summaries informed the fresh handoff; never append them recursively.
   // Uncovered source (including tool evidence) is intentionally not raw-carried.
   let summary = render(true);
-  const budget = _config.nativeCompaction.maxSummaryTokens;
+  const budget = config.nativeCompaction.maxSummaryTokens;
   if (budget > 0 && estimateTokens(summary) > budget) summary = render(false);
   while (budget > 0 && estimateTokens(summary) > budget && retained.length > 0) {
     retained.pop(); // Drop a whole oldest record, never clip its authored summary.
@@ -436,6 +434,7 @@ export function buildDcpNativeCompactionResult({
   };
 }
 
+/** Queue one host compaction and resolve its completion without changing the host cut. */
 export function triggerDcpNativeCompaction(
   ctx: ExtensionContext,
   state: DcpState,
@@ -485,6 +484,7 @@ export function triggerDcpNativeCompaction(
   });
 }
 
+/** Install checkpoint/commit hooks; orientation failures must defer to Pi summarization. */
 export function registerDcpNativeCompactionBridge(
   pi: ExtensionAPI,
   state: DcpState,

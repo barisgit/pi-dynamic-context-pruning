@@ -2,9 +2,11 @@
 
 ## Unreleased
 
-- Removed the optional retention classifier, its network client, live proposals, and audit writer. Deduplication, age masking, recovery, and native compaction are unchanged. Historical classifier config is ignored.
+- Removed the optional retention classifier, its network client, live proposals, and audit writer. Deduplication, age masking, and recovery are unchanged. Historical classifier config is ignored.
+- Native orientation retries once while Pi’s abort signal is live, then warns and defers to unchanged host preparation. Pi aborts do not retry.
+- Coverage counts only final tier/budget-admitted records; only fully hidden records supplied to the checkpoint or host seed retire on commit.
 
-## Unreleased
+## Previous unreleased history
 
 - Added opt-in age masking (`strategies.ageMasking.enabled`, default `false`): successful text tool outputs and exposed fo Refs older than `strategies.candidates.minAgeTurns` are replaced by exact `dcp_recover` markers through the existing eligibility, item/batch savings gates, projection and persistence. Errors, images, containers and authored `run` text, mutations, DCP tools and AGENTS.md/CLAUDE.md/SKILL.md reads are kept.
 

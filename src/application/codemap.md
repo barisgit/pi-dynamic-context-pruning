@@ -41,15 +41,13 @@ Exported helper: `materializeContextMessages` — first rehydrates missing runti
 
 Integrates DCP state with pi's native session-compaction lifecycle via `session_before_compact` and `session_compact` event hooks, plus `turn_end` for auto-trigger.
 
-**`session_before_compact` hook** — checks DCP hidden coverage ratio against `config.nativeCompaction.minHiddenCoverageRatio`. If sufficient, calls `buildDcpNativeCompactionResult` which:
+**`session_before_compact` hook** — generates a fresh orientation from effective context including the recent tail. Provider-local failure retries once while Pi's signal is live, then warns and leaves host preparation unchanged; a host abort stops immediately. An unknown boundary cancels to prevent loss of the kept tail.
 
-- Resolves which hidden messages are covered by active DCP blocks.
-- Builds a tiered summary: recent `renderFullBlockCount` blocks render agent summary, bounded conversation excerpts, aggregate effects, and modified-file paths in `<section>` XML; older blocks become compact snippets or `<archived-sections>` bullets.
-- Includes uncovered hidden messages as raw excerpt text.
-- Strips and token-caps any prior DCP envelope from `previousSummary` to avoid nesting.
-- Returns a `CompactionResult` that pi uses as `customInstructions` for the compaction prompt.
+- Builds a tiered checkpoint from whole authored records plus fresh orientation, stripping optional metadata before dropping whole oldest records to fit the budget.
+- Gates native output on exact hidden source keys covered by final admitted records, never moving Pi's cut or recursively appending prior checkpoints.
+- Low rendered coverage seeds host `preparation.previousSummary` with final records plus orientation. An oversized orientation seeds only that orientation. Uncovered raw gaps are not serialized by DCP; Pi performs the host fallback.
 
-**`session_compact` hook** — fires when pi commits a compaction. Deactivates all represented blocks, moves their `savedTokenEstimate` into `state.lifetimeTokensSavedRealized` (so the footer total never regresses), resets `lastCompressTurn`/`lastNudgeTurn` to `-1` (post-compaction turn count is smaller), saves state, and updates the footer.
+**`session_compact` hook** — deactivates only fully hidden records supplied in the committed checkpoint or host seed, realizes their saved-token estimates, resets nudge watermarks, saves state, and updates the footer. Omitted canonical records remain active; stable tier ranking prevents promotion of old omitted records.
 
 **`turn_end` hook** — drains the `pendingAutoRequests` queue set by `decideNativeCompactionAutoTrigger`. If compaction completed and no user input is pending, sends a continuation prompt telling the agent to continue with the task using the compaction summary.
 
