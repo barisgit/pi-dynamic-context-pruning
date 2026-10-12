@@ -1141,6 +1141,9 @@ describe("DCP native pi compaction bridge", () => {
       handoff: "Fresh direction.",
     });
 
+    expect(result.details?.representedBlockIds).toEqual(
+      Array.from({ length: 12 }, (_, i) => i + 3)
+    );
     for (let id = 1; id <= 2; id++)
       expect(result.summary).not.toContain(`<agent-summary>\nSUMMARY_${id}\n`);
     for (let id = 3; id <= 10; id++) {
@@ -1215,6 +1218,7 @@ describe("DCP native pi compaction bridge", () => {
     dropConfig.compress.renderCompactBlockCount = 0;
     dropConfig.nativeCompaction.maxSummaryTokens = estimateTokens(twoRecordSummary);
     const dropped = buildDcpNativeCompactionResult(args(makeState(blocks), dropConfig));
+    expect(dropped.details?.representedBlockIds).toEqual([2, 3]);
     expect(dropped.summary).not.toContain("WHOLE_SUMMARY_1_END");
     expect(dropped.summary).toContain("WHOLE_SUMMARY_2_END");
     expect(dropped.summary).toContain("WHOLE_SUMMARY_3_END");

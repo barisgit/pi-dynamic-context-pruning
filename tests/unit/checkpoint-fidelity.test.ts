@@ -128,6 +128,50 @@ describe("checkpoint fidelity", () => {
     expect(sent[0]).toContain("[dcp-auto-compaction]");
   });
 
+  test.each(["native", "host", "oversized"])(
+    "%s commit retires only records actually supplied",
+    async (path) => {
+      const f = fixture();
+      f.config.compress.renderFullBlockCount = 1;
+      f.config.compress.renderCompactBlockCount = 0;
+      f.config.nativeCompaction.minHiddenCoverageRatio = path === "native" ? 0.3 : 1;
+      if (path === "oversized") f.config.nativeCompaction.maxSummaryTokens = 1;
+      f.state.compressionBlocks.forEach((b) => {
+        b.savedTokenEstimate = 10;
+      });
+      const handlers = new Map<string, any>();
+      registerDcpNativeCompactionBridge(
+        { on: (name: string, fn: any) => handlers.set(name, fn), appendEntry() {} } as any,
+        f.state,
+        f.config,
+        async () => "Fresh direction."
+      );
+      const event = {
+        branchEntries: f.entries,
+        preparation: { firstKeptEntryId: "e3", tokensBefore: 1000, previousSummary: "old" },
+      };
+      const ctx = hookContext();
+      const override = await handlers.get("session_before_compact")(event, ctx);
+      if (path === "host") {
+        expect(event.preparation.previousSummary).toContain("UI status");
+        expect(event.preparation.previousSummary).not.toContain("Setup");
+      }
+      await handlers.get("session_compact")(
+        {
+          compactionEntry: override?.compaction ?? {
+            firstKeptEntryId: "e3",
+            details: { readFiles: [], modifiedFiles: [] },
+          },
+        },
+        ctx
+      );
+      expect(f.state.compressionBlocks.map((b) => b.active)).toEqual(
+        path === "oversized" ? [true, true] : [true, false]
+      );
+      expect(f.state.lifetimeTokensSavedRealized).toBe(path === "oversized" ? 0 : 10);
+    }
+  );
+
   test("same-timestamp exact coverage remains conservative and selects seeded host fallback", async () => {
     const f = fixture();
     f.entries[1].message.timestamp = 1000;

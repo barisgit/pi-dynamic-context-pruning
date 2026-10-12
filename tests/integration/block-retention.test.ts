@@ -309,7 +309,7 @@ describe("compression block retention tiers", () => {
     }
   });
 
-  test("all-hidden native commit retires tier and budget omissions without mutating canonical summaries", async () => {
+  test("native commit retains omitted canonical summaries through persistence", async () => {
     const { blocks, entries, tailEntryId } = makeCanonicalHistory();
     const state = makeState(blocks);
     const config = makeConfig();
@@ -338,13 +338,12 @@ describe("compression block retention tiers", () => {
     expect(checkpoint.summary).toContain("CANONICAL_SUMMARY_22_END");
     expect(checkpoint.summary).not.toContain("CANONICAL_SUMMARY_21_END");
     expect(checkpoint.summary).not.toContain("CANONICAL_SUMMARY_1_END");
-    expect(checkpoint.details?.representedBlockIds).toEqual([
-      ...Array.from({ length: 12 }, (_, index) => index + 11),
-      ...Array.from({ length: 10 }, (_, index) => index + 1),
-    ]);
+    expect(checkpoint.details?.representedBlockIds).toEqual([22]);
 
     await commitNativeResult(state, config, checkpoint.details!);
-    expect(state.compressionBlocks.every((block) => !block.active)).toBe(true);
+    expect(
+      state.compressionBlocks.filter((block) => !block.active).map((block) => block.id)
+    ).toEqual([22]);
     expect(state.compressionBlocks.map((block) => block.summary)).toEqual(summariesBefore);
 
     const persisted = serializePersistedState(state);
@@ -352,12 +351,16 @@ describe("compression block retention tiers", () => {
     if (persisted.schemaVersion !== 5 || "unchanged" in persisted) {
       throw new Error("expected v5 state");
     }
-    expect(persisted.blocks.every((block) => block.summary === "")).toBe(true);
+    expect(
+      persisted.blocks.filter((block) => block.summary === "").map((block) => block.id)
+    ).toEqual([22]);
 
     const restored = makeState();
     restorePersistedState(persisted, restored);
-    expect(restored.compressionBlocks.every((block) => !block.active)).toBe(true);
-    expect(selectRetainedCompressionBlockDetails(restored.compressionBlocks, 4, 8).size).toBe(0);
+    expect(
+      restored.compressionBlocks.filter((block) => !block.active).map((block) => block.id)
+    ).toEqual([22]);
+    expect(selectRetainedCompressionBlockDetails(restored.compressionBlocks, 4, 8).size).toBe(11);
     const materialized = JSON.stringify(
       applyPruning(
         [
@@ -377,6 +380,9 @@ describe("compression block retention tiers", () => {
       )
     );
     expect(materialized).toContain("APPENDED_AFTER_ALL_HIDDEN");
+    expect(restored.compressionBlocks.find((block) => block.id === 21)?.summary).toBe(
+      "CANONICAL_SUMMARY_21_END"
+    );
     expect(materialized).not.toContain("CANONICAL_SUMMARY_21_END");
     expect(materialized).not.toContain("CANONICAL_SUMMARY_1_END");
   });

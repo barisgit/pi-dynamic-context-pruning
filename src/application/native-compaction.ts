@@ -261,13 +261,13 @@ function resolveBlockCoveredSourceKeys(block: CompressionBlock): Set<string> {
 }
 
 function resolveRepresentedBlocks(
-  state: DcpState,
+  candidates: CompressionBlock[],
   hiddenSourceKeys: Set<string>
 ): { blocks: CompressionBlock[]; coveredSourceKeys: Set<string> } {
   const coveredSourceKeys = new Set<string>();
   const blocks: CompressionBlock[] = [];
 
-  for (const block of state.compressionBlocks.filter((candidate) => candidate.active)) {
+  for (const block of candidates.filter((candidate) => candidate.active)) {
     const blockKeys = resolveBlockCoveredSourceKeys(block);
     if (blockKeys.size === 0) continue;
 
@@ -374,9 +374,6 @@ export function buildDcpNativeCompactionResult({
       .map((item) => item.key)
   );
   const hiddenMessageCount = hiddenSourceKeys.size;
-  const represented = resolveRepresentedBlocks(state, hiddenSourceKeys);
-  const { readFiles, modifiedFiles } = collectFileLists(represented.blocks, preparation.fileOps);
-  const representedBlockIds = represented.blocks.map((block) => block.id);
   const requestedBlockIds = request.requestedBlockIds ?? [];
   const tiers = selectRetainedCompressionBlockDetails(
     state.compressionBlocks,
@@ -413,6 +410,9 @@ export function buildDcpNativeCompactionResult({
     throw new Error("Fresh checkpoint orientation exceeds the DCP budget; use host summarization.");
   }
 
+  const represented = resolveRepresentedBlocks(retained, hiddenSourceKeys);
+  const { readFiles, modifiedFiles } = collectFileLists(retained, preparation.fileOps);
+  const representedBlockIds = represented.blocks.map((block) => block.id);
   return {
     summary,
     firstKeptEntryId,
@@ -512,6 +512,39 @@ export function registerDcpNativeCompactionBridge(
       return { cancel: true };
     }
     let handoff: string | undefined;
+    const fallback = (
+      prepared?: CompactionResult<DcpNativeCompactionDetails>,
+      coverageRatio?: number
+    ): undefined => {
+      // Seed only the records actually admitted with the orientation. If no
+      // orientation is available, preserve Pi's preparation exactly.
+      if (handoff)
+        event.preparation.previousSummary =
+          prepared?.summary ??
+          `Current authorized intent and constraints (apply later corrections; preserve explicit permissions):\n${handoff}`;
+      const details =
+        prepared?.details ??
+        buildDcpNativeCompactionResult({
+          state,
+          config,
+          branchEntries: event.branchEntries,
+          preparation: event.preparation,
+          request,
+        }).details!;
+      pendingFallbackDetails.set(
+        state,
+        prepared
+          ? details
+          : {
+              ...details,
+              representedBlockIds: [],
+              renderedBlockIds: [],
+              uncoveredHiddenMessageCount: details.hiddenMessageCount,
+            }
+      );
+      appendDebugLog(config, "native_compaction_host_fallback", { coverageRatio });
+      return undefined;
+    };
     for (let attempt = 1; attempt <= 2; attempt++) {
       // Pi owns cancellation. A provider-local abort with a live host signal
       // is retryable; a real host abort must not start another completion.
@@ -522,6 +555,7 @@ export function registerDcpNativeCompactionBridge(
         if (event.signal?.aborted) return;
         break;
       } catch (error) {
+        handoff = undefined;
         const message = error instanceof Error ? error.message : String(error);
         appendDebugLog(config, "native_compaction_orientation_failed", {
           ...buildSessionDebugPayload(ctx.sessionManager),
@@ -536,35 +570,10 @@ export function registerDcpNativeCompactionBridge(
             "DCP checkpoint orientation unavailable after retry; using Pi summarization.",
             "warning"
           );
-          // Host summary has no DCP records as input. Retain all active blocks,
-          // but keep request attribution so a committed auto attempt can resume.
-          const prepared = buildDcpNativeCompactionResult({
-            state,
-            config,
-            branchEntries: event.branchEntries,
-            preparation: event.preparation,
-            request,
-          });
-          pendingFallbackDetails.set(state, { ...prepared.details!, representedBlockIds: [] });
-          return;
+          return fallback();
         }
       }
     }
-    const fallback = (coverageRatio?: number): undefined => {
-      // Pi consumes this shared preparation object, not mutations to event.customInstructions.
-      // Replace rather than append: the fresh tail-informed orientation supersedes prior checkpoints.
-      event.preparation.previousSummary = `Current authorized intent and constraints (apply later corrections; preserve explicit permissions):\n${handoff}`;
-      const prepared = buildDcpNativeCompactionResult({
-        state,
-        config,
-        branchEntries: event.branchEntries,
-        preparation: event.preparation,
-        request,
-      });
-      pendingFallbackDetails.set(state, prepared.details!);
-      appendDebugLog(config, "native_compaction_host_fallback", { coverageRatio });
-      return undefined;
-    };
     let result: CompactionResult<DcpNativeCompactionDetails>;
     try {
       result = buildDcpNativeCompactionResult({
@@ -589,7 +598,7 @@ export function registerDcpNativeCompactionBridge(
       result.details?.renderedBlockIds ?? []
     );
     if (coverage.ratio < config.nativeCompaction.minHiddenCoverageRatio)
-      return fallback(coverage.ratio);
+      return fallback(result, coverage.ratio);
 
     appendDebugLog(config, "native_compaction_prepared", {
       ...buildSessionDebugPayload(ctx.sessionManager),
@@ -615,9 +624,8 @@ export function registerDcpNativeCompactionBridge(
     if (!details) return;
 
     const representedBlockIds = new Set(details.representedBlockIds);
-    // The checkpoint consumes these source ranges, whether their record was
-    // retained or intentionally omitted by the budget/aging policy. Retire all
-    // fully hidden blocks, not only the rendered subset, to prevent revival.
+    // Only fully hidden records supplied to the native result or host seed
+    // are consumed. Stable tier ranking prevents this from promoting old records.
     // Move their estimated savings into the lifetime
     // counter BEFORE deactivating them, so the footer total does not appear
     // to regress immediately after a compaction.
