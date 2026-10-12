@@ -64,7 +64,6 @@ function fakeBridge(candidates: FoRefCandidateV1[], unsupported = false) {
         ignoredLocalIds: [],
       };
     },
-    recover: () => ({ status: "unavailable" }),
   };
   return { bridge, calls };
 }
@@ -186,14 +185,14 @@ describe("fo Ref adapter projection", () => {
     expect(calls).toHaveLength(3);
     expect(calls[0]).toEqual({});
     expect(calls[1]?.[first.localId]).toContain(
-      `dcp_recover({id:${JSON.stringify(first.compositeId)}})`
+      "[Output hidden to save context; re-run the tool if needed.]"
     );
     expect(calls[1]?.[second.localId]).toBeUndefined();
     expect(calls[2]?.[first.localId]).toContain(
-      `dcp_recover({id:${JSON.stringify(first.compositeId)}})`
+      "[Output hidden to save context; re-run the tool if needed.]"
     );
     expect(calls[2]?.[second.localId]).toBe(
-      `a\n[... 3 lines removed by DCP; original retained: dcp_recover({id:${JSON.stringify(second.compositeId)}}) ...]\ne`
+      `a\n[... 3 lines hidden to save context; re-run the tool if needed. ...]\ne`
     );
     expect(result.originalText).toBe("ORIGINAL OUTER MODEL TEXT");
     expect(result.baselineText).toContain(first.localId);
@@ -225,7 +224,7 @@ describe("fo Ref adapter projection", () => {
       maxVisibleBytes: 10_000,
     });
     expect(calls[2]?.[exposed.localId]).toBe(
-      `line 1\n[... 2 lines removed by DCP; original retained: dcp_recover({id:${JSON.stringify(exposed.compositeId)}}) ...]\nline 4`
+      `line 1\n[... 2 lines hidden to save context; re-run the tool if needed. ...]\nline 4`
     );
   });
 
@@ -302,7 +301,6 @@ describe("fo Ref adapter projection", () => {
           ignoredLocalIds: [],
         };
       },
-      recover: () => ({ status: "unavailable" }),
     };
     const clippedOuter: DcpMessage = {
       ...outerMessage,
@@ -325,7 +323,7 @@ describe("fo Ref adapter projection", () => {
     expect(result.baselineText).toBe(canonicalFull.slice(0, maxVisibleBytes));
     expect(result.originalFullText).toBe(canonicalFull);
     expect(result.baselineFullText).toBe(canonicalFull);
-    expect(result.projectedFullText.match(/dcp_recover\(\{id:/g)).toHaveLength(2);
+    expect(result.projectedFullText.match(/Output hidden to save context/g)).toHaveLength(2);
     expect(result.projectedFullText.length).toBeLessThan(result.baselineFullText.length);
     expect(result.projectedText.length).toBe(maxVisibleBytes);
     expect(result.projectedText.length).toBe(result.baselineText.length);

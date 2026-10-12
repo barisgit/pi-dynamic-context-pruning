@@ -83,7 +83,7 @@ const DEFAULT_CONFIG_FILE_CONTENT = `{
   //   "minPruneBatchSavedTokens": 100,
   //   "deduplication": { "enabled": true, "protectedTools": [] },
   //   // Mask successful text tool outputs (and exposed fo Refs) older than
-  //   // candidates.minAgeTurns with a dcp_recover marker. Uses the same item/batch gates.
+  //   // candidates.minAgeTurns with a short hidden-output placeholder. Uses the same item/batch gates.
   //   "ageMasking": { "enabled": false },
   //   "candidates": { "minAgeTurns": 15, "minResultTokens": 300, "protectedTools": [] }
   // },

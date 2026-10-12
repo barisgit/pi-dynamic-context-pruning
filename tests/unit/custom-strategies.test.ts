@@ -210,13 +210,13 @@ describe("retired customStrategies compatibility", () => {
     const pruned = applyPruning(messages, state, cfg);
 
     expect(resultText(pruned, "head")).toBe(
-      'l1\nl2\n[... 3 lines removed by DCP; original retained: dcp_recover({id:"head"}) ...]'
+      "l1\nl2\n[... 3 lines hidden to save context; re-run the tool if needed. ...]"
     );
     expect(resultText(pruned, "tail")).toBe(
-      '[... 3 lines removed by DCP; original retained: dcp_recover({id:"tail"}) ...]\nl4\nl5'
+      "[... 3 lines hidden to save context; re-run the tool if needed. ...]\nl4\nl5"
     );
     expect(resultText(pruned, "both")).toBe(
-      'l1\n[... 3 lines removed by DCP; original retained: dcp_recover({id:"both"}) ...]\nl5'
+      "l1\n[... 3 lines hidden to save context; re-run the tool if needed. ...]\nl5"
     );
   });
 
@@ -349,6 +349,8 @@ describe("prunedToolIds GC", () => {
     expect(state.prunedToolIds.has("present")).toBe(true);
     expect(state.prunedToolIds.has("absent")).toBe(false);
     expect(state.prunedToolActions.has("absent")).toBe(false);
-    expect(resultText(pruned, "present")).toContain('dcp_recover({id:"present"})');
+    expect(resultText(pruned, "present")).toContain(
+      "[Output hidden to save context; re-run the tool if needed.]"
+    );
   });
 });

@@ -135,8 +135,8 @@ describe("production fo Ref pruning integration", () => {
 
     expect(state.prunedToolIds.has("outer-run")).toBe(false);
     expect(state.prunedToolIds.has(candidate.compositeId)).toBe(true);
-    expect(text.match(/dcp_recover\(\{id:/g)).toHaveLength(3);
-    expect(text).toContain(`dcp_recover({id:${JSON.stringify(candidate.compositeId)}})`);
+    expect(text.match(/Output hidden to save context/g)).toHaveLength(3);
+    expect(text).toContain("[Output hidden to save context; re-run the tool if needed.]");
     expect(text).toContain(`DERIVED:${original}`);
     expect(text).toContain("KEEP-AUTHORED");
     expect(text).toContain("KEEP-FINAL");
@@ -248,7 +248,7 @@ describe("production fo Ref pruning integration", () => {
       const collected = bridge.collect({ outerToolCallId: "outer-run", details: envelope });
       if (collected.status !== "supported") throw new Error("expected supported bridge");
       const candidate = collected.candidates[0];
-      const marker = `[Output removed by DCP; original retained: dcp_recover({id:${JSON.stringify(candidate.compositeId)}})]`;
+      const marker = `[Output hidden to save context; re-run the tool if needed.]`;
       const direct = bridge.project({
         outerToolCallId: "outer-run",
         details: envelope,
@@ -326,7 +326,7 @@ describe("production fo Ref pruning integration", () => {
     const collected = bridge.collect({ outerToolCallId: "outer-run", details: envelope });
     if (collected.status !== "supported") throw new Error("expected supported bridge");
     const candidate = collected.candidates[0];
-    const marker = `[Output removed by DCP; original retained: dcp_recover({id:${JSON.stringify(candidate.compositeId)}})]`;
+    const marker = `[Output hidden to save context; re-run the tool if needed.]`;
     const direct = bridge.project({
       outerToolCallId: "outer-run",
       details: envelope,
@@ -424,7 +424,7 @@ describe("production fo Ref pruning integration", () => {
         (message: DcpMessage) => message.toolCallId === "outer-run"
       );
       expect((resumedOuter.content as any[])[0].text).toContain(
-        `dcp_recover({id:${JSON.stringify(candidate.compositeId)}})`
+        "[Output hidden to save context; re-run the tool if needed.]"
       );
     }
   );
@@ -655,55 +655,8 @@ describe("production fo Ref pruning integration", () => {
         (message: DcpMessage) => message.toolCallId === "ordinary-failed"
       );
       expect((failedResult.content as any[])[0].text).toContain(
-        'dcp_recover({id:"ordinary-failed"})'
+        "[Output hidden to save context; re-run the tool if needed.]"
       );
-    }
-  );
-
-  realFoTest(
-    "protects exposed dcp_recover output and lifts persisted composite actions",
-    async () => {
-      const { bridge, makeRef, projectModelText } = await loadRealFo();
-      const original = "RECOVERED-" + "o".repeat(2_000);
-      const exposed = makeRef("dcp_recover", original, {
-        cwd: "/repo",
-        input: { id: "prior" },
-        timelineId: "inner-recover",
-      });
-      const envelope: any = {
-        kind: "sandbox.result",
-        version: 1,
-        script: { hash: "protected-recover" },
-        emissions: [{ kind: "ref", ref: exposed }],
-        timeline: [
-          {
-            id: "inner-recover",
-            kind: "tool",
-            toolName: "dcp_recover",
-            args: { id: "prior" },
-            result: { content: [{ type: "text", text: original }], isError: false },
-          },
-        ],
-        trace: [],
-        budgets: { timedOut: false, calls: 1, visibleBytesTruncated: false },
-      };
-      const outerText = projectModelText(envelope, 100_000, 100_000).text;
-      const messages = transcript(outerText, envelope);
-      const state = makeState();
-      hydrateMissingToolRecords(messages, state);
-      const collected = bridge.collect({ outerToolCallId: "outer-run", details: envelope });
-      if (collected.status !== "supported") throw new Error("expected supported bridge");
-      const candidate = collected.candidates[0];
-      state.prunedToolIds.add(candidate.compositeId);
-      state.prunedToolActions.set(candidate.compositeId, { action: "clear" });
-      const config = configureRefClearing();
-      config.strategies.customStrategies.rules = [{ tools: ["*"], action: "clear" }];
-
-      const projected = applyPruning(messages, state, config, { foRefBridge: bridge });
-      const outer = projected.find((message: DcpMessage) => message.toolCallId === "outer-run");
-      expect(state.prunedToolIds.has(candidate.compositeId)).toBe(false);
-      expect((outer.content as any[])[0].text).toBe(outerText);
-      expect((outer.content as any[])[0].text).toContain(original);
     }
   );
 });
@@ -749,36 +702,5 @@ describe("heuristic pruning safety dependencies", () => {
     expect(state.prunedToolIds.has("retry")).toBe(false);
     expect(state.prunedToolIds.has("failed")).toBe(false);
     expect(JSON.stringify(projected)).toContain("failure evidence");
-  });
-
-  test("never automatically prunes dcp_recover output and lifts old selections", () => {
-    const messages: DcpMessage[] = [
-      {
-        role: "assistant",
-        content: [
-          { type: "toolCall", id: "recovery", name: "dcp_recover", arguments: { id: "old" } },
-        ],
-      },
-      {
-        role: "toolResult",
-        toolCallId: "recovery",
-        toolName: "dcp_recover",
-        content: [{ type: "text", text: "RECOVERED-ORIGINAL" }],
-      },
-      ...Array.from({ length: 8 }, (_, index) => ({ role: "user", content: `later ${index}` })),
-    ];
-    messages.forEach((message, index) => {
-      message.timestamp = 3_000 + index;
-    });
-    const state = makeState();
-    hydrateMissingToolRecords(messages, state);
-    state.prunedToolIds.add("recovery");
-    state.prunedToolActions.set("recovery", { action: "clear" });
-    const config = configureRefClearing();
-    config.strategies.customStrategies.rules = [{ tools: ["*"], action: "clear" }];
-
-    const projected = applyPruning(messages, state, config);
-    expect(state.prunedToolIds.has("recovery")).toBe(false);
-    expect(JSON.stringify(projected)).toContain("RECOVERED-ORIGINAL");
   });
 });

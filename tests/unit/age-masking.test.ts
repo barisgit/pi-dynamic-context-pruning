@@ -3,7 +3,6 @@ import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { applyPruning, makeConfig, makeState } from "../helpers/dcp-test-utils.js";
 import { hydrateMissingToolRecords } from "../../src/application/tool-recording.js";
-import { recoverOriginalToolOutput } from "../../src/application/recover-tool.js";
 import {
   serializePersistedState,
   restorePersistedState,
@@ -71,8 +70,7 @@ function textOf(messages: DcpMessage[], id: string): string {
   return (message?.content as any[])[0].text;
 }
 
-const marker = (id: string) =>
-  `[Output removed by DCP; original retained: dcp_recover({id:${JSON.stringify(id)}})]`;
+const marker = (id: string) => `[Output hidden to save context; re-run the tool if needed.]`;
 
 // ---------------------------------------------------------------------------
 // Ordinary tool results
@@ -146,7 +144,7 @@ describe("age-based tool-output masking", () => {
       ["write", "write", { path: "b.ts" }],
       ["patch", "apply_patch", { patch: "diff" }],
       ["compress", "compress", { ranges: [] }],
-      ["recover", "dcp_recover", { id: "x" }],
+
       ["agent", "subagent", { task: "look" }],
       ["agents-md", "read", { path: "AGENTS.md" }],
       ["claude-md", "read", { path: "/repo/docs/CLAUDE.md" }],
@@ -171,8 +169,8 @@ describe("age-based tool-output masking", () => {
     expect(textOf(rendered, "image")).toBe(big("image"));
   });
 
-  test("masked output recovers exactly and stays masked across restore", () => {
-    const original = output("recoverable", 2_500);
+  test("masking leaves canonical output intact and stays masked across restore", () => {
+    const original = output("canonical", 2_500);
     const messages = stamp([...call("call", "read", { path: "src/x.ts" }, original), ...users(40)]);
     const state = makeState();
     hydrateMissingToolRecords(messages, state);
@@ -180,10 +178,7 @@ describe("age-based tool-output masking", () => {
     expect(textOf(rendered, "call")).toBe(marker("call"));
     expect(state.pendingSave).toBe(true);
 
-    const entries = messages.map((message) => ({ type: "message", message }));
-    expect(recoverOriginalToolOutput(entries, "call").content).toEqual([
-      { type: "text", text: original },
-    ]);
+    expect(textOf(messages, "call")).toBe(original);
 
     // A persisted selection keeps rendering even if the flag is later turned off.
     const resumed = makeState();
@@ -276,9 +271,10 @@ describe("age-based masking of exposed fo Refs", () => {
     expect(
       textOf(applyPruning(messages, resumed, config, { foRefBridge: bridge }), "outer-run")
     ).toContain(marker(bigId));
-    const entries = messages.map((message) => ({ type: "message", message }));
-    expect(recoverOriginalToolOutput(entries, bigId, bridge).details.originalRef).toMatchObject({
-      value: original,
-    });
+    expect(
+      bridge
+        .collect({ outerToolCallId: "outer-run", details: envelope })
+        .candidates.find((c: any) => c.compositeId === bigId).text
+    ).toBe(original);
   });
 });

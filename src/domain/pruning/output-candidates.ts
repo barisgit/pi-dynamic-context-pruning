@@ -47,7 +47,7 @@ export function collectOutputCandidates(
     if (!record) return onSkip?.("missing-record");
     if (state.prunedToolIds.has(record.toolCallId)) return onSkip?.("already-pruned");
     if (
-      ["run", "subagent", "workflow", "write", "edit", "compress", "dcp_recover"].includes(
+      ["run", "subagent", "workflow", "write", "edit", "compress"].includes(
         record.toolName.toLowerCase()
       )
     )

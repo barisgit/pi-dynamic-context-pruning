@@ -19,7 +19,7 @@ import { buildLiveOwnerKeys, INTERNAL_HEADING } from "../domain/transcript/index
 import { appendDebugLog, buildSessionDebugPayload } from "../infrastructure/debug-log.js";
 import { updateDcpStatus } from "./status.js";
 import { hydrateMissingToolRecords } from "./tool-recording.js";
-import { getFoRefBridge } from "./recover-tool.js";
+import { getFoRefBridge } from "./fo-ref-bridge.js";
 import type { FoRefBridgeV1 } from "../domain/pruning/fo-ref-adapter.js";
 
 function cloneRenderedMessages(messages: DcpMessage[]): DcpMessage[] {

@@ -1,3 +1,4 @@
+import { HIDDEN_OUTPUT_PLACEHOLDER, hiddenLinesPlaceholder } from "./placeholder.js";
 import { createInputFingerprint } from "../../state.js";
 import type { DcpMessage } from "../../types/message.js";
 import type { PrunedToolAction, ToolRecord } from "../../types/state.js";
@@ -58,7 +59,6 @@ export interface FoRefBridgeV1 {
     | { status: "supported"; version: 1; envelopeVersion: 1; candidates: FoRefCandidateV1[] }
     | { status: "unsupported" };
   project(request: FoRefBridgeProjectRequestV1): FoRefBridgeProjectedV1 | FoRefBridgeUnchangedV1;
-  recover(request: { outerToolCallId: string; details: unknown; localId: string }): unknown;
 }
 
 export interface FoRefGroupedSourceRef {
@@ -336,10 +336,7 @@ function buildLocalDecisions(
 
 function renderAction(candidate: FoRefCandidateV1, action: PrunedToolAction): string {
   if (action.action === "clear") {
-    const recovery = `dcp_recover({id:${JSON.stringify(candidate.compositeId)}})`;
-    return candidate.isError
-      ? `[Error output removed by DCP; original retained: ${recovery}]`
-      : `[Output removed by DCP; original retained: ${recovery}]`;
+    return HIDDEN_OUTPUT_PLACEHOLDER;
   }
   const lines = candidate.text.split("\n");
   const headLines = normalizeLineCount(action.headLines);
@@ -348,7 +345,7 @@ function renderAction(candidate: FoRefCandidateV1, action: PrunedToolAction): st
   if (removedCount === 0) return candidate.text;
   return [
     ...lines.slice(0, headLines),
-    `[... ${removedCount} lines removed by DCP; original retained: dcp_recover({id:${JSON.stringify(candidate.compositeId)}}) ...]`,
+    hiddenLinesPlaceholder(removedCount),
     ...(tailLines > 0 ? lines.slice(lines.length - tailLines) : []),
   ].join("\n");
 }

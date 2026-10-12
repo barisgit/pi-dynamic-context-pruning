@@ -1,3 +1,4 @@
+import { HIDDEN_OUTPUT_PLACEHOLDER, hiddenLinesPlaceholder } from "./placeholder.js";
 import type { DcpState, HeuristicPruneDecision, PrunedToolAction } from "../../types/state.js";
 import type { DcpConfig } from "../../types/config.js";
 import type { DcpMessage } from "../../types/message.js";
@@ -22,7 +23,7 @@ import {
 } from "./fo-ref-adapter.js";
 
 // Always-protected tool names for deduplication
-const ALWAYS_PROTECTED_DEDUP = new Set(["compress", "write", "edit", "dcp_recover"]);
+const ALWAYS_PROTECTED_DEDUP = new Set(["compress", "write", "edit"]);
 
 // Roles that get message IDs injected. Assistant messages are deliberately
 // excluded so DCP does not mutate freshly generated model output and break the
@@ -288,16 +289,6 @@ function bucketedTurn(currentTurn: number, config: DcpConfig): number {
   return Math.floor(currentTurn / cadence) * cadence;
 }
 
-function recoveryCall(id: string): string {
-  return `dcp_recover({id:${JSON.stringify(id)}})`;
-}
-
-function tombstoneText(id: string, isError: boolean): string {
-  return isError
-    ? `[Error output removed by DCP; original retained: ${recoveryCall(id)}]`
-    : `[Output removed by DCP; original retained: ${recoveryCall(id)}]`;
-}
-
 /**
  * A tool result that is eligible to be tombstoned this pass, paired with the
  * net tokens its removal would save (`toolResultTokens - tombstoneTokens`).
@@ -308,10 +299,6 @@ interface PruneCandidate {
   strategy: "dedup" | "age";
   renderAction: PrunedToolAction;
   turnIndex: number;
-}
-
-function tombstoneTokenCost(id: string, isError: boolean): number {
-  return estimateTokens(tombstoneText(id, isError));
 }
 
 function clearRenderAction(): PrunedToolAction {
@@ -359,17 +346,12 @@ function hasOnlyTextContent(message: DcpMessage): boolean {
 // responses are never raw-log candidates; supported containers are handled by
 // the exposed-result adapter instead. Unknown containers remain intact.
 const COMPOSITE_TOOL_NAMES = new Set(["run", "subagent", "workflow"]);
-const RECOVERY_TOOL_NAMES = new Set(["dcp_recover"]);
 
 function isProtectedResult(message: DcpMessage, state: DcpState): boolean {
   if (message.role !== "toolResult" && message.role !== "bashExecution") return false;
   const name = state.toolCalls.get(message.toolCallId ?? "")?.toolName ?? message.toolName ?? "";
   const normalizedName = name.toLowerCase();
-  return (
-    COMPOSITE_TOOL_NAMES.has(normalizedName) ||
-    RECOVERY_TOOL_NAMES.has(normalizedName) ||
-    !hasOnlyTextContent(message)
-  );
+  return COMPOSITE_TOOL_NAMES.has(normalizedName) || !hasOnlyTextContent(message);
 }
 
 /**
@@ -430,7 +412,7 @@ function collectDeduplicationCandidates(
       if (state.prunedToolIds.has(ids[i])) continue;
       candidates.push({
         toolCallId: ids[i],
-        netSaved: record.tokenEstimate - tombstoneTokenCost(ids[i], record.isError),
+        netSaved: record.tokenEstimate - estimateTokens(HIDDEN_OUTPUT_PLACEHOLDER),
         strategy: "dedup",
         renderAction: clearRenderAction(),
         turnIndex: record.turnIndex,
@@ -453,8 +435,7 @@ function normalizeLineCount(value: number | undefined): number {
 
 function buildReducedText(
   rawText: string,
-  action: Extract<PrunedToolAction, { action: "reduce" }>,
-  toolCallId: string
+  action: Extract<PrunedToolAction, { action: "reduce" }>
 ): string {
   const lines = rawText.split("\n");
   const headLines = normalizeLineCount(action.headLines);
@@ -464,11 +445,7 @@ function buildReducedText(
 
   const keptHead = headLines > 0 ? lines.slice(0, headLines) : [];
   const keptTail = tailLines > 0 ? lines.slice(lines.length - tailLines) : [];
-  return [
-    ...keptHead,
-    `[... ${removedCount} lines removed by DCP; original retained: ${recoveryCall(toolCallId)} ...]`,
-    ...keptTail,
-  ].join("\n");
+  return [...keptHead, hiddenLinesPlaceholder(removedCount), ...keptTail].join("\n");
 }
 
 /**
@@ -654,7 +631,7 @@ function requiredPersistedErrorReplacementIds(
 // ---------------------------------------------------------------------------
 
 // The shared candidate collector already keeps outer run/subagent/workflow
-// results, write, edit, compress and dcp_recover. Age masking adds patch
+// results, write, edit, compress. Age masking adds patch
 // results and reads of standing instruction files.
 const AGE_MASKING_PROTECTED_TOOLS = new Set(["apply_patch"]);
 const INSTRUCTION_FILE_NAMES = new Set(["agents.md", "claude.md", "skill.md"]);
@@ -740,7 +717,7 @@ function commitHeuristicPruning(
     strategy: PruneCandidate["strategy"]
   ): PruneCandidate => ({
     toolCallId: candidate.id,
-    netSaved: estimateTokens(candidate.artifact) - tombstoneTokenCost(candidate.id, false),
+    netSaved: estimateTokens(candidate.artifact) - estimateTokens(HIDDEN_OUTPUT_PLACEHOLDER),
     strategy,
     renderAction: clearRenderAction(),
     turnIndex:
@@ -898,8 +875,8 @@ function applyToolOutputPruning(
     const action = state.prunedToolActions.get(msg.toolCallId) ?? clearRenderAction();
     const text =
       action.action === "reduce" && !msg.isError
-        ? buildReducedText(extractToolResultText(msg), action, msg.toolCallId)
-        : tombstoneText(msg.toolCallId, msg.isError === true);
+        ? buildReducedText(extractToolResultText(msg), action)
+        : HIDDEN_OUTPUT_PLACEHOLDER;
 
     msg.content = [
       {
