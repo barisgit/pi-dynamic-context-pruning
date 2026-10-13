@@ -20,7 +20,7 @@ Canonical source of all prompt constants.
 Thin re-export shim for stable import paths used by `application/system-prompt-handler.ts`:
 
 ```ts
-export { SYSTEM_PROMPT } from "./index.js";
+export { SYSTEM_PROMPT } from "./index.ts";
 ```
 
 ### `src/prompts/compress-tool.ts`
@@ -28,7 +28,7 @@ export { SYSTEM_PROMPT } from "./index.js";
 Thin re-export shim for `application/compress-tool/registration.ts`:
 
 ```ts
-export { COMPRESS_RANGE_DESCRIPTION } from "./index.js";
+export { COMPRESS_RANGE_DESCRIPTION } from "./index.ts";
 ```
 
 ## Integration
