@@ -295,6 +295,9 @@ Touch at least:
   import { loadConfig } from "./config.js";
   ```
 - Use `import type` for type-only imports.
+- Import runtime utilities from `pi-extension-utils/pi`, not its compiled root barrel, so Pi's loader shares host dependencies. Keep the published dependency minimum and both lockfiles in sync with this entrypoint.
+- Import schemas directly from the `typebox` peer rather than the `pi-ai` barrel.
+- Keep `gpt-tokenizer` off the eager import graph: token estimation loads its CommonJS export synchronously on first nonempty use so the first estimate remains tokenizer-backed.
 - Named imports preferred; default export only for the extension entry point (`index.ts`).
 
 ---
