@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { REMINDER_UPSERT_EVENT } from "pi-extension-utils";
+import { REMINDER_UPSERT_EVENT } from "pi-extension-utils/pi";
 import { renderHeading, renderHeadingMessage } from "../../src/domain/compression/heading.js";
 import {
   buildSourceItemKey,

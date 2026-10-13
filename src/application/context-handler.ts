@@ -1,6 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { connect } from "pi-extension-utils";
-import type { ReminderIntent } from "pi-extension-utils";
+import { connect } from "pi-extension-utils/pi";
+import type { ReminderIntent } from "pi-extension-utils/pi";
 import type { DcpConfig } from "../types/config.js";
 import type { DcpMessage } from "../types/message.js";
 import type { DcpState } from "../types/state.js";

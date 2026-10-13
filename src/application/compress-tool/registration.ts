@@ -2,7 +2,7 @@
 // Dynamic Context Pruning (DCP) — compress tool registration
 // ---------------------------------------------------------------------------
 
-import { Type } from "@earendil-works/pi-ai";
+import { Type } from "typebox";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { CompressionBlock, DcpState } from "../../types/state.js";
 import type { DcpConfig } from "../../types/config.js";

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { REMINDER_UPSERT_EVENT } from "pi-extension-utils";
-import type { ReminderIntent } from "pi-extension-utils";
+import { REMINDER_UPSERT_EVENT } from "pi-extension-utils/pi";
+import type { ReminderIntent } from "pi-extension-utils/pi";
 import {
   assert,
   estimateMessageTokens,

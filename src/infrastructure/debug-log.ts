@@ -1,7 +1,7 @@
 import * as os from "node:os";
 import * as path from "node:path";
-import { createLogger } from "pi-extension-utils";
-import type { Logger } from "pi-extension-utils";
+import { createLogger } from "pi-extension-utils/pi";
+import type { Logger } from "pi-extension-utils/pi";
 import type { DcpConfig } from "../types/config.js";
 
 // ---------------------------------------------------------------------------
