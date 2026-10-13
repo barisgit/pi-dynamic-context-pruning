@@ -271,7 +271,7 @@ bun run ci           # typecheck + lint + tests
 
 Pi loads the extension TypeScript directly from `./src/index.ts` — there is no build step for normal development or Git installs. For normal installs, that extension code runs inside pi's **Node.js** process even though this repo uses **Bun** for local test/dev commands. Runtime utilities use `pi-extension-utils/pi` so Pi resolves shared host dependencies; schemas import the host's `typebox` peer directly. The o200k tokenizer loads synchronously on the first nonempty token estimate, not during extension import; token counts and the chars/4 fallback are unchanged.
 
-The dev Pi SDK (`@earendil-works/pi-ai`, `pi-agent-core`, `pi-coding-agent`, and `pi-tui`) is pinned to **0.87.1** so local checks exercise the target APIs. Pi supplies the imported packages at runtime through broad peers; startup is verified on Pi 1.2.0 and fo's Pi 0.87.1 (older hosts without `ModelRuntime`/registry completion are not supported by this migration).
+The dev Pi SDK (`@earendil-works/pi-ai`, `pi-agent-core`, `pi-coding-agent`, and `pi-tui`) is pinned to **1.2.0** so local checks exercise the supported host APIs. Pi supplies the imported packages at runtime through broad peers. The supported host is plain Pi 1.2.0; retained fo session decoding does not imply support for the fo runtime.
 
 ### Source layout
 
