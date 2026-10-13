@@ -286,6 +286,15 @@ Touch at least:
 
 - never re-add the same block savings on every `context` pass.
 
+### Materialization and compatibility boundaries
+
+- `applyPruning` and `finalizeMaterializedMessages` both clone/stamp ownership and strip generated artifacts. Finalization also has direct callers; do not collapse the two passes without preserving those caller obligations and canonical originals.
+- Planning ranges use the first/last resolvable visible refs in each span, not the assistant's timestamp. Transparent spans count toward estimated savings only after a later addressable span makes them interior to the range; discard trailing buffered tokens on flush.
+- Overlap diagnostics must receive state and search within a block's timestamp span when its assistant boundary has no visible ref. Otherwise actionable boundary hints degrade to timestamp-only errors.
+- Retained fo `sandbox.result` v1 decoding handles historical sessions even on plain Pi. Only successful, identifiable, compress-only timelines may alias an outer provider receipt; mixed or failed runs must remain untouched. Ref projection still requires a live optional bridge and fails closed without one.
+- `saveState` clears `pendingSave` only after a successful append. Missing/disposed session contexts leave the save queued; append errors propagate so a later lifecycle hook can retry.
+- The offline LLM proxy is capture-only: decode compressed bodies for inspection, but forward the original request bytes unchanged.
+
 ---
 
 ## Imports
