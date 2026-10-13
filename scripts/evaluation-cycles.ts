@@ -6,7 +6,7 @@ import {
   serializeConversation,
   type SessionEntry,
 } from "@earendil-works/pi-coding-agent";
-import { renderCompressedBlockText } from "../src/domain/compression/materialize.js";
+import { renderCompressedBlockText } from "../src/domain/compression/materialize.ts";
 import type { Context } from "@earendil-works/pi-ai";
 import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
 export type Completion = ModelRegistry["complete"];

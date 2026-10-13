@@ -4,10 +4,10 @@
 
 import { Type } from "typebox";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import type { CompressionBlock, DcpState } from "../../types/state.js";
-import type { DcpConfig } from "../../types/config.js";
-import { appendDebugLog, buildSessionDebugPayload } from "../../infrastructure/debug-log.js";
-import { COMPRESS_RANGE_DESCRIPTION } from "../../prompts/index.js";
+import type { CompressionBlock, DcpState } from "../../types/state.ts";
+import type { DcpConfig } from "../../types/config.ts";
+import { appendDebugLog, buildSessionDebugPayload } from "../../infrastructure/debug-log.ts";
+import { COMPRESS_RANGE_DESCRIPTION } from "../../prompts/index.ts";
 import {
   buildCompressionArtifactsForRange,
   buildCompressionPlanningHints,
@@ -20,20 +20,20 @@ import {
   resolveProtectedTailStartTimestamp,
   resolveSupersededBlockIdsForRange,
   validateCompressionRangeBoundaryIds,
-} from "../../domain/compression/tooling.js";
-import { renderCompressedBlockMessage } from "../../domain/compression/materialize.js";
-import { exceedsMaxContextLimit, resolveEffectiveContextSize } from "../../domain/pruning/index.js";
-import { estimateMessageTokens, estimateTokens } from "../../domain/compression/range.js";
-import { updateDcpStatus } from "../status.js";
-import { saveState } from "../session-handler.js";
+} from "../../domain/compression/tooling.ts";
+import { renderCompressedBlockMessage } from "../../domain/compression/materialize.ts";
+import { exceedsMaxContextLimit, resolveEffectiveContextSize } from "../../domain/pruning/index.ts";
+import { estimateMessageTokens, estimateTokens } from "../../domain/compression/range.ts";
+import { updateDcpStatus } from "../status.ts";
+import { saveState } from "../session-handler.ts";
 import { buildSessionProjection } from "@earendil-works/pi-coding-agent";
-import { buildTranscriptSnapshot } from "../../domain/transcript/index.js";
-import { getProjectedSourceEntryIds } from "../compaction-state.js";
+import { buildTranscriptSnapshot } from "../../domain/transcript/index.ts";
+import { getProjectedSourceEntryIds } from "../compaction-state.ts";
 
 export type {
   CompressionCandidateRange,
   CompressionPlanningHints,
-} from "../../domain/compression/tooling.js";
+} from "../../domain/compression/tooling.ts";
 export {
   buildCompressionArtifactsForRange,
   buildCompressionPlanningHints,
@@ -43,7 +43,7 @@ export {
   resolveProtectedTailStartTimestamp,
   resolveSupersededBlockIdsForRange,
   validateCompressionRangeBoundaryIds,
-} from "../../domain/compression/tooling.js";
+} from "../../domain/compression/tooling.ts";
 
 function buildCurrentBranchMessages(ctx: any): {
   messages: any[];

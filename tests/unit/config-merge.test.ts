@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
-import { deepMerge as deepMergeTyped, type loadConfig } from "../../src/infrastructure/config.js";
+import { deepMerge as deepMergeTyped, type loadConfig } from "../../src/infrastructure/config.ts";
 
 // These tests exercise structural array-merge semantics, not full DcpConfig
 // shapes, so use a loosely-typed alias (deepMerge's `Partial<T>` is shallow and

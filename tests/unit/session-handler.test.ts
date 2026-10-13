@@ -1,12 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { registerSessionHandlers, saveState } from "../../src/application/session-handler.js";
+import { registerSessionHandlers, saveState } from "../../src/application/session-handler.ts";
 import {
   restorePersistedState,
   serializePersistedState,
   serializeLegacyV1PersistedState,
-} from "../../src/infrastructure/persistence.js";
-import type { CompressionBlock } from "../../src/types/state.js";
-import { makeConfig, makeState } from "../helpers/dcp-test-utils.js";
+} from "../../src/infrastructure/persistence.ts";
+import type { CompressionBlock } from "../../src/types/state.ts";
+import { makeConfig, makeState } from "../helpers/dcp-test-utils.ts";
 
 function block(active: boolean): CompressionBlock {
   return {

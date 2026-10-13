@@ -4,9 +4,9 @@ import {
   projectFoRefOuterResult,
   type FoRefBridgeV1,
   type FoRefCandidateV1,
-} from "../../src/domain/pruning/fo-ref-adapter.js";
-import type { DcpMessage } from "../../src/types/message.js";
-import type { PrunedToolAction, ToolRecord } from "../../src/types/state.js";
+} from "../../src/domain/pruning/fo-ref-adapter.ts";
+import type { DcpMessage } from "../../src/types/message.ts";
+import type { PrunedToolAction, ToolRecord } from "../../src/types/state.ts";
 
 const outerToolCallId = "outer-run-1";
 

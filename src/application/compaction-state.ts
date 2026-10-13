@@ -1,6 +1,6 @@
 import { buildSessionProjection, type SessionEntry } from "@earendil-works/pi-coding-agent";
-import type { DcpState } from "../types/state.js";
-import { buildTranscriptSnapshot } from "../domain/transcript/index.js";
+import type { DcpState } from "../types/state.ts";
+import { buildTranscriptSnapshot } from "../domain/transcript/index.ts";
 
 /** Keep entry provenance distinct when a host entry expands to multiple projected messages. */
 export function getProjectedSourceEntryIds(

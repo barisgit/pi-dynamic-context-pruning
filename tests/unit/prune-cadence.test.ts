@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { applyPruning, makeConfig, makeState } from "../helpers/dcp-test-utils.js";
-import type { DcpConfig } from "../../src/types/config.js";
-import type { DcpState, ToolRecord } from "../../src/types/state.js";
+import { applyPruning, makeConfig, makeState } from "../helpers/dcp-test-utils.ts";
+import type { DcpConfig } from "../../src/types/config.ts";
+import type { DcpState, ToolRecord } from "../../src/types/state.ts";
 
 // ---------------------------------------------------------------------------
 // strategies.pruneCadenceTurns — bucketed tombstone emission

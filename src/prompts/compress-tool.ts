@@ -1,1 +1,1 @@
-export { COMPRESS_RANGE_DESCRIPTION } from "./index.js"
+export { COMPRESS_RANGE_DESCRIPTION } from "./index.ts";

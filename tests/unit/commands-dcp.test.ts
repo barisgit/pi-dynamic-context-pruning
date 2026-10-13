@@ -2,8 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { registerCommands } from "../../src/application/commands/dcp.js";
-import { makeConfig, makeState } from "../helpers/dcp-test-utils.js";
+import { registerCommands } from "../../src/application/commands/dcp.ts";
+import { makeConfig, makeState } from "../helpers/dcp-test-utils.ts";
 
 // ---------------------------------------------------------------------------
 // VAL-LEGACY-COMMANDS-AND-MANUAL-MODE-REMOVED verifier

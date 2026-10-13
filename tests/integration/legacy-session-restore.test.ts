@@ -10,13 +10,13 @@
 // and intentionally ignores replay-only transcript evidence on resume.
 
 import { describe, expect, test } from "bun:test";
-import { restoreStateFromBranch } from "../../src/application/session-handler.js";
+import { restoreStateFromBranch } from "../../src/application/session-handler.ts";
 import {
   serializeLegacyV1PersistedState,
   serializePersistedState,
-} from "../../src/infrastructure/persistence.js";
-import type { CompressionBlock } from "../../src/types/state.js";
-import { makeConfig, makeState } from "../helpers/dcp-test-utils.js";
+} from "../../src/infrastructure/persistence.ts";
+import type { CompressionBlock } from "../../src/types/state.ts";
+import { makeConfig, makeState } from "../helpers/dcp-test-utils.ts";
 
 function block(id: number, active: boolean): CompressionBlock {
   return {

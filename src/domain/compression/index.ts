@@ -1,3 +1,3 @@
-export * from "./materialize.js"
-export * from "./metadata.js"
-export * from "./tooling.js"
+export * from "./materialize.ts";
+export * from "./metadata.ts";
+export * from "./tooling.ts";

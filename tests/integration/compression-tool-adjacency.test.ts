@@ -4,7 +4,7 @@ import {
   makeConfig,
   makeState,
   resolveAnchorSourceKey,
-} from "../helpers/dcp-test-utils.js";
+} from "../helpers/dcp-test-utils.ts";
 
 for (const { anchorSourceKey, anchorTimestamp } of [
   { anchorSourceKey: "raw:first-result", anchorTimestamp: 3000 },

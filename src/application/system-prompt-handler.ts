@@ -1,6 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import type { DcpState } from "../types/state.js";
-import { SYSTEM_PROMPT } from "../prompts/system.js";
+import type { DcpState } from "../types/state.ts";
+import { SYSTEM_PROMPT } from "../prompts/system.ts";
 
 /** Register system prompt augmentation for DCP. */
 export function registerSystemPromptHandler(pi: ExtensionAPI, _state: DcpState): void {

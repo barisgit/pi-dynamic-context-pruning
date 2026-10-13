@@ -3,17 +3,17 @@
 // ---------------------------------------------------------------------------
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { registerCommands } from "./application/commands/dcp.js";
-import { registerCompressTool } from "./application/compress-tool/registration.js";
-import { registerContextHandler } from "./application/context-handler.js";
-import { registerDcpNativeCompactionBridge } from "./application/native-compaction.js";
-import { registerProviderHandler } from "./application/provider-handler.js";
-import { initializeSessionState, registerSessionHandlers } from "./application/session-handler.js";
-import { registerSystemPromptHandler } from "./application/system-prompt-handler.js";
-import { registerToolRecordingHandlers } from "./application/tool-recording.js";
-import { loadConfig } from "./infrastructure/config.js";
-import { appendDebugLog, DEBUG_LOG_PATH } from "./infrastructure/debug-log.js";
-import { createState } from "./state.js";
+import { registerCommands } from "./application/commands/dcp.ts";
+import { registerCompressTool } from "./application/compress-tool/registration.ts";
+import { registerContextHandler } from "./application/context-handler.ts";
+import { registerDcpNativeCompactionBridge } from "./application/native-compaction.ts";
+import { registerProviderHandler } from "./application/provider-handler.ts";
+import { initializeSessionState, registerSessionHandlers } from "./application/session-handler.ts";
+import { registerSystemPromptHandler } from "./application/system-prompt-handler.ts";
+import { registerToolRecordingHandlers } from "./application/tool-recording.ts";
+import { loadConfig } from "./infrastructure/config.ts";
+import { appendDebugLog, DEBUG_LOG_PATH } from "./infrastructure/debug-log.ts";
+import { createState } from "./state.ts";
 
 // ---------------------------------------------------------------------------
 // Extension entry point

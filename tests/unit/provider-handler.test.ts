@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { registerProviderHandler } from "../../src/application/provider-handler.js";
-import { buildBlockOwnerKey } from "../../src/domain/transcript/index.js";
-import { makeConfig, makeState } from "../helpers/dcp-test-utils.js";
+import { registerProviderHandler } from "../../src/application/provider-handler.ts";
+import { buildBlockOwnerKey } from "../../src/domain/transcript/index.ts";
+import { makeConfig, makeState } from "../helpers/dcp-test-utils.ts";
 
 describe("provider request handling", () => {
   test("returns payload changes when a sandbox compress receipt only minifies items", async () => {

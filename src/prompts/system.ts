@@ -1,1 +1,1 @@
-export { SYSTEM_PROMPT } from "./index.js"
+export { SYSTEM_PROMPT } from "./index.ts";

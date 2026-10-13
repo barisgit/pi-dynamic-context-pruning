@@ -1,8 +1,8 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import type { AutocompleteItem } from "@earendil-works/pi-tui";
-import type { DcpState } from "../../types/state.js";
-import type { DcpConfig } from "../../types/config.js";
-import { computeDisplayedTokensSaved, updateDcpStatus } from "../status.js";
+import type { DcpState } from "../../types/state.ts";
+import type { DcpConfig } from "../../types/config.ts";
+import { computeDisplayedTokensSaved, updateDcpStatus } from "../status.ts";
 
 // ---------------------------------------------------------------------------
 // Formatting helpers

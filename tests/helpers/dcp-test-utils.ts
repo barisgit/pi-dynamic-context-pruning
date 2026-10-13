@@ -1,5 +1,5 @@
-import type { DcpConfig } from "../../src/types/config.js";
-import type { DcpState } from "../../src/types/state.js";
+import type { DcpConfig } from "../../src/types/config.ts";
+import type { DcpState } from "../../src/types/state.ts";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -9,7 +9,7 @@ import {
   formatMessageRef,
   normalizeMessageAliasState,
   parseVisibleRef,
-} from "../../src/domain/refs/index.js";
+} from "../../src/domain/refs/index.ts";
 
 export { default as assert } from "node:assert";
 export { fs, os, path };
@@ -22,16 +22,16 @@ export {
   resolveProtectedTailStartTimestamp,
   resolveSupersededBlockIdsForRange,
   validateCompressionRangeBoundaryIds,
-} from "../../src/domain/compression/tooling.js";
-export { registerCompressTool } from "../../src/application/compress-tool/registration.js";
-export { buildSessionDebugPayload } from "../../src/infrastructure/debug-log.js";
+} from "../../src/domain/compression/tooling.ts";
+export { registerCompressTool } from "../../src/application/compress-tool/registration.ts";
+export { buildSessionDebugPayload } from "../../src/infrastructure/debug-log.ts";
 export {
   getNudgeDecisionReason,
   registerContextHandler,
-} from "../../src/application/context-handler.js";
-export { restorePersistedState } from "../../src/infrastructure/persistence.js";
-export { renderCompressedBlockMessage } from "../../src/domain/compression/materialize.js";
-export { createEmptyCompressionBlockMetadata } from "../../src/domain/compression/metadata.js";
+} from "../../src/application/context-handler.ts";
+export { restorePersistedState } from "../../src/infrastructure/persistence.ts";
+export { renderCompressedBlockMessage } from "../../src/domain/compression/materialize.ts";
+export { createEmptyCompressionBlockMetadata } from "../../src/domain/compression/metadata.ts";
 export {
   allocateMessageRef,
   createMessageAliasState,
@@ -43,20 +43,20 @@ export {
   collectSandboxCompressCallAliases,
   extractCanonicalOwnerKeyFromMessageLike,
   filterProviderPayloadInput,
-} from "../../src/domain/provider/payload-filter.js";
+} from "../../src/domain/provider/payload-filter.ts";
 export {
   applyPruning,
   exceedsMaxContextLimit,
   getNudgeType,
   resolveEffectiveContextSize,
-} from "../../src/domain/pruning/index.js";
-export { estimateMessageTokens } from "../../src/domain/tokens/estimate.js";
+} from "../../src/domain/pruning/index.ts";
+export { estimateMessageTokens } from "../../src/domain/tokens/estimate.ts";
 export {
   buildBlockOwnerKey,
   buildLiveOwnerKeys,
   buildSourceOwnerKey,
   buildTranscriptSnapshot,
-} from "../../src/domain/transcript/index.js";
+} from "../../src/domain/transcript/index.ts";
 
 // ---------------------------------------------------------------------------
 // Minimal factories

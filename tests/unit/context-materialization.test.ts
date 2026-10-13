@@ -1,12 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { materializeContextMessages } from "../../src/application/context-handler.js";
-import { hydrateMissingToolRecords } from "../../src/application/tool-recording.js";
-import { filterProviderPayloadInput } from "../../src/domain/provider/payload-filter.js";
-import { applyPruning } from "../../src/domain/pruning/index.js";
-import { buildBlockOwnerKey, buildSourceOwnerKey } from "../../src/domain/transcript/index.js";
-import { createEmptyCompressionBlockMetadata } from "../../src/state.js";
-import type { CompressionBlock } from "../../src/types/state.js";
-import { makeConfig, makeMessages, makeState } from "../helpers/dcp-test-utils.js";
+import { materializeContextMessages } from "../../src/application/context-handler.ts";
+import { hydrateMissingToolRecords } from "../../src/application/tool-recording.ts";
+import { filterProviderPayloadInput } from "../../src/domain/provider/payload-filter.ts";
+import { applyPruning } from "../../src/domain/pruning/index.ts";
+import { buildBlockOwnerKey, buildSourceOwnerKey } from "../../src/domain/transcript/index.ts";
+import { createEmptyCompressionBlockMetadata } from "../../src/state.ts";
+import type { CompressionBlock } from "../../src/types/state.ts";
+import { makeConfig, makeMessages, makeState } from "../helpers/dcp-test-utils.ts";
 
 function makeLegacyToolBlock(): CompressionBlock {
   return {

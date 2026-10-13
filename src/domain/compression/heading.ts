@@ -1,6 +1,6 @@
-import type { DcpHeading, DcpState } from "../../types/state.js";
-import type { DcpMessage } from "../../types/message.js";
-import { INTERNAL_HEADING } from "../transcript/index.js";
+import type { DcpHeading, DcpState } from "../../types/state.ts";
+import type { DcpMessage } from "../../types/message.ts";
+import { INTERNAL_HEADING } from "../transcript/index.ts";
 
 export type HeadingInput = Pick<DcpHeading, "goal" | "now" | "next" | "constraints">;
 export const MAX_HEADING_CHARS = 1000;

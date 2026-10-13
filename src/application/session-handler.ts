@@ -1,16 +1,16 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import type { DcpConfig } from "../types/config.js";
-import type { CompressionBlock, DcpState } from "../types/state.js";
-import { createState, resetState } from "../state.js";
-import { appendDebugLog, buildSessionDebugPayload } from "../infrastructure/debug-log.js";
+import type { DcpConfig } from "../types/config.ts";
+import type { CompressionBlock, DcpState } from "../types/state.ts";
+import { createState, resetState } from "../state.ts";
+import { appendDebugLog, buildSessionDebugPayload } from "../infrastructure/debug-log.ts";
 import {
   restorePersistedState,
   restorePersistedStateScalars,
   serializePersistedState,
-} from "../infrastructure/persistence.js";
-import { countLogicalTurns } from "../domain/transcript/index.js";
-import { updateDcpStatus } from "./status.js";
-import { reconcileCompactedBlocks } from "./compaction-state.js";
+} from "../infrastructure/persistence.ts";
+import { countLogicalTurns } from "../domain/transcript/index.ts";
+import { updateDcpStatus } from "./status.ts";
+import { reconcileCompactedBlocks } from "./compaction-state.ts";
 
 /** Apply config-derived baseline state before session hooks run. */
 export function initializeSessionState(_state: DcpState, _config: DcpConfig): void {

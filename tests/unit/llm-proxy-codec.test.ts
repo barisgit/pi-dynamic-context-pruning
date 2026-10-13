@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { gzipSync, zstdCompressSync } from "node:zlib";
-import { parseJsonHttpBody } from "../../scripts/llm-proxy-codec.js";
+import { parseJsonHttpBody } from "../../scripts/llm-proxy-codec.ts";
 
 describe("LLM proxy request decoding", () => {
   test("parses gzip-compressed JSON request bodies without changing forwarded bytes", () => {

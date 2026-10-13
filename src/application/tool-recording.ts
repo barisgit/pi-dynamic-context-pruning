@@ -1,9 +1,9 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import type { DcpState } from "../types/state.js";
-import type { DcpMessage } from "../types/message.js";
-import { createInputFingerprint } from "../state.js";
-import { estimateTokens } from "../domain/tokens/estimate.js";
-import { buildTranscriptSnapshot } from "../domain/transcript/index.js";
+import type { DcpState } from "../types/state.ts";
+import type { DcpMessage } from "../types/message.ts";
+import { createInputFingerprint } from "../state.ts";
+import { estimateTokens } from "../domain/tokens/estimate.ts";
+import { buildTranscriptSnapshot } from "../domain/transcript/index.ts";
 
 const LOGICAL_TURN_ROLES = new Set(["user", "assistant", "toolResult", "bashExecution"]);
 

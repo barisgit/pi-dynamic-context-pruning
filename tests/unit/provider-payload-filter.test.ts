@@ -28,7 +28,7 @@ import {
   resolveSupersededBlockIdsForRange,
   restorePersistedState,
   validateCompressionRangeBoundaryIds,
-} from "../helpers/dcp-test-utils.js";
+} from "../helpers/dcp-test-utils.ts";
 
 function withOwner<T extends object>(item: T, ownerKey: string): T {
   Object.defineProperty(item, "__dcpOwnerKey", {

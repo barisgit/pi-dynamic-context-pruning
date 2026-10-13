@@ -1,12 +1,12 @@
 import { expect, test } from "bun:test";
 import { buildSessionContext } from "@earendil-works/pi-coding-agent";
-import { registerDcpNativeCompactionBridge } from "../../src/application/native-compaction.js";
-import { buildTranscriptSnapshot } from "../../src/domain/transcript/index.js";
+import { registerDcpNativeCompactionBridge } from "../../src/application/native-compaction.ts";
+import { buildTranscriptSnapshot } from "../../src/domain/transcript/index.ts";
 import {
   makeConfig,
   makeState,
   buildCompressionArtifactsForRange,
-} from "../helpers/dcp-test-utils.js";
+} from "../helpers/dcp-test-utils.ts";
 
 const entries = Array.from({ length: 6 }, (_, i) => ({
   type: "message",
@@ -104,8 +104,8 @@ test("Pi owns summarization; commit retires hidden and straddling blocks, rebase
 });
 
 test("resume repairs a host commit that happened after the last persisted DCP snapshot", async () => {
-  const { restoreStateFromBranch } = await import("../../src/application/session-handler.js");
-  const { serializePersistedState } = await import("../../src/infrastructure/persistence.js");
+  const { restoreStateFromBranch } = await import("../../src/application/session-handler.ts");
+  const { serializePersistedState } = await import("../../src/infrastructure/persistence.ts");
   const state = makeState([
     block(
       entries.map((e) => e.message),
@@ -152,7 +152,7 @@ test("resume repairs a host commit that happened after the last persisted DCP sn
 });
 
 test("existing v5 full-lineage keys survive a second cut when coverage stays in the kept tail", async () => {
-  const { reconcileCompactedBlocks } = await import("../../src/application/compaction-state.js");
+  const { reconcileCompactedBlocks } = await import("../../src/application/compaction-state.ts");
   const previous = {
     type: "compaction",
     id: "prior",
@@ -200,8 +200,8 @@ test("existing v5 full-lineage keys survive a second cut when coverage stays in 
 });
 
 test("legacy sibling repair cannot revive a block retired by this branch's host cut", async () => {
-  const { restoreStateFromBranch } = await import("../../src/application/session-handler.js");
-  const { serializePersistedState } = await import("../../src/infrastructure/persistence.js");
+  const { restoreStateFromBranch } = await import("../../src/application/session-handler.ts");
+  const { serializePersistedState } = await import("../../src/infrastructure/persistence.ts");
   const state = makeState([
     block(
       entries.map((e) => e.message),
@@ -250,9 +250,9 @@ test("legacy sibling repair cannot revive a block retired by this branch's host 
 });
 
 test("shared timestamps cannot make a legacy hidden record delete unrelated kept source", async () => {
-  const { restoreStateFromBranch } = await import("../../src/application/session-handler.js");
-  const { serializePersistedState } = await import("../../src/infrastructure/persistence.js");
-  const { applyPruning } = await import("../../src/domain/pruning/index.js");
+  const { restoreStateFromBranch } = await import("../../src/application/session-handler.ts");
+  const { serializePersistedState } = await import("../../src/infrastructure/persistence.ts");
+  const { applyPruning } = await import("../../src/domain/pruning/index.ts");
   const raw = entries.map((entry, i) => ({
     ...entry,
     message: { role: "user", content: `SOURCE_${i}`, timestamp: 1000 },
@@ -311,9 +311,9 @@ test("shared timestamps cannot make a legacy hidden record delete unrelated kept
 });
 
 test("new entry provenance survives serialization and repeated same-timestamp cuts without alias collisions", async () => {
-  const { reconcileCompactedBlocks } = await import("../../src/application/compaction-state.js");
+  const { reconcileCompactedBlocks } = await import("../../src/application/compaction-state.ts");
   const { serializePersistedState, restorePersistedState } =
-    await import("../../src/infrastructure/persistence.js");
+    await import("../../src/infrastructure/persistence.ts");
   const raw = entries.map((entry, i) => ({
     ...entry,
     message: { role: "user", content: `SOURCE_${i}`, timestamp: 1000 },
@@ -363,8 +363,8 @@ test("new entry provenance survives serialization and repeated same-timestamp cu
 });
 
 test("predecessor v5 projected keys without provenance migrate when unambiguous", async () => {
-  const { restoreStateFromBranch } = await import("../../src/application/session-handler.js");
-  const { serializePersistedState } = await import("../../src/infrastructure/persistence.js");
+  const { restoreStateFromBranch } = await import("../../src/application/session-handler.ts");
+  const { serializePersistedState } = await import("../../src/infrastructure/persistence.ts");
   const first = {
     type: "compaction",
     id: "first",

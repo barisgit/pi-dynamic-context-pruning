@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { applyPruning, makeConfig, makeState } from "../helpers/dcp-test-utils.js";
-import { toolNameMatches } from "../../src/domain/pruning/index.js";
-import type { DcpState, ToolRecord } from "../../src/types/state.js";
+import { applyPruning, makeConfig, makeState } from "../helpers/dcp-test-utils.ts";
+import { toolNameMatches } from "../../src/domain/pruning/index.ts";
+import type { DcpState, ToolRecord } from "../../src/types/state.ts";
 
 function customConfig(): ReturnType<typeof makeConfig> {
   const cfg = makeConfig();

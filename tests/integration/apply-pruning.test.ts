@@ -27,7 +27,7 @@ import {
   resolveSupersededBlockIdsForRange,
   restorePersistedState,
   validateCompressionRangeBoundaryIds,
-} from "../helpers/dcp-test-utils.js";
+} from "../helpers/dcp-test-utils.ts";
 
 describe("DCP apply pruning.test", () => {
   // ---------------------------------------------------------------------------

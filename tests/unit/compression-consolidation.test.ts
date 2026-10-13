@@ -1,12 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { registerCompressTool } from "../../src/application/compress-tool/registration.js";
-import { applyPruning } from "../../src/domain/pruning/index.js";
-import { renderCompressedBlockText } from "../../src/domain/compression/materialize.js";
+import { registerCompressTool } from "../../src/application/compress-tool/registration.ts";
+import { applyPruning } from "../../src/domain/pruning/index.ts";
+import { renderCompressedBlockText } from "../../src/domain/compression/materialize.ts";
 import {
   restorePersistedState,
   serializePersistedState,
-} from "../../src/infrastructure/persistence.js";
-import { makeConfig, makeState } from "../helpers/dcp-test-utils.js";
+} from "../../src/infrastructure/persistence.ts";
+import { makeConfig, makeState } from "../helpers/dcp-test-utils.ts";
 
 const messages = [
   {

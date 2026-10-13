@@ -12,7 +12,7 @@ import {
   makeState,
   registerContextHandler,
   resolveEffectiveContextSize,
-} from "../helpers/dcp-test-utils.js";
+} from "../helpers/dcp-test-utils.ts";
 
 type PiHandler = (event: any, ctx: any) => unknown;
 

@@ -1,6 +1,6 @@
-import type { CompressionBlock } from "../../types/state.js";
-import type { DcpMessage } from "../../types/message.js";
-import type { DcpProviderPayloadItem } from "../../types/api.js";
+import type { CompressionBlock } from "../../types/state.ts";
+import type { DcpMessage } from "../../types/message.ts";
+import type { DcpProviderPayloadItem } from "../../types/api.ts";
 
 const INTERNAL_OWNER_KEY = "__dcpOwnerKey";
 

@@ -2,17 +2,21 @@
 // Dynamic Context Pruning (DCP) — compression range helpers
 // ---------------------------------------------------------------------------
 
-import type { DcpMessage } from "../../types/message.js"
-export { estimateMessageTokens, estimateTokens } from "../tokens/estimate.js"
+import type { DcpMessage } from "../../types/message.ts";
+export { estimateMessageTokens, estimateTokens } from "../tokens/estimate.ts";
 
-const PASSTHROUGH_ROLES = new Set(["compaction", "branch_summary", "custom_message"])
+const PASSTHROUGH_ROLES = new Set(["compaction", "branch_summary", "custom_message"]);
 
 /**
  * Resolve the inclusive message index range covered by a timestamp-bounded
  * compression block, including the same assistant/tool-result expansion rules
  * used by the live pruning path.
  */
-export function expandCompressionIndexRange(messages: any[], initialLo: number, initialHi: number): { lo: number; hi: number } {
+export function expandCompressionIndexRange(
+  messages: any[],
+  initialLo: number,
+  initialHi: number
+): { lo: number; hi: number } {
   let lo = initialLo;
   let hi = initialHi;
 
@@ -86,7 +90,7 @@ export function expandCompressionIndexRange(messages: any[], initialLo: number, 
 export function resolveCompressionRangeIndices(
   messages: DcpMessage[],
   startTimestamp: number,
-  endTimestamp: number,
+  endTimestamp: number
 ): { lo: number; hi: number } | null {
   const startIdx = messages.findIndex((m) => m.timestamp === startTimestamp);
   const endIdx = messages.findIndex((m) => m.timestamp === endTimestamp);
@@ -96,7 +100,7 @@ export function resolveCompressionRangeIndices(
   return expandCompressionIndexRange(
     messages,
     Math.min(startIdx, endIdx),
-    Math.max(startIdx, endIdx),
+    Math.max(startIdx, endIdx)
   );
 }
 

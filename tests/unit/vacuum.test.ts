@@ -14,13 +14,17 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { writeFile, readFile, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { vacuumLines, verifyFile } from "../../scripts/vacuum-dcp-session.js";
-import { createState } from "../../src/state.js";
-import { restorePersistedState, serializePersistedState, serializeLegacyV1PersistedState } from "../../src/infrastructure/persistence.js";
-import { extractObservables, isDcpStateEntry } from "../../scripts/replay-equivalence.js";
-import type { CompressionBlock, DcpState } from "../../src/types/state.js";
-import { createEmptyCompressionBlockMetadata } from "../../src/domain/compression/metadata.js";
-import { makeState } from "../helpers/dcp-test-utils.js";
+import { vacuumLines, verifyFile } from "../../scripts/vacuum-dcp-session.ts";
+import { createState } from "../../src/state.ts";
+import {
+  restorePersistedState,
+  serializePersistedState,
+  serializeLegacyV1PersistedState,
+} from "../../src/infrastructure/persistence.ts";
+import { extractObservables, isDcpStateEntry } from "../../scripts/replay-equivalence.ts";
+import type { CompressionBlock, DcpState } from "../../src/types/state.ts";
+import { createEmptyCompressionBlockMetadata } from "../../src/domain/compression/metadata.ts";
+import { makeState } from "../helpers/dcp-test-utils.ts";
 
 let workDir: string;
 beforeAll(() => {
@@ -34,14 +38,16 @@ function dcpEntry(id: string, parentId: string | null, data: unknown): string {
   return JSON.stringify({ type: "custom", customType: "dcp-state", id, parentId, data });
 }
 
-function v3Payload(overrides: Partial<{
-  savedAt: number;
-  currentTurn: number;
-  lastNudgeTurn: number;
-  lastCompressTurn: number;
-  prunedToolIds: string[];
-  lifetimeTokensSavedRealized: number;
-}> = {}): unknown {
+function v3Payload(
+  overrides: Partial<{
+    savedAt: number;
+    currentTurn: number;
+    lastNudgeTurn: number;
+    lastCompressTurn: number;
+    prunedToolIds: string[];
+    lifetimeTokensSavedRealized: number;
+  }> = {}
+): unknown {
   return {
     schemaVersion: 3,
     savedAt: overrides.savedAt ?? 1000,
@@ -222,7 +228,11 @@ describe("verifyFile (f6)", () => {
       [
         dcpEntry("a", null, v3Payload({ savedAt: 1000, currentTurn: 5, prunedToolIds: ["t1"] })),
         dcpEntry("b", "a", v3Payload({ savedAt: 2000, currentTurn: 5, prunedToolIds: ["t1"] })),
-        dcpEntry("c", "b", v3Payload({ savedAt: 3000, currentTurn: 8, prunedToolIds: ["t1", "t2"] })),
+        dcpEntry(
+          "c",
+          "b",
+          v3Payload({ savedAt: 3000, currentTurn: 8, prunedToolIds: ["t1", "t2"] })
+        ),
       ].join("\n") + "\n",
       "utf8"
     );

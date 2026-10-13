@@ -1,4 +1,4 @@
-import type { DcpState } from "../types/state.js";
+import type { DcpState } from "../types/state.ts";
 
 export type DcpStatusContext = {
   ui: {

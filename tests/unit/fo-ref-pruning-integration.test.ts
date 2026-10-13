@@ -1,14 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { applyPruning, makeConfig, makeState } from "../helpers/dcp-test-utils.js";
-import { hydrateMissingToolRecords } from "../../src/application/tool-recording.js";
+import { applyPruning, makeConfig, makeState } from "../helpers/dcp-test-utils.ts";
+import { hydrateMissingToolRecords } from "../../src/application/tool-recording.ts";
 import {
   serializePersistedState,
   restorePersistedState,
-} from "../../src/infrastructure/persistence.js";
-import { estimateTokens } from "../../src/domain/tokens/estimate.js";
-import type { DcpMessage } from "../../src/types/message.js";
+} from "../../src/infrastructure/persistence.ts";
+import { estimateTokens } from "../../src/domain/tokens/estimate.ts";
+import type { DcpMessage } from "../../src/types/message.ts";
 
 const exposedRefsUrl = new URL(
   "../../../../fo-coding-agent/src/runtime/exposed-refs.ts",

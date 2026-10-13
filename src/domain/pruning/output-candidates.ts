@@ -1,9 +1,9 @@
-import type { DcpConfig } from "../../types/config.js";
-import type { DcpMessage } from "../../types/message.js";
-import type { DcpState, ToolRecord } from "../../types/state.js";
-import { estimateTokens } from "../tokens/estimate.js";
-import { toolNameMatches } from "./index.js";
-import { collectFoRefAdapterCandidates, type FoRefBridgeV1 } from "./fo-ref-adapter.js";
+import type { DcpConfig } from "../../types/config.ts";
+import type { DcpMessage } from "../../types/message.ts";
+import type { DcpState, ToolRecord } from "../../types/state.ts";
+import { estimateTokens } from "../tokens/estimate.ts";
+import { toolNameMatches } from "./index.ts";
+import { collectFoRefAdapterCandidates, type FoRefBridgeV1 } from "./fo-ref-adapter.ts";
 
 /** Only public text content, never details, thinking, images or private metadata. */
 export function publicText(message: DcpMessage): string | null {

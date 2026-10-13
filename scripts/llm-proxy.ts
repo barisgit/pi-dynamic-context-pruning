@@ -25,7 +25,7 @@ import https from "node:https";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
-import { decompressBody, headerString, parseJsonHttpBody } from "./llm-proxy-codec.js";
+import { decompressBody, headerString, parseJsonHttpBody } from "./llm-proxy-codec.ts";
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = resolve(SCRIPT_DIR, "..");

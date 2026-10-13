@@ -1,16 +1,16 @@
 import { describe, expect, test } from "bun:test";
 import { buildSessionContext } from "@earendil-works/pi-coding-agent";
-import { restoreStateFromBranch } from "../../src/application/session-handler.js";
-import { serializePersistedState } from "../../src/infrastructure/persistence.js";
-import type { CompressionBlock } from "../../src/types/state.js";
-import { estimateTokens } from "../../src/domain/tokens/estimate.js";
+import { restoreStateFromBranch } from "../../src/application/session-handler.ts";
+import { serializePersistedState } from "../../src/infrastructure/persistence.ts";
+import type { CompressionBlock } from "../../src/types/state.ts";
+import { estimateTokens } from "../../src/domain/tokens/estimate.ts";
 import {
   applyPruning,
   buildTranscriptSnapshot,
   makeConfig,
   makeState,
   renderCompressedBlockMessage,
-} from "../helpers/dcp-test-utils.js";
+} from "../helpers/dcp-test-utils.ts";
 
 function messageEntry(message: any, id: string): any {
   return {

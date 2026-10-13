@@ -1,4 +1,4 @@
-import { renderCompressedBlockText } from "../../src/domain/compression/materialize.js";
+import { renderCompressedBlockText } from "../../src/domain/compression/materialize.ts";
 import { describe, expect, test } from "bun:test";
 import {
   allocateMessageRef,
@@ -34,7 +34,7 @@ import {
   resolveSupersededBlockIdsForRange,
   restorePersistedState,
   validateCompressionRangeBoundaryIds,
-} from "../helpers/dcp-test-utils.js";
+} from "../helpers/dcp-test-utils.ts";
 
 describe("DCP compression.test", () => {
   // ---------------------------------------------------------------------------

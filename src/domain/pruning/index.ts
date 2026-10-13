@@ -1,11 +1,11 @@
-import { HIDDEN_OUTPUT_PLACEHOLDER, hiddenLinesPlaceholder } from "./placeholder.js";
-import type { DcpState, HeuristicPruneDecision, PrunedToolAction } from "../../types/state.js";
-import type { DcpConfig } from "../../types/config.js";
-import type { DcpMessage } from "../../types/message.js";
-import { collectOutputCandidates, type OutputCandidate } from "./output-candidates.js";
-import { stripDcpHallucinationsFromString } from "../refs/metadata.js";
-import { renderCompressedBlockMessage } from "../compression/materialize.js";
-import { allocateMessageRef } from "../refs/index.js";
+import { HIDDEN_OUTPUT_PLACEHOLDER, hiddenLinesPlaceholder } from "./placeholder.ts";
+import type { DcpState, HeuristicPruneDecision, PrunedToolAction } from "../../types/state.ts";
+import type { DcpConfig } from "../../types/config.ts";
+import type { DcpMessage } from "../../types/message.ts";
+import { collectOutputCandidates, type OutputCandidate } from "./output-candidates.ts";
+import { stripDcpHallucinationsFromString } from "../refs/metadata.ts";
+import { renderCompressedBlockMessage } from "../compression/materialize.ts";
+import { allocateMessageRef } from "../refs/index.ts";
 import {
   buildTranscriptSnapshot,
   INTERNAL_BLOCK_ID,
@@ -14,13 +14,13 @@ import {
   buildSourceItemKey,
   buildSourceOwnerKey,
   countLogicalTurns,
-} from "../transcript/index.js";
+} from "../transcript/index.ts";
 import {
   collectFoRefAdapterCandidates,
   projectFoRefOuterResult,
   type FoRefAdapterCollection,
   type FoRefBridgeV1,
-} from "./fo-ref-adapter.js";
+} from "./fo-ref-adapter.ts";
 
 // Always-protected tool names for deduplication
 const ALWAYS_PROTECTED_DEDUP = new Set(["compress", "write", "edit"]);
@@ -40,8 +40,8 @@ import {
   estimateTokens,
   expandCompressionIndexRange,
   resolveCompressionRangeIndices,
-} from "../compression/range.js";
-export { estimateTokens, resolveCompressionRangeIndices } from "../compression/range.js";
+} from "../compression/range.ts";
+export { estimateTokens, resolveCompressionRangeIndices } from "../compression/range.ts";
 
 function getMessageSourceKey(message: any, ordinal: number): string {
   return typeof message?.[INTERNAL_SOURCE_KEY] === "string"

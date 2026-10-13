@@ -7,8 +7,8 @@
 // without changing the active runtime behavior. The current runtime still uses
 // `pruner.ts` for message transformation.
 
-import type { CompressionBlock } from "../../types/state.js";
-import type { DcpMessage } from "../../types/message.js";
+import type { CompressionBlock } from "../../types/state.ts";
+import type { DcpMessage } from "../../types/message.ts";
 
 // ---------------------------------------------------------------------------
 // Internal markers used to give DCP-synthesized messages a stable, buffer-

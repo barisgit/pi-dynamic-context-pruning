@@ -2,9 +2,9 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
 import { parse as parseJsonc, type ParseError } from "jsonc-parser";
-import type { DcpConfig } from "../types/config.js";
+import type { DcpConfig } from "../types/config.ts";
 
-export type { DcpConfig } from "../types/config.js";
+export type { DcpConfig } from "../types/config.ts";
 
 // ---------------------------------------------------------------------------
 // Defaults

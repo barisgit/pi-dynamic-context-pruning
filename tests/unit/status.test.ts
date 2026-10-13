@@ -1,6 +1,6 @@
 import { describe, test, expect } from "bun:test";
-import { buildDcpStatusText } from "../../src/application/status.js";
-import { makeState } from "../helpers/dcp-test-utils.js";
+import { buildDcpStatusText } from "../../src/application/status.ts";
+import { makeState } from "../helpers/dcp-test-utils.ts";
 
 describe("DCP status.test", () => {
   test("status text uses aggregate savings and latest active block id", () => {

@@ -290,9 +290,9 @@ Touch at least:
 
 ## Imports
 
-- Always use `.js` extension for local imports:
+- Use exact `.ts` file paths for relative module specifiers, including explicit `/index.ts` for directory barrels. Pi's jiti loader then resolves the source file without probing missing `.js` or extensionless candidates. TypeScript enables `allowImportingTsExtensions` with `noEmit`.
   ```ts
-  import { loadConfig } from "./config.js";
+  import { loadConfig } from "./infrastructure/config.ts";
   ```
 - Use `import type` for type-only imports.
 - Import runtime utilities from `pi-extension-utils/pi`, not its compiled root barrel, so Pi's loader shares host dependencies. Keep the published dependency minimum and both lockfiles in sync with this entrypoint.

@@ -2,10 +2,10 @@
 // Dynamic Context Pruning (DCP) — compressed block rendering
 // ---------------------------------------------------------------------------
 
-import { stripDcpMetadataTags } from "../refs/metadata.js";
-import { INTERNAL_BLOCK_ID } from "../transcript/index.js";
-import type { CompressionBlockMetadata, CompressionLogEntry } from "../../types/state.js";
-import type { DcpMessage } from "../../types/message.js";
+import { stripDcpMetadataTags } from "../refs/metadata.ts";
+import { INTERNAL_BLOCK_ID } from "../transcript/index.ts";
+import type { CompressionBlockMetadata, CompressionLogEntry } from "../../types/state.ts";
+import type { DcpMessage } from "../../types/message.ts";
 
 export type CompressionBlockRenderDetail = "full" | "compact" | "minimal";
 

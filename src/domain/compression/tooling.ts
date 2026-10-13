@@ -2,22 +2,22 @@
 // Dynamic Context Pruning (DCP) — pure compression helpers
 // ---------------------------------------------------------------------------
 
-import { renderBlockRecord } from "./materialize.js";
-import { createEmptyCompressionBlockMetadata } from "./metadata.js";
+import { renderBlockRecord } from "./materialize.ts";
+import { createEmptyCompressionBlockMetadata } from "./metadata.ts";
 import type {
   CompressionBlock,
   CompressionBlockMetadata,
   CompressionLogEntry,
   DcpState,
-} from "../../types/state.js";
-import { stripDcpMetadataTags } from "../refs/metadata.js";
-import { parseVisibleRef } from "../refs/index.js";
-import { estimateMessageTokens, estimateTokens, resolveCompressionRangeIndices } from "./range.js";
+} from "../../types/state.ts";
+import { stripDcpMetadataTags } from "../refs/metadata.ts";
+import { parseVisibleRef } from "../refs/index.ts";
+import { estimateMessageTokens, estimateTokens, resolveCompressionRangeIndices } from "./range.ts";
 import {
   buildTranscriptSnapshot,
   resolveCompressionBlockCoveredSourceKeys,
   resolveLogicalTurnTailStartTimestamp,
-} from "../transcript/index.js";
+} from "../transcript/index.ts";
 
 const MAX_EXCERPT_CHARS = 420;
 

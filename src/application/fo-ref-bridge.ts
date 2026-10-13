@@ -1,4 +1,4 @@
-import type { FoRefBridgeV1 } from "../domain/pruning/fo-ref-adapter.js";
+import type { FoRefBridgeV1 } from "../domain/pruning/fo-ref-adapter.ts";
 
 /** Discover the optional fo projection bridge at use time, including after reload. */
 export function getFoRefBridge(): FoRefBridgeV1 | undefined {

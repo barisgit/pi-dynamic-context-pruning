@@ -25,13 +25,13 @@ import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { Glob } from "bun";
-import { createState } from "../src/state.js";
-import type { DcpConfig } from "../src/types/config.js";
+import { createState } from "../src/state.ts";
+import type { DcpConfig } from "../src/types/config.ts";
 import {
   restorePersistedState,
   serializePersistedState,
-} from "../src/infrastructure/persistence.js";
-import { replayDcpState } from "../src/domain/replay/index.js";
+} from "../src/infrastructure/persistence.ts";
+import { replayDcpState } from "../src/domain/replay/index.ts";
 
 // ---------------------------------------------------------------------------
 // Minimal config for equivalence checking — dedup/purge disabled so replay

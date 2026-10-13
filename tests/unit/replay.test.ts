@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { replayDcpState } from "../../src/domain/replay/index.js";
-import { makeConfig } from "../helpers/dcp-test-utils.js";
-import { renderCompressedBlockText } from "../../src/domain/compression/materialize.js";
+import { replayDcpState } from "../../src/domain/replay/index.ts";
+import { makeConfig } from "../helpers/dcp-test-utils.ts";
+import { renderCompressedBlockText } from "../../src/domain/compression/materialize.ts";
 
 // ---------------------------------------------------------------------------
 // Test helpers

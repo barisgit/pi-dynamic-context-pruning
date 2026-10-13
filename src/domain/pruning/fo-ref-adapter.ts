@@ -1,8 +1,8 @@
-import { HIDDEN_OUTPUT_PLACEHOLDER, hiddenLinesPlaceholder } from "./placeholder.js";
-import { createInputFingerprint } from "../../state.js";
-import type { DcpMessage } from "../../types/message.js";
-import type { PrunedToolAction, ToolRecord } from "../../types/state.js";
-import { estimateTokens } from "../tokens/estimate.js";
+import { HIDDEN_OUTPUT_PLACEHOLDER, hiddenLinesPlaceholder } from "./placeholder.ts";
+import { createInputFingerprint } from "../../state.ts";
+import type { DcpMessage } from "../../types/message.ts";
+import type { PrunedToolAction, ToolRecord } from "../../types/state.ts";
+import { estimateTokens } from "../tokens/estimate.ts";
 
 export interface FoRefCandidateV1 {
   localId: string;

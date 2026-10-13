@@ -2,18 +2,18 @@ import { describe, expect, test } from "bun:test";
 import {
   applyPruning,
   selectRetainedCompressionBlockDetails,
-} from "../../src/domain/pruning/index.js";
+} from "../../src/domain/pruning/index.ts";
 import {
   restorePersistedState,
   serializePersistedState,
-} from "../../src/infrastructure/persistence.js";
-import type { CompressionBlock } from "../../src/types/state.js";
+} from "../../src/infrastructure/persistence.ts";
+import type { CompressionBlock } from "../../src/types/state.ts";
 import {
   buildCompressionArtifactsForRange,
   createEmptyCompressionBlockMetadata,
   makeConfig,
   makeState,
-} from "../helpers/dcp-test-utils.js";
+} from "../helpers/dcp-test-utils.ts";
 
 function makeBlock(id: number): CompressionBlock {
   const metadata = createEmptyCompressionBlockMetadata();

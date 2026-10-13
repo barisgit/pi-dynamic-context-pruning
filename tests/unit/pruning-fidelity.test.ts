@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { applyPruning, makeConfig, makeState } from "../helpers/dcp-test-utils.js";
-import { hydrateMissingToolRecords } from "../../src/application/tool-recording.js";
-import type { DcpMessage } from "../../src/types/message.js";
+import { applyPruning, makeConfig, makeState } from "../helpers/dcp-test-utils.ts";
+import { hydrateMissingToolRecords } from "../../src/application/tool-recording.ts";
+import type { DcpMessage } from "../../src/types/message.ts";
 
 function pair(
   id: string,

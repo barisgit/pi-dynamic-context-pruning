@@ -7,7 +7,7 @@ import {
   executeCycleAction,
   INITIAL_RECORD,
   runCycles,
-} from "../../scripts/evaluation-cycles.js";
+} from "../../scripts/evaluation-cycles.ts";
 
 // Inject only the remote completion boundary; Pi serialization/context rebuilding remain real.
 test("five checkpoints preserve late restrictions and execute corrected next actions", async () => {

@@ -1,11 +1,11 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import type { DcpConfig } from "../types/config.js";
-import type { DcpState } from "../types/state.js";
+import type { DcpConfig } from "../types/config.ts";
+import type { DcpState } from "../types/state.ts";
 import {
   collectSandboxCompressCallAliases,
   filterProviderPayloadInput,
-} from "../domain/provider/payload-filter.js";
-import { appendDebugLog, buildSessionDebugPayload } from "../infrastructure/debug-log.js";
+} from "../domain/provider/payload-filter.ts";
+import { appendDebugLog, buildSessionDebugPayload } from "../infrastructure/debug-log.ts";
 
 /** Register provider request adaptation that removes stale hidden payload history. */
 export function registerProviderHandler(

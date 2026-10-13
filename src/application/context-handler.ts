@@ -1,26 +1,26 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { connect } from "pi-extension-utils/pi";
 import type { ReminderIntent } from "pi-extension-utils/pi";
-import type { DcpConfig } from "../types/config.js";
-import type { DcpMessage } from "../types/message.js";
-import type { DcpState } from "../types/state.js";
+import type { DcpConfig } from "../types/config.ts";
+import type { DcpMessage } from "../types/message.ts";
+import type { DcpState } from "../types/state.ts";
 import {
   applyPruning,
   exceedsMaxContextLimit,
   getNudgeType,
   resolveEffectiveContextSize,
-} from "../domain/pruning/index.js";
-import { estimateMessageTokens } from "../domain/tokens/estimate.js";
+} from "../domain/pruning/index.ts";
+import { estimateMessageTokens } from "../domain/tokens/estimate.ts";
 import {
   buildCompressionPlanningHints,
   renderCompressionPlanningHints,
-} from "../domain/compression/tooling.js";
-import { buildLiveOwnerKeys, INTERNAL_HEADING } from "../domain/transcript/index.js";
-import { appendDebugLog, buildSessionDebugPayload } from "../infrastructure/debug-log.js";
-import { updateDcpStatus } from "./status.js";
-import { hydrateMissingToolRecords } from "./tool-recording.js";
-import { getFoRefBridge } from "./fo-ref-bridge.js";
-import type { FoRefBridgeV1 } from "../domain/pruning/fo-ref-adapter.js";
+} from "../domain/compression/tooling.ts";
+import { buildLiveOwnerKeys, INTERNAL_HEADING } from "../domain/transcript/index.ts";
+import { appendDebugLog, buildSessionDebugPayload } from "../infrastructure/debug-log.ts";
+import { updateDcpStatus } from "./status.ts";
+import { hydrateMissingToolRecords } from "./tool-recording.ts";
+import { getFoRefBridge } from "./fo-ref-bridge.ts";
+import type { FoRefBridgeV1 } from "../domain/pruning/fo-ref-adapter.ts";
 
 function cloneRenderedMessages(messages: DcpMessage[]): DcpMessage[] {
   return messages.map((message) => {

@@ -1,26 +1,26 @@
 import { describe, expect, test } from "bun:test";
 import { REMINDER_UPSERT_EVENT } from "pi-extension-utils/pi";
-import { renderHeading, renderHeadingMessage } from "../../src/domain/compression/heading.js";
+import { renderHeading, renderHeadingMessage } from "../../src/domain/compression/heading.ts";
 import {
   buildSourceItemKey,
   buildTranscriptSnapshot,
   countLogicalTurns,
   INTERNAL_HEADING,
-} from "../../src/domain/transcript/index.js";
-import { applyPruning, injectMessageIds } from "../../src/domain/pruning/index.js";
-import { registerCompressTool } from "../../src/application/compress-tool/registration.js";
-import { registerContextHandler } from "../../src/application/context-handler.js";
+} from "../../src/domain/transcript/index.ts";
+import { applyPruning, injectMessageIds } from "../../src/domain/pruning/index.ts";
+import { registerCompressTool } from "../../src/application/compress-tool/registration.ts";
+import { registerContextHandler } from "../../src/application/context-handler.ts";
 import {
   serializePersistedState,
   restorePersistedState,
-} from "../../src/infrastructure/persistence.js";
-import { replayDcpState } from "../../src/domain/replay/index.js";
-import { resetState } from "../../src/state.js";
+} from "../../src/infrastructure/persistence.ts";
+import { replayDcpState } from "../../src/domain/replay/index.ts";
+import { resetState } from "../../src/state.ts";
 import {
   makeConfig,
   makeState,
   buildCompressionArtifactsForRange,
-} from "../helpers/dcp-test-utils.js";
+} from "../helpers/dcp-test-utils.ts";
 
 const input = {
   goal: "Objective: .charters/example/charter.md",

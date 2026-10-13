@@ -4,15 +4,18 @@ import { copyFile, readFile, rename, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { homedir } from "node:os";
 import { Glob } from "bun";
-import { createState } from "../src/state.js";
-import { restorePersistedState, serializePersistedState } from "../src/infrastructure/persistence.js";
+import { createState } from "../src/state.ts";
+import {
+  restorePersistedState,
+  serializePersistedState,
+} from "../src/infrastructure/persistence.ts";
 import {
   EQUIVALENCE_CONFIG,
   extractObservables,
   diffObservables,
   isDcpStateEntry,
-} from "./replay-equivalence.js";
-import { replayDcpState } from "../src/domain/replay/index.js";
+} from "./replay-equivalence.ts";
+import { replayDcpState } from "../src/domain/replay/index.ts";
 
 type VacuumStats = {
   file: string;
@@ -138,7 +141,10 @@ function findNearestAncestorDcpKey(
 // (verifyFile).
 // ---------------------------------------------------------------------------
 
-export function vacuumLines(rawLines: readonly string[], markers: boolean): {
+export function vacuumLines(
+  rawLines: readonly string[],
+  markers: boolean
+): {
   outLines: string[];
   vacuumedEntries: any[]; // parsed view of outLines; non-parseable lines drop to null
   stats: Omit<VacuumStats, "file" | "originalBytes" | "outputBytes" | "savedBytes">;
@@ -381,136 +387,144 @@ async function listSessionFiles(sessionDir: string): Promise<string[]> {
 // ---------------------------------------------------------------------------
 
 async function runCli(): Promise<void> {
-const args = process.argv.slice(2);
+  const args = process.argv.slice(2);
 
-if (args.includes("--help") || args.includes("-h")) usage();
+  if (args.includes("--help") || args.includes("-h")) usage();
 
-const verifyCorpus = args.includes("--verify-corpus");
-const corpus = verifyCorpus || args.includes("--corpus");
-const write = !verifyCorpus && args.includes("--write");
-const backup = !args.includes("--no-backup");
-const markers = !args.includes("--no-markers");
+  const verifyCorpus = args.includes("--verify-corpus");
+  const corpus = verifyCorpus || args.includes("--corpus");
+  const write = !verifyCorpus && args.includes("--write");
+  const backup = !args.includes("--no-backup");
+  const markers = !args.includes("--no-markers");
 
-function extractFlagValue(flag: string): string | undefined {
-  const idx = args.indexOf(flag);
-  if (idx === -1 || idx === args.length - 1) return undefined;
-  return args[idx + 1];
-}
-
-if (corpus) {
-  const sessionDir = extractFlagValue("--session-dir") ?? defaultSessionDir();
-  if (!existsSync(sessionDir)) {
-    console.log(`Session directory not found: ${sessionDir}`);
-    process.exit(0);
-  }
-  const files = await listSessionFiles(sessionDir);
-  if (files.length === 0) {
-    console.log(`No session files found under: ${sessionDir}`);
-    process.exit(0);
+  function extractFlagValue(flag: string): string | undefined {
+    const idx = args.indexOf(flag);
+    if (idx === -1 || idx === args.length - 1) return undefined;
+    return args[idx + 1];
   }
 
-  if (verifyCorpus) {
-    console.log(`Verifying ${files.length} session file(s) under: ${sessionDir}`);
-    let okCount = 0;
-    let mismatchCount = 0;
-    let errorCount = 0;
-    let dcpEntries = 0;
-    const failures: VerifyResult[] = [];
-    for (const file of files) {
-      const result = await verifyFile(file);
-      dcpEntries += result.dcpEntries;
-      if (result.error) {
-        errorCount++;
-        failures.push(result);
-        continue;
-      }
-      if (result.ok) okCount++;
-      else {
-        mismatchCount++;
-        failures.push(result);
-      }
+  if (corpus) {
+    const sessionDir = extractFlagValue("--session-dir") ?? defaultSessionDir();
+    if (!existsSync(sessionDir)) {
+      console.log(`Session directory not found: ${sessionDir}`);
+      process.exit(0);
     }
-    console.log("");
-    console.log(
-      `Verify summary: files=${files.length} ok=${okCount} mismatch=${mismatchCount} ` +
-        `errors=${errorCount} dcp-entries=${dcpEntries}`
-    );
-    console.log(
-      `Note: sessions with no replay evidence (compress toolResult / dcp-native-compaction) ` +
-        `are out-of-contract for v3 verify and counted as ok.`
-    );
-    if (failures.length > 0) {
-      console.log("");
-      console.log(`Failures (${failures.length}):`);
-      for (const f of failures.slice(0, 20)) {
-        if (f.error) {
-          console.log(`  ${f.file}: ${f.error}`);
-        } else {
-          console.log(`  ${f.file}:`);
-          for (const m of f.mismatches) {
-            console.log(`    ${m.field}: original=${JSON.stringify(m.original)} vacuumed=${JSON.stringify(m.vacuumed)}`);
-          }
+    const files = await listSessionFiles(sessionDir);
+    if (files.length === 0) {
+      console.log(`No session files found under: ${sessionDir}`);
+      process.exit(0);
+    }
+
+    if (verifyCorpus) {
+      console.log(`Verifying ${files.length} session file(s) under: ${sessionDir}`);
+      let okCount = 0;
+      let mismatchCount = 0;
+      let errorCount = 0;
+      let dcpEntries = 0;
+      const failures: VerifyResult[] = [];
+      for (const file of files) {
+        const result = await verifyFile(file);
+        dcpEntries += result.dcpEntries;
+        if (result.error) {
+          errorCount++;
+          failures.push(result);
+          continue;
+        }
+        if (result.ok) okCount++;
+        else {
+          mismatchCount++;
+          failures.push(result);
         }
       }
-      if (failures.length > 20) console.log(`  ... ${failures.length - 20} more`);
+      console.log("");
+      console.log(
+        `Verify summary: files=${files.length} ok=${okCount} mismatch=${mismatchCount} ` +
+          `errors=${errorCount} dcp-entries=${dcpEntries}`
+      );
+      console.log(
+        `Note: sessions with no replay evidence (compress toolResult / dcp-native-compaction) ` +
+          `are out-of-contract for v3 verify and counted as ok.`
+      );
+      if (failures.length > 0) {
+        console.log("");
+        console.log(`Failures (${failures.length}):`);
+        for (const f of failures.slice(0, 20)) {
+          if (f.error) {
+            console.log(`  ${f.file}: ${f.error}`);
+          } else {
+            console.log(`  ${f.file}:`);
+            for (const m of f.mismatches) {
+              console.log(
+                `    ${m.field}: original=${JSON.stringify(m.original)} vacuumed=${JSON.stringify(m.vacuumed)}`
+              );
+            }
+          }
+        }
+        if (failures.length > 20) console.log(`  ... ${failures.length - 20} more`);
+      }
+      process.exit(mismatchCount + errorCount === 0 ? 0 : 1);
     }
-    process.exit(mismatchCount + errorCount === 0 ? 0 : 1);
+
+    // Corpus vacuum (write or dry-run).
+    console.log(
+      `${write ? "Vacuuming" : "Dry-run"} ${files.length} session file(s) under: ${sessionDir}`
+    );
+    let totalOriginal = 0;
+    let totalOutput = 0;
+    let totalDcp = 0;
+    let totalChanged = 0;
+    let totalMarkers = 0;
+    let totalFailed = 0;
+    for (const file of files) {
+      try {
+        const stats = await vacuumFile(file, write, backup, markers);
+        totalOriginal += stats.originalBytes;
+        totalOutput += stats.outputBytes;
+        totalDcp += stats.dcpEntries;
+        totalChanged += stats.changedDcpEntries;
+        totalMarkers += stats.unchangedMarkers;
+        totalFailed += stats.failedDcpEntries;
+      } catch (err) {
+        console.error(`  ${file}: error ${err}`);
+      }
+    }
+    const totalSaved = totalOriginal - totalOutput;
+    const pct = totalOriginal > 0 ? (totalSaved / totalOriginal) * 100 : 0;
+    console.log("");
+    console.log(
+      `Corpus summary: files=${files.length} dcp-entries=${totalDcp} changed=${totalChanged} ` +
+        `markers=${totalMarkers} failed=${totalFailed}`
+    );
+    console.log(
+      `Size: ${formatBytes(totalOriginal)} -> ${formatBytes(totalOutput)} ` +
+        `saved=${formatBytes(totalSaved)} (${pct.toFixed(1)}%)`
+    );
+    process.exit(0);
   }
 
-  // Corpus vacuum (write or dry-run).
-  console.log(`${write ? "Vacuuming" : "Dry-run"} ${files.length} session file(s) under: ${sessionDir}`);
-  let totalOriginal = 0;
-  let totalOutput = 0;
-  let totalDcp = 0;
-  let totalChanged = 0;
-  let totalMarkers = 0;
-  let totalFailed = 0;
-  for (const file of files) {
-    try {
-      const stats = await vacuumFile(file, write, backup, markers);
-      totalOriginal += stats.originalBytes;
-      totalOutput += stats.outputBytes;
-      totalDcp += stats.dcpEntries;
-      totalChanged += stats.changedDcpEntries;
-      totalMarkers += stats.unchangedMarkers;
-      totalFailed += stats.failedDcpEntries;
-    } catch (err) {
-      console.error(`  ${file}: error ${err}`);
-    }
-  }
-  const totalSaved = totalOriginal - totalOutput;
-  const pct = totalOriginal > 0 ? (totalSaved / totalOriginal) * 100 : 0;
-  console.log("");
+  // Single-file mode.
+  const file = args.find(
+    (arg) => !arg.startsWith("--") && arg !== extractFlagValue("--session-dir")
+  );
+  if (!file) usage();
+
+  const stats = await vacuumFile(file, write, backup, markers);
+  const pct = stats.originalBytes > 0 ? (stats.savedBytes / stats.originalBytes) * 100 : 0;
+
+  console.log(`${write ? "Wrote" : "Dry run"}: ${stats.file}`);
+  console.log(`Lines: ${stats.totalLines}`);
   console.log(
-    `Corpus summary: files=${files.length} dcp-entries=${totalDcp} changed=${totalChanged} ` +
-      `markers=${totalMarkers} failed=${totalFailed}`
+    `DCP state entries: ${stats.dcpEntries} changed=${stats.changedDcpEntries} ` +
+      `markers=${stats.unchangedMarkers} failed=${stats.failedDcpEntries}`
   );
   console.log(
-    `Size: ${formatBytes(totalOriginal)} -> ${formatBytes(totalOutput)} ` +
-      `saved=${formatBytes(totalSaved)} (${pct.toFixed(1)}%)`
+    `Blocks seen across DCP snapshots: active=${stats.activeBlocks} inactive=${stats.inactiveBlocks}`
   );
-  process.exit(0);
-}
-
-// Single-file mode.
-const file = args.find((arg) => !arg.startsWith("--") && arg !== extractFlagValue("--session-dir"));
-if (!file) usage();
-
-const stats = await vacuumFile(file, write, backup, markers);
-const pct = stats.originalBytes > 0 ? (stats.savedBytes / stats.originalBytes) * 100 : 0;
-
-console.log(`${write ? "Wrote" : "Dry run"}: ${stats.file}`);
-console.log(`Lines: ${stats.totalLines}`);
-console.log(
-  `DCP state entries: ${stats.dcpEntries} changed=${stats.changedDcpEntries} ` +
-    `markers=${stats.unchangedMarkers} failed=${stats.failedDcpEntries}`
-);
-console.log(`Blocks seen across DCP snapshots: active=${stats.activeBlocks} inactive=${stats.inactiveBlocks}`);
-console.log(
-  `Size: ${formatBytes(stats.originalBytes)} -> ${formatBytes(stats.outputBytes)} ` +
-    `saved=${formatBytes(stats.savedBytes)} (${pct.toFixed(1)}%)`
-);
-if (write && backup) console.log(`Backup: ${stats.file}.bak`);
+  console.log(
+    `Size: ${formatBytes(stats.originalBytes)} -> ${formatBytes(stats.outputBytes)} ` +
+      `saved=${formatBytes(stats.savedBytes)} (${pct.toFixed(1)}%)`
+  );
+  if (write && backup) console.log(`Backup: ${stats.file}.bak`);
 }
 
 if (import.meta.main) {

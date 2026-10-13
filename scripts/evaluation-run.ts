@@ -4,13 +4,13 @@ import { pathToFileURL } from "node:url";
 import { homedir } from "node:os";
 import { InMemoryCredentialStore, type Context, type Credential } from "@earendil-works/pi-ai";
 import { ModelRegistry, ModelRuntime } from "@earendil-works/pi-coding-agent";
-import { runCycles, type CycleFixture, type Completion } from "./evaluation-cycles.js";
+import { runCycles, type CycleFixture, type Completion } from "./evaluation-cycles.ts";
 import {
   collectFoRefAdapterCandidates,
   projectFoRefOuterResult,
-} from "../src/domain/pruning/fo-ref-adapter.js";
-import { finalizeMaterializedMessages } from "../src/domain/pruning/index.js";
-import { makeConfig, makeState } from "../tests/helpers/dcp-test-utils.js";
+} from "../src/domain/pruning/fo-ref-adapter.ts";
+import { finalizeMaterializedMessages } from "../src/domain/pruning/index.ts";
+import { makeConfig, makeState } from "../tests/helpers/dcp-test-utils.ts";
 
 async function main(): Promise<void> {
   const outputDir = process.argv[2];

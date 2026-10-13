@@ -1,6 +1,6 @@
-import { createMessageAliasState } from "./domain/refs/index.js";
-import { createEmptyCompressionBlockMetadata } from "./domain/compression/metadata.js";
-import type { DcpState } from "./types/state.js";
+import { createMessageAliasState } from "./domain/refs/index.ts";
+import { createEmptyCompressionBlockMetadata } from "./domain/compression/metadata.ts";
+import type { DcpState } from "./types/state.ts";
 
 export type {
   CompressionBlock,
@@ -19,9 +19,9 @@ export type {
   PersistedDcpStateV5,
   PrunedToolAction,
   ToolRecord,
-} from "./types/state.js";
+} from "./types/state.ts";
 
-export { createEmptyCompressionBlockMetadata } from "./domain/compression/metadata.js";
+export { createEmptyCompressionBlockMetadata } from "./domain/compression/metadata.ts";
 
 // ---------------------------------------------------------------------------
 // Factory functions

@@ -2,10 +2,10 @@ import { describe, expect, test } from "bun:test";
 import {
   restorePersistedState,
   serializePersistedState,
-} from "../../src/infrastructure/persistence.js";
-import { createEmptyCompressionBlockMetadata } from "../../src/domain/compression/metadata.js";
-import type { CompressionBlock, PersistedDcpStateV5 } from "../../src/types/state.js";
-import { makeState } from "../helpers/dcp-test-utils.js";
+} from "../../src/infrastructure/persistence.ts";
+import { createEmptyCompressionBlockMetadata } from "../../src/domain/compression/metadata.ts";
+import type { CompressionBlock, PersistedDcpStateV5 } from "../../src/types/state.ts";
+import { makeState } from "../helpers/dcp-test-utils.ts";
 
 function block(overrides: Partial<CompressionBlock>): CompressionBlock {
   const id = overrides.id ?? 1;

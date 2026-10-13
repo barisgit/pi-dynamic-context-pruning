@@ -10,10 +10,10 @@ import { describe, expect, test } from "bun:test";
 import {
   restorePersistedState,
   serializePersistedState,
-} from "../../src/infrastructure/persistence.js";
-import type { CompressionBlock, DcpState } from "../../src/types/state.js";
-import { createEmptyCompressionBlockMetadata } from "../../src/domain/compression/metadata.js";
-import { makeState } from "../helpers/dcp-test-utils.js";
+} from "../../src/infrastructure/persistence.ts";
+import type { CompressionBlock, DcpState } from "../../src/types/state.ts";
+import { createEmptyCompressionBlockMetadata } from "../../src/domain/compression/metadata.ts";
+import { makeState } from "../helpers/dcp-test-utils.ts";
 
 const EMPTY_STATE_BUDGET_BYTES = 4096;
 const ACTIVE_COVERAGE_PER_BLOCK_BUDGET_BYTES = 4_500;

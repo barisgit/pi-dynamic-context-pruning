@@ -1,4 +1,4 @@
-import { createHeading, normalizeHeading, type HeadingInput } from "../compression/heading.js";
+import { createHeading, normalizeHeading, type HeadingInput } from "../compression/heading.ts";
 // ---------------------------------------------------------------------------
 // DCP replay engine
 // ---------------------------------------------------------------------------
@@ -21,11 +21,11 @@ import { createHeading, normalizeHeading, type HeadingInput } from "../compressi
 // sessions contain branch_summary/custom/etc. entries that have no DCP
 // significance.
 
-import { createInputFingerprint } from "../../state.js";
-import { createState } from "../../state.js";
-import type { DcpConfig } from "../../types/config.js";
-import type { DcpMessage } from "../../types/message.js";
-import type { CompressionBlock, DcpState } from "../../types/state.js";
+import { createInputFingerprint } from "../../state.ts";
+import { createState } from "../../state.ts";
+import type { DcpConfig } from "../../types/config.ts";
+import type { DcpMessage } from "../../types/message.ts";
+import type { CompressionBlock, DcpState } from "../../types/state.ts";
 import {
   buildCompressionArtifactsForRange,
   expandBlockPlaceholders,
@@ -35,11 +35,11 @@ import {
   resolveIdToTimestamp,
   resolveSupersededBlockIdsForRange,
   validateCompressionRangeBoundaryIds,
-} from "../compression/tooling.js";
-import { renderCompressedBlockMessage } from "../compression/materialize.js";
-import { applyPruning } from "../pruning/index.js";
-import { estimateMessageTokens, estimateTokens } from "../tokens/estimate.js";
-import { buildTranscriptSnapshot } from "../transcript/index.js";
+} from "../compression/tooling.ts";
+import { renderCompressedBlockMessage } from "../compression/materialize.ts";
+import { applyPruning } from "../pruning/index.ts";
+import { estimateMessageTokens, estimateTokens } from "../tokens/estimate.ts";
+import { buildTranscriptSnapshot } from "../transcript/index.ts";
 
 // ---------------------------------------------------------------------------
 // Public types

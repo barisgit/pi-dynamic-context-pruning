@@ -1,4 +1,4 @@
-import { normalizeHeading } from "../domain/compression/heading.js";
+import { normalizeHeading } from "../domain/compression/heading.ts";
 // ---------------------------------------------------------------------------
 // Dynamic Context Pruning (DCP) — persisted state migration helpers
 // ---------------------------------------------------------------------------
@@ -20,8 +20,8 @@ import {
   type PersistedDcpStateV4,
   type PersistedDcpStateV5,
   type PrunedToolAction,
-} from "../state.js";
-import { normalizeMessageAliasState, serializeMessageAliasState } from "../domain/refs/index.js";
+} from "../state.ts";
+import { normalizeMessageAliasState, serializeMessageAliasState } from "../domain/refs/index.ts";
 
 // ---------------------------------------------------------------------------
 // Helpers
